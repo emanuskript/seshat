@@ -298,5 +298,7 @@ export default {
   flex-direction: column;
   height: 100vh;
   background-color: #f1f1f1;
+  position: relative;
+  z-index: 0;
 }
 </style>

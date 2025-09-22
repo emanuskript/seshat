@@ -62,18 +62,23 @@ export default {
   width: 80%;
   max-width: 900px;
   text-align: center;
+  position: relative;
+  z-index: 1;
 }
 
 .cropped-image-container {
   position: relative;
   display: inline-block;
   width: 100%;
+  z-index: 1;
 }
 
 .cropped-image {
   display: block;
   width: 100%;
   height: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .popup-actions {

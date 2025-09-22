@@ -1,267 +1,266 @@
 <template>
-  <div 
-    v-if="isVisible" 
-    class="scribe-popup-overlay"
-    @click.self="closePopup"
-  >
-    <div class="scribe-popup-container">
-      <!-- Header -->
-      <div class="popup-header pharaonic-header">
-        <div class="header-content">
-          <div class="header-left">
-            <img :src="require('@/assets/pharosight_icon_no_text.png')" alt="PharoSight" class="pharaonic-icon" />
-            <span class="pharosight-text">PharoSight</span>
-            <h3>Multiple Scribe Detection</h3>
-          </div>
-          <button 
-            class="close-button"
-            @click="closePopup"
-          >
-            ×
-          </button>
+  <div v-if="isVisible" class="scribe-modal" @click.self="closePopup">
+    <div class="scribe-card">
+      <header class="scribe-header">
+        <div class="header-left">
+          <img :src="require('@/assets/pharosight_icon_no_text.png')" alt="PharoSight" class="pharaonic-icon" />
+          <span class="pharosight-text">PharoSight</span>
+          <h3>Scribe Detection</h3>
         </div>
+        <button class="icon-btn" @click="closePopup" aria-label="Close">✕</button>
+      </header>
+
+      <!-- STEP TABS -->
+      <div class="steps">
+        <div class="step" :class="{active: step===1}"><span>1</span> Segmentation</div>
+        <div class="line"></div>
+        <div class="step" :class="{active: step===2}"><span>2</span> Tune & Run</div>
       </div>
 
-      <!-- Main Content Area -->
-      <div class="popup-content">
-        <!-- Left Panel - Manuscript Page -->
-        <div class="left-panel">
-          <div class="image-container">
-            <img 
-              v-if="currentPageImage" 
-              :src="currentPageImage" 
-              alt="Manuscript page"
-              class="manuscript-image"
-              @load="onImageLoad"
-            >
-            <div v-else class="image-placeholder">
-              <div class="page-indicator">
-                <i class="fa-regular fa-file-text"></i>
-                <h4>Manuscript Page {{ currentPage || 1 }}</h4>
-                <p>Page {{ currentPage || 1 }} of {{ totalPages || 250 }}</p>
-                <p class="loading-text">Loading manuscript image...</p>
-              </div>
-            </div>
+      <!-- STEP 1: CHOOSE METHOD -->
+      <section v-if="step===1" class="step-pane">
+        <p class="helper">How should we pick the lines to compare?</p>
 
+        <div class="method-grid">
+          <!-- Option 1 -->
+          <button class="method-card"
+                  :class="{selected: mode==='auto'}"
+                  @click="selectMode('auto')">
+            <div class="method-title">PharoSight Auto</div>
+            <div class="method-sub">Recommended • Detect lines automatically</div>
+          </button>
 
+          <!-- Option 2 -->
+          <button class="method-card"
+                  :class="{selected: mode==='manual'}"
+                  @click="selectMode('manual')">
+            <div class="method-title">Manual Line Pick</div>
+            <div class="method-sub">Draw boxes on the lines you want</div>
+          </button>
+
+          <!-- Option 3 (disabled) -->
+          <button class="method-card disabled" disabled>
+            <div class="method-title">Import from Segmentation</div>
+            <div class="method-sub">Coming soon <span class="hourglass">⏳</span></div>
+          </button>
+        </div>
+
+        <!-- Manual drawing canvas (visible only when manual is chosen) -->
+        <div v-if="mode==='manual'" class="draw-wrap">
+          <div class="draw-toolbar">
+            <div>Boxes selected: <strong>{{ regions.length }}</strong></div>
+            <div class="spacer"></div>
+            <button class="pill" @click="clearRegions" :disabled="regions.length===0">Clear</button>
+            <button class="pill" @click="toggleDraw">
+              {{ drawActive ? 'Stop Drawing' : 'Start Drawing' }}
+            </button>
+          </div>
+
+          <!-- The same image you show in the viewer popup; use a fitted container -->
+          <div class="draw-stage"
+               ref="drawStage"
+               @mousedown="onDrawStart"
+               @mousemove="onDrawMove"
+               @mouseup="onDrawEnd"
+               @mouseleave="onDrawEnd">
+            <img v-if="currentPageImage" :src="currentPageImage" alt="Manuscript page"
+                 class="draw-img" draggable="false" />
+            <!-- existing rectangles -->
+            <div v-for="(r, i) in regions" :key="i" class="box"
+                 :style="boxStyle(r)"></div>
+            <!-- live rectangle -->
+            <div v-if="liveBox" class="box live" :style="boxStyle(liveBox)"></div>
+          </div>
+
+          <p class="hint">
+            Tip: Click "Start Drawing", then drag to draw a box around a single text line. Repeat to add more lines.  
+            You can refine during Step 2 before running.
+          </p>
+        </div>
+
+        <footer class="actions">
+          <button class="ghost" @click="closePopup">Cancel</button>
+          <button class="primary"
+                  :disabled="mode===null"
+                  @click="goStep(2)">
+            Next: Tune & Run →
+          </button>
+        </footer>
+      </section>
+
+      <!-- STEP 2: TUNING AND RUNNING -->
+      <section v-else class="step-pane">
+        <!-- Pharaonic Loading Animation -->
+        <div v-if="isAnalyzing" class="loading-section pharaonic-loading">
+          <div class="pharaonic-spinner">
+            <div class="ankh-spinner"></div>
+            <div class="hieroglyph-ring"></div>
+          </div>
+          <div class="loading-text">
+            <h4>{{ loadingMessage }}</h4>
+            <p class="loading-detail">{{ loadingDetail }}</p>
           </div>
         </div>
 
-        <!-- Right Panel - Analysis Results -->
-        <div class="right-panel">
-          <div class="analysis-section">
-            <!-- Analysis Controls -->
-            <div class="controls-section" v-if="!isAnalyzing && !hasResults">
-              <div class="toolbar-actions">
-                <button @click="analyzeScribes" :disabled="isAnalyzing" class="pharaonic-btn primary">
-                  <span>Analyze Scribes</span>
-                </button>
-                <button @click="exportPDF" :disabled="!hasResults" class="pharaonic-btn secondary">
-                  Export PDF
-                </button>
+        <!-- Results Display -->
+        <div v-else-if="hasResults" class="results-section">
+          <div class="results-header">
+            <h4>Analysis Complete</h4>
+            <div class="results-summary">
+              <div class="metric">
+                <span class="metric-label">Total Scribes:</span>
+                <span class="metric-value">{{ results.statistics?.total_scribes || results.total_scribes || 'Unknown' }}</span>
               </div>
-
-              <!-- Professional Parameter Controls -->
-              <div class="params-container">
-                <h4 class="params-title">Analysis Parameters</h4>
-                <div class="params-grid">
-                  <div class="param-group">
-                    <label class="param-label">
-                      <i class="info-icon" data-tooltip="sensitivity">ⓘ</i>
-                      Sensitivity (z-thresh)
-                    </label>
-                    <div class="input-group">
-                      <input type="range" min="1.2" max="3.0" step="0.1" v-model.number="params.z_thresh" class="range-input">
-                      <span class="param-value">{{ params.z_thresh?.toFixed(1) ?? 'auto' }}</span>
-                    </div>
-                  </div>
-
-                  <div class="param-group">
-                    <label class="param-label">
-                      <i class="info-icon" data-tooltip="min_gap">ⓘ</i>
-                      Min Gap (lines)
-                    </label>
-                    <div class="input-group">
-                      <input type="number" min="1" max="10" v-model.number="params.min_gap" class="number-input">
-                    </div>
-                  </div>
-
-                  <div class="param-group">
-                    <label class="param-label">
-                      <i class="info-icon" data-tooltip="min_run">ⓘ</i>
-                      Min Run (lines)
-                    </label>
-                    <div class="input-group">
-                      <input type="number" min="1" max="10" v-model.number="params.min_run" class="number-input">
-                    </div>
-                  </div>
-
-                  <div class="param-group">
-                    <label class="param-label">
-                      <i class="info-icon" data-tooltip="illum_frac">ⓘ</i>
-                      Illumination Fraction
-                    </label>
-                    <div class="input-group">
-                      <input type="number" step="0.005" v-model.number="params.illum_frac" class="number-input">
-                    </div>
-                  </div>
-
-                  <div class="param-group">
-                    <label class="param-label">
-                      <i class="info-icon" data-tooltip="sauvola_window">ⓘ</i>
-                      Sauvola Window
-                    </label>
-                    <div class="input-group">
-                      <input type="number" min="15" step="2" v-model.number="params.sauvola_window" class="number-input">
-                    </div>
-                  </div>
-
-                  <div class="param-group">
-                    <label class="param-label">
-                      <i class="info-icon" data-tooltip="algorithm">ⓘ</i>
-                      Algorithm
-                    </label>
-                    <div class="input-group">
-                      <select v-model="params.algo" class="select-input">
-                        <option value="auto">Auto</option>
-                        <option value="peaks">Peaks</option>
-                        <option value="ruptures">Ruptures</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
+              <div class="metric">
+                <span class="metric-label">Overall Confidence:</span>
+                <span class="metric-value">{{ results.statistics?.overall_confidence ? Math.round(results.statistics.overall_confidence) + '%' : (results.confidence ? Math.round(results.confidence) + '%' : 'N/A') }}</span>
               </div>
             </div>
+          </div>
 
-            <!-- Pharaonic Loading Animation -->
-            <div v-if="isAnalyzing" class="loading-section pharaonic-loading">
-              <div class="pharaonic-spinner">
-                <div class="ankh-spinner"></div>
-                <div class="hieroglyph-ring"></div>
-              </div>
-              <div class="loading-text">
-                <h4>{{ loadingMessage }}</h4>
-                <p class="loading-detail">{{ loadingDetail }}</p>
-              </div>
-            </div>
-
-            <!-- Results Display -->
-            <div v-else-if="hasResults" class="results-section">
-              <div class="results-header">
-                <h4>Detected Scribes</h4>
-                <div class="results-actions">
-                  <button @click="analyzeAgain" class="pharaonic-btn primary">
-                    Analyze Again
-                  </button>
-                  <button @click="exportPDF" class="pharaonic-btn secondary">
-                    Export PDF
-                  </button>
+          <!-- Results content would go here - keeping existing structure -->
+          <div class="scribe-results">
+            <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
+              <h5>Detected Scribes</h5>
+              <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item">
+                <div class="scribe-header">
+                  <h6 class="scribe-title">{{ change.scribe }}</h6>
+                  <!-- NEVER show confidence for initial scribe (index 0) -->
+                  <span v-if="index > 0 && change.confidence && !change.is_initial && change.confidence !== null && change.confidence !== undefined" class="scribe-confidence">
+                    {{ Math.round(change.confidence) }}% confidence
+                  </span>
+                  <!-- Show return indicator for returning scribes -->
+                  <span v-if="!change.is_initial && isScribeReturn(change.scribe, index)" class="scribe-return">
+                    (Returns)
+                  </span>
                 </div>
-              </div>
-              
-              <!-- Detected Scribes -->
-              <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
-                <div 
-                  v-for="(change, index) in results.scribe_changes" 
-                  :key="`change-${index}`"
-                  :id="`scribe-result-${change.scribe}`"
-                  class="scribe-item"
-                  :class="{ 'highlighted': highlightedScribe === change.scribe }"
-                >
-                  <!-- Scribe Header with Letter Label -->
-                  <div class="scribe-header">
-                    <h5 class="scribe-title">{{ change.scribe }}</h5>
-                    <span class="confidence">{{ Math.round(change.confidence * 100) }}%</span>
-                  </div>
-                  
-                  <!-- Explanation directly under title -->
-                  <p class="explanation">{{ change.explanation }}</p>
-                  
-                  <!-- Scribe Preview Screenshots -->
-                  <div class="scribe-previews" v-if="change.samples && change.samples.length">
-                    <img
-                      v-for="(src, i) in change.samples.slice(0, 2)"
-                      :key="i"
-                      :src="`${backendBase}${src}`"
-                      :alt="`${change.scribe} sample ${i + 1}`"
-                      class="scribe-shot"
-                      loading="lazy"
-                      decoding="async"
-                      @error="handleImageError"
-                      @load="handleImageLoad"
-                    />
-                  </div>
-                  
-                  <!-- Line Screenshot (Original Canvas Method) -->
-                  <div class="line-screenshot-container">
-                    <canvas 
-                      :ref="`lineCanvas${index}`"
-                      class="line-screenshot"
-                      width="400"
-                      height="60"
-                    ></canvas>
-                    <div class="screenshot-overlay">
-                      <span class="line-range">Lines {{ change.start_line }}-{{ change.end_line }}</span>
+                <p class="scribe-explanation">{{ change.explanation }}</p>
+                
+                <!-- Scribe Sample Images -->
+                <div v-if="change.samples && change.samples.length > 0" class="scribe-samples">
+                  <h6 class="samples-title">Sample Handwriting:</h6>
+                  <div class="samples-gallery">
+                    <div v-for="(sample, sampleIndex) in change.samples" :key="sampleIndex" class="sample-image-container">
+                      <img :src="`http://localhost:5001${sample}`" 
+                           :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
+                           class="sample-image"
+                           @error="onScribeSampleError">
                     </div>
-                  </div>
-                  
-                  <p class="location">Lines {{ change.start_line }}-{{ change.end_line }}</p>
-                </div>
-              </div>
-
-              <!-- Summary Statistics -->
-              <div v-if="results.statistics" class="statistics-section">
-                <h5>Analysis Summary</h5>
-                <div class="stat-grid">
-                  <div class="stat-item">
-                    <span class="stat-label">Total Scribes:</span>
-                    <span class="stat-value">{{ results.statistics.total_scribes }}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">Confidence:</span>
-                    <span class="stat-value">{{ Math.round(results.statistics.overall_confidence * 100) }}%</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">Analysis Time:</span>
-                    <span class="stat-value">{{ results.statistics.analysis_time }}ms</span>
                   </div>
                 </div>
                 
-                <!-- Scientific Disclaimer -->
-                <div class="analysis-disclaimer">
-                  <h6>Disclaimer</h6>
-                  <p class="disclaimer-text">
-                    <strong>These results are computational estimates and not definitive determinations.</strong> 
-                    Scribe detection accuracy depends on multiple interdependent factors:
-                  </p>
-                  <ul class="disclaimer-factors">
-                    <li><strong>Image Quality:</strong> Resolution, contrast, illumination uniformity, and digital artifacts</li>
-                    <li><strong>Paleographic Variables:</strong> Ink composition, parchment/paper texture, writing instrument characteristics</li>
-                    <li><strong>Manuscript Condition:</strong> Age-related degradation, staining, fading, physical damage</li>
-                    <li><strong>Writing Context:</strong> Formal vs. cursive scripts, fatigue effects, temporal writing variations</li>
-                    <li><strong>Algorithm Limitations:</strong> Feature extraction methods, statistical thresholds, training data biases</li>
-                    <li><strong>Preprocessing Effects:</strong> Binarization artifacts, noise reduction impact, geometric normalization</li>
-                  </ul>
-                  <p class="disclaimer-conclusion">
-                    <em>Professional paleographic expertise should always complement computational analysis. 
-                    Results should be validated through traditional codicological methods and cross-referenced with historical evidence.</em>
-                  </p>
+                <!-- Alternative: Use scribe_samples from results if samples not in change object -->
+                <div v-else-if="results.scribe_samples && results.scribe_samples[change.scribe]" class="scribe-samples">
+                  <h6 class="samples-title">Sample Handwriting:</h6>
+                  <div class="samples-gallery">
+                    <div v-for="(sample, sampleIndex) in results.scribe_samples[change.scribe]" :key="sampleIndex" class="sample-image-container">
+                      <img :src="`http://localhost:5001${sample}`" 
+                           :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
+                           class="sample-image"
+                           @error="onScribeSampleError">
+                    </div>
+                  </div>
+                </div>
+                
+                <div v-if="change.features" class="scribe-features">
+                  <span class="feature-tag" v-for="(value, key) in change.features" :key="key">
+                    {{ key }}: {{ value }}
+                  </span>
                 </div>
               </div>
             </div>
-
-            <!-- No Results State -->
-            <div v-else-if="analysisCompleted && !hasResults" class="no-results">
-              <p>No scribe changes detected in this page.</p>
-            </div>
-
-            <!-- Initial State -->
-            <div v-else-if="!isAnalyzing" class="initial-state">
-              <p>Click "Analyze Scribes" to detect different handwriting styles on this page.</p>
+            <div v-else>
+              <p>No scribe changes detected. The entire selection appears to be written by a single hand.</p>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- Tuning Controls (when not analyzing and no results) -->
+        <div v-else class="tuning-section">
+          <div class="params-container">
+            <h4 class="params-title">Analysis Parameters</h4>
+            <div class="params-grid">
+              <div class="param-group">
+                <label class="param-label">
+                  <i class="info-icon" data-tooltip="sensitivity">ⓘ</i>
+                  Sensitivity (z-thresh)
+                </label>
+                <div class="input-group">
+                  <input type="range" min="2.0" max="4.0" step="0.1" v-model.number="params.z_thresh" class="range-input">
+                  <span class="param-value">{{ params.z_thresh?.toFixed(1) ?? 'auto' }}</span>
+                </div>
+              </div>
+
+              <div class="param-group">
+                <label class="param-label">
+                  <i class="info-icon" data-tooltip="min_gap">ⓘ</i>
+                  Min Gap (lines)
+                </label>
+                <div class="input-group">
+                  <input type="number" min="2" max="8" v-model.number="params.min_gap" class="number-input">
+                </div>
+              </div>
+
+              <div class="param-group">
+                <label class="param-label">
+                  <i class="info-icon" data-tooltip="min_run">ⓘ</i>
+                  Min Run (lines)
+                </label>
+                <div class="input-group">
+                  <input type="number" min="2" max="8" v-model.number="params.min_run" class="number-input">
+                </div>
+              </div>
+
+              <div class="param-group">
+                <label class="param-label">
+                  <i class="info-icon" data-tooltip="illum_frac">ⓘ</i>
+                  Illumination Fraction
+                </label>
+                <div class="input-group">
+                  <input type="number" step="0.005" v-model.number="params.illum_frac" class="number-input">
+                </div>
+              </div>
+
+              <div class="param-group">
+                <label class="param-label">
+                  <i class="info-icon" data-tooltip="sauvola_window">ⓘ</i>
+                  Sauvola Window
+                </label>
+                <div class="input-group">
+                  <input type="number" min="15" step="2" v-model.number="params.sauvola_window" class="number-input">
+                </div>
+              </div>
+
+              <div class="param-group">
+                <label class="param-label">
+                  <i class="info-icon" data-tooltip="algorithm">ⓘ</i>
+                  Algorithm
+                </label>
+                <div class="input-group">
+                  <select v-model="params.algo" class="select-input">
+                    <option value="auto">Auto</option>
+                    <option value="peaks">Peaks</option>
+                    <option value="ruptures">Ruptures</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="actions">
+          <button class="ghost" @click="goStep(1)">← Back</button>
+          <div class="action-right">
+            <button v-if="hasResults" class="secondary" @click="exportPDF">Export PDF</button>
+            <button class="primary" @click="runDetection" :disabled="runButtonDisabled">
+              {{ isAnalyzing ? 'Analyzing…' : (mode==='auto' ? 'Run PharoSight' : 'Run on Selected Lines') }}
+              <small v-if="mode==='manual'" style="display: block; font-size: 10px; opacity: 0.7;">
+                ({{ regions.length }} regions selected)
+              </small>
+            </button>
+          </div>
+        </footer>
+      </section>
     </div>
   </div>
 </template>
@@ -289,18 +288,28 @@ export default {
       isAnalyzing: false,
       analysisCompleted: false,
       results: null,
+      segmentationOverlay: null, // Store overlay image URL
       totalLinesEstimate: 25, // Default estimate for line visualization
       highlightedScribe: null,
       loadingMessage: 'Analyzing handwriting patterns...',
       loadingDetail: 'Initializing scribe detection algorithm',
       params: {
-        z_thresh: 2.0,
-        min_gap: 2,
-        min_run: 2,
+        z_thresh: 2.5,    // Increased default threshold for better accuracy
+        min_gap: 3,       // Increased to reduce false positives
+        min_run: 3,       // Increased for more stable segments
         illum_frac: 0.035,
         sauvola_window: 31,
         algo: 'auto'
-      }
+      },
+      // New two-step flow data
+      step: 1,
+      mode: null, // 'auto' or 'manual'
+      allowEmptyManual: false,
+      // Manual drawing state
+      regions: [],
+      drawActive: false,
+      liveBox: null,
+      stageRect: null
     }
   },
   watch: {
@@ -343,6 +352,17 @@ export default {
     },
     backendBase() {
       return 'http://localhost:5001'
+    },
+    runButtonDisabled() {
+      const disabled = this.isAnalyzing || (this.mode === 'manual' && this.regions.length === 0)
+      console.log('Run button disabled:', {
+        disabled,
+        isAnalyzing: this.isAnalyzing,
+        mode: this.mode,
+        regionsLength: this.regions.length,
+        step: this.step
+      })
+      return disabled
     }
   },
   methods: {
@@ -360,6 +380,236 @@ export default {
       this.isAnalyzing = false
       this.analysisCompleted = false
       this.results = null
+      this.step = 1
+      this.mode = null
+      this.regions = []
+      this.drawActive = false
+      this.liveBox = null
+    },
+
+    // Two-step flow methods
+    goStep(stepNum) {
+      this.step = stepNum
+    },
+
+    selectMode(modeType) {
+      this.mode = modeType
+    },
+
+    // Manual drawing methods
+    stageBounds() {
+      if (!this.$refs.drawStage) return null
+      this.stageRect = this.$refs.drawStage.getBoundingClientRect()
+      return this.stageRect
+    },
+
+    toStage(e) {
+      const r = this.stageBounds()
+      if (!r) return {x: 0, y: 0}
+      return { 
+        x: Math.max(0, e.clientX - r.left), 
+        y: Math.max(0, e.clientY - r.top) 
+      }
+    },
+
+    onDrawStart(e) {
+      if (this.mode !== 'manual' || !this.drawActive) return
+      const {x, y} = this.toStage(e)
+      this.liveBox = { x, y, w: 0, h: 0 }
+    },
+
+    onDrawMove(e) {
+      if (!this.liveBox) return
+      const {x, y} = this.toStage(e)
+      this.liveBox = {
+        x: Math.min(x, this.liveBox.x),
+        y: Math.min(y, this.liveBox.y),
+        w: Math.abs(x - this.liveBox.x),
+        h: Math.abs(y - this.liveBox.y),
+      }
+    },
+
+    onDrawEnd() {
+      if (!this.liveBox) return
+      const {w, h} = this.liveBox
+      if (w > 6 && h > 6) {
+        this.regions.push({...this.liveBox})
+      }
+      this.liveBox = null
+    },
+
+    toggleDraw() {
+      this.drawActive = !this.drawActive
+    },
+
+    clearRegions() {
+      this.regions = []
+    },
+
+    boxStyle(r) {
+      return {
+        left: `${r.x}px`,
+        top: `${r.y}px`,
+        width: `${r.w}px`, 
+        height: `${r.h}px`,
+      }
+    },
+
+    // Updated detection method
+    async runDetection() {
+      console.log('runDetection called!', {
+        mode: this.mode,
+        regions: this.regions,
+        regionsLength: this.regions.length,
+        isAnalyzing: this.isAnalyzing
+      })
+      
+      // FORCE COMPLETE STATE RESET before each analysis
+      this.analysisCompleted = false
+      this.results = null
+      this.segmentationOverlay = null
+      this.highlightedScribe = null
+      console.log('State forcefully reset for new analysis')
+      
+      try {
+        if (this.mode === 'auto') {
+          console.log('Running AUTO mode detection...')
+          // Use existing auto detection
+          await this.analyzeScribes()
+        } else {
+          console.log('Running MANUAL mode detection with regions...')
+          // Manual mode with regions
+          const imgEl = this.$refs.drawStage?.querySelector('img')
+          let payloadRegions = this.regions
+          
+          // Scale regions to original image size if needed
+          if (imgEl && imgEl.naturalWidth && imgEl.naturalHeight) {
+            const scaleX = imgEl.naturalWidth / imgEl.clientWidth
+            const scaleY = imgEl.naturalHeight / imgEl.clientHeight
+            payloadRegions = this.regions.map(r => ({
+              x: Math.round(r.x * scaleX),
+              y: Math.round(r.y * scaleY),
+              w: Math.round(r.w * scaleX),
+              h: Math.round(r.h * scaleY),
+            }))
+            console.log('Scaled regions:', payloadRegions)
+          }
+          
+          await this.analyzeScribesWithRegions(payloadRegions)
+        }
+      } catch (error) {
+        console.error('Detection error:', error)
+      }
+    },
+
+    async analyzeScribesWithRegions(regions) {
+      console.log('=== MANUAL MODE ANALYSIS START ===')
+      console.log('Mode: MANUAL (Selected Regions)')
+      console.log('Regions count:', regions.length)
+      console.log('Regions detail:', regions)
+      console.log('Parameters:', this.params)
+      console.log('Timestamp:', new Date().toISOString())
+      
+      if (this.isAnalyzing) {
+        console.log('Already analyzing, returning')
+        return
+      }
+      
+      this.isAnalyzing = true
+      this.analysisCompleted = false
+      this.results = null
+      this.segmentationOverlay = null
+      this.loadingMessage = 'Preparing manuscript image...'
+      this.loadingDetail = 'Processing image for manual analysis'
+      
+      try {
+        console.log('Starting manual scribe analysis with regions:', regions)
+
+        if (!this.currentPageImage) {
+          throw new Error('No page image available for analysis')
+        }
+        
+        console.log('Current page image:', this.currentPageImage)
+        
+        this.loadingMessage = 'Fetching manuscript data...'
+        this.loadingDetail = 'Converting image format'
+        
+        // Fetch the image and convert to blob for upload
+        console.log('Fetching image...')
+        const imageResponse = await fetch(this.currentPageImage)
+        if (!imageResponse.ok) {
+          throw new Error('Failed to fetch page image')
+        }
+        const imageBlob = await imageResponse.blob()
+        console.log('Image blob created:', imageBlob.size, 'bytes')
+        
+        this.loadingMessage = 'Configuring manual analysis...'
+        this.loadingDetail = 'Setting up detection for selected regions'
+        
+        // Create FormData for upload with manual mode
+        const formData = new FormData()
+        formData.append('image', imageBlob, 'manuscript_page.jpg')
+        formData.append('mode', 'manual')
+        formData.append('regions', JSON.stringify(regions))
+        if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
+        formData.append('min_gap', String(this.params.min_gap))
+        formData.append('min_run', String(this.params.min_run))
+        formData.append('illum_frac', String(this.params.illum_frac))
+        formData.append('sauvola_window', String(this.params.sauvola_window))
+        formData.append('algo', this.params.algo)
+        
+        console.log('FormData prepared with:', {
+          mode: 'manual',
+          regions: regions,
+          params: this.params
+        })
+        
+        this.loadingMessage = 'Analyzing selected regions...'
+        this.loadingDetail = 'Running scribe detection on manual selections'
+        
+        // Call the Python backend with aggressive cache-busting
+        console.log('Calling backend at http://localhost:5001/analyze...')
+        const timestamp = Date.now() + Math.random()  // Extra random for uniqueness
+        const response = await fetch(`http://localhost:5001/analyze?t=${timestamp}&mode=manual`, {
+          method: 'POST',
+          body: formData,
+          cache: 'no-cache',  // Disable caching
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        })
+        
+        console.log('Backend response status:', response.status, response.statusText)
+        
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error('Backend error response:', errorText)
+          throw new Error(`Analysis failed: ${response.status} ${response.statusText}\n${errorText}`)
+        }
+        
+        const data = await response.json()
+        console.log('Manual analysis complete:', data)
+        
+        this.results = data
+        if (data.segmentation_overlay) {
+          this.segmentationOverlay = `${this.backendBase}${data.segmentation_overlay}`
+        }
+        
+        this.analysisCompleted = true
+        this.loadingMessage = 'Analysis complete!'
+        this.loadingDetail = `Detected ${data.statistics?.total_scribes || 'multiple'} scribes in selected regions`
+        
+      } catch (error) {
+        console.error('Manual analysis error:', error)
+        this.loadingMessage = 'Analysis failed'
+        this.loadingDetail = error.message || 'Unknown error occurred'
+        throw error
+      } finally {
+        console.log('Setting isAnalyzing to false')
+        this.isAnalyzing = false
+      }
     },
     
     analyzeAgain() {
@@ -378,6 +628,31 @@ export default {
     handleImageError(event) {
       console.error('Failed to load scribe sample image:', event.target.src)
       event.target.style.display = 'none'
+    },
+    
+    onScribeSampleError(event) {
+      console.error('Failed to load scribe sample image:', event.target.src)
+      event.target.style.display = 'none'
+      // Optionally, show a placeholder or error message
+      const container = event.target.parentElement
+      if (container && !container.querySelector('.sample-error')) {
+        const errorMsg = document.createElement('div')
+        errorMsg.className = 'sample-error'
+        errorMsg.textContent = 'Image not available'
+        container.appendChild(errorMsg)
+      }
+    },
+    
+    isScribeReturn(scribeName, currentIndex) {
+      // Check if this scribe appeared earlier in the list
+      if (!this.results?.scribe_changes || currentIndex === 0) return false
+      
+      for (let i = 0; i < currentIndex; i++) {
+        if (this.results.scribe_changes[i].scribe === scribeName) {
+          return true
+        }
+      }
+      return false
     },
     
     handleImageLoad(event) {
@@ -651,9 +926,15 @@ export default {
     async analyzeScribes() {
       if (this.isAnalyzing) return
       
+      console.log('=== AUTO MODE ANALYSIS START ===')
+      console.log('Mode: AUTO (PharoSight)')
+      console.log('Parameters:', this.params)
+      console.log('Timestamp:', new Date().toISOString())
+      
       this.isAnalyzing = true
       this.analysisCompleted = false
       this.results = null
+      this.segmentationOverlay = null // Reset overlay
       this.loadingMessage = 'Preparing manuscript image...'
       this.loadingDetail = 'Processing image for analysis'
       
@@ -680,6 +961,7 @@ export default {
         // Create FormData for upload (+ params)
         const formData = new FormData()
         formData.append('image', imageBlob, 'manuscript_page.jpg')
+        formData.append('mode', 'auto')  // Explicitly set auto mode
         if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
         formData.append('min_gap', String(this.params.min_gap))
         formData.append('min_run', String(this.params.min_run))
@@ -690,10 +972,17 @@ export default {
         this.loadingMessage = 'Analyzing handwriting patterns...'
         this.loadingDetail = 'Running scribe detection algorithms'
         
-        // Call the Python backend
-        const response = await fetch('http://localhost:5001/analyze', {
+        // Call the Python backend with aggressive cache-busting
+        const timestamp = Date.now() + Math.random()  // Extra random for uniqueness
+        const response = await fetch(`http://localhost:5001/analyze?t=${timestamp}&mode=auto`, {
           method: 'POST',
-          body: formData
+          body: formData,
+          cache: 'no-cache',  // Disable caching
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
         })
         
         if (!response.ok) {
@@ -729,6 +1018,12 @@ export default {
     transformBackendResults(data) {
       const scribeChanges = data.scribe_changes || []
       const totalLines = data.total_lines || 30
+      
+      // Store the segmentation overlay URL
+      if (data.segmentation_overlay) {
+        this.segmentationOverlay = `http://localhost:5001${data.segmentation_overlay}`
+        console.log('Segmentation overlay available:', this.segmentationOverlay)
+      }
       
       // Use the backend scribe changes directly - no more "primary scribe" creation
       const transformedChanges = scribeChanges.map((change) => ({
@@ -792,6 +1087,170 @@ export default {
 </script>
 
 <style scoped>
+/* New Two-Step Flow Styles */
+.scribe-modal{
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.35);
+  display:flex; align-items:center; justify-content:center;
+  z-index: 7000; /* above any other popup */
+}
+.scribe-card{
+  width: min(980px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 18px 34px rgba(0,0,0,.22);
+  padding: 16px 18px 18px;
+}
+.scribe-header{
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom: 8px;
+}
+.scribe-header h3{ margin:0; font-size: 22px; }
+.header-left { display: flex; align-items: center; gap: 8px; }
+.pharaonic-icon { width: 24px; height: 24px; }
+.pharosight-text { font-weight: 600; color: #3b82f6; }
+.icon-btn{
+  border:none; background:transparent; cursor:pointer; font-size:18px;
+}
+
+.steps{
+  display:flex; align-items:center; gap:10px; margin:8px 0 16px;
+}
+.step{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 10px; border-radius:10px; background:#eef2ff; color:#1f3aa1;
+  font-weight:600; opacity:.7;
+}
+.step.active{ opacity:1; background:#e1e8ff; }
+.step span{
+  width:22px; height:22px; border-radius:50%; background:#3b82f6; color:#fff;
+  display:inline-flex; align-items:center; justify-content:center; font-size:12px;
+}
+.line{ height:1px; flex:1; background:#e5e7eb; }
+
+.step-pane{ padding: 8px 2px 2px; }
+.helper{ color:#374151; margin:6px 0 12px; }
+
+.method-grid{
+  display:grid; grid-template-columns: repeat(3, 1fr); gap:12px;
+}
+.method-card{
+  border:1px solid #cfe0ff; border-radius:12px; padding:14px;
+  text-align:left; background:#f7faff; cursor:pointer;
+  transition: transform .05s, filter .15s;
+}
+.method-card:hover{ filter:brightness(.98); }
+.method-card.selected{ border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.15) inset; }
+.method-card.disabled{ cursor:not-allowed; filter:grayscale(1); opacity:.6; }
+.method-title{ font-weight:700; color:#0f172a; }
+.method-sub{ color:#475569; font-size:13px; margin-top:3px; }
+.hourglass{ opacity:.85; }
+
+.draw-wrap{ margin-top: 12px; }
+.draw-toolbar{
+  display:flex; align-items:center; gap:10px; margin-bottom:8px;
+}
+.spacer{ flex:1; }
+.pill{
+  background:#eef2ff; color:#1f3aa1; border:1px solid #cfe0ff;
+  border-radius:999px; padding:6px 10px; font-weight:600; cursor:pointer;
+}
+.pill:disabled{ opacity:.5; cursor:not-allowed; }
+
+.draw-stage{
+  position: relative;
+  background:#f5f7fb;
+  border:1px solid #e5e7eb; border-radius:12px;
+  height: 420px;             /* fixed viewport; image will contain-fit */
+  overflow:hidden;
+}
+.draw-img{ width:100%; height:100%; object-fit: contain; user-select:none; }
+
+.box{
+  position:absolute; border:2px solid #22c55e; background: rgba(34,197,94,.18);
+  border-radius:6px; pointer-events:none;
+}
+.box.live{ border-style:dashed; background: rgba(59,130,246,.15); border-color:#3b82f6; }
+
+.hint{ color:#6b7280; font-size:12px; margin-top:8px; }
+
+.actions{
+  display:flex; justify-content:space-between; align-items: center; gap:10px; margin-top:16px;
+}
+.action-right { display: flex; gap: 10px; }
+.ghost{
+  background:#fff; border:1px solid #e5e7eb; color:#374151; border-radius:10px; padding:10px 14px;
+}
+.primary{
+  background:#3b82f6; color:#fff; border:1px solid #2f62ea; border-radius:10px; padding:10px 14px;
+  font-weight:700;
+}
+.secondary{
+  background:#6b7280; color:#fff; border:1px solid #4b5563; border-radius:10px; padding:10px 14px;
+  font-weight:600;
+}
+.primary:disabled{ opacity:.6; cursor:not-allowed; }
+
+.tuning-section { margin-bottom: 16px; }
+.results-section { margin-bottom: 16px; }
+.results-header h4 { margin: 0 0 8px 0; }
+.results-summary { 
+  display: flex; gap: 16px; margin-bottom: 16px; 
+}
+.metric { display: flex; flex-direction: column; }
+.metric-label { font-size: 12px; color: #6b7280; }
+.metric-value { font-weight: 600; color: #1f2937; }
+
+.scribe-results { margin-top: 16px; }
+.detected-scribes h5 { margin: 0 0 12px 0; color: #1f2937; }
+.scribe-item { 
+  background: #f8fafc; 
+  border: 1px solid #e2e8f0; 
+  border-radius: 8px; 
+  padding: 12px; 
+  margin-bottom: 8px; 
+}
+.scribe-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  margin-bottom: 8px; 
+}
+.scribe-title { 
+  margin: 0; 
+  font-size: 14px; 
+  font-weight: 600; 
+  color: #3b82f6; 
+}
+.scribe-range { 
+  font-size: 12px; 
+  color: #6b7280; 
+  background: #e0e7ff; 
+  padding: 2px 6px; 
+  border-radius: 4px; 
+}
+.scribe-explanation { 
+  margin: 0 0 8px 0; 
+  font-size: 13px; 
+  color: #4b5563; 
+  line-height: 1.4; 
+}
+.scribe-features { 
+  display: flex; 
+  flex-wrap: wrap; 
+  gap: 4px; 
+}
+.feature-tag { 
+  font-size: 11px; 
+  background: #ddd6fe; 
+  color: #5b21b6; 
+  padding: 2px 6px; 
+  border-radius: 12px; 
+}
+
+/* Legacy popup styles (for backwards compatibility) */
 .scribe-popup-overlay {
   position: fixed;
   top: 0;
@@ -818,12 +1277,14 @@ export default {
 }
 
 .popup-header {
-  background: #2c3e50;
-  color: white;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+  color: #ffd700;
   padding: 1.75rem 1.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 2px solid #ffd700;
+  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.2);
 }
 
 .header-content {
@@ -843,17 +1304,25 @@ export default {
   margin: 0;
   font-size: 1.5rem;
   font-weight: 600;
+  color: #ffd700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 .close-button {
   background: none;
-  border: none;
-  color: white;
+  border: 1px solid #ffd700;
+  color: #ffd700;
   font-size: 1.5rem;
   cursor: pointer;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+}
+
+.close-button:hover {
+  background: #ffd700;
+  color: #1a1a1a;
+  transform: scale(1.05);
 }
 
 .close-button:hover {
@@ -1107,6 +1576,8 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .scribe-title {
@@ -1115,6 +1586,105 @@ export default {
   font-size: 1.2rem;
   font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.scribe-range {
+  font-size: 0.9rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+.scribe-confidence {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  padding: 0.3rem 0.8rem;
+  border-radius: 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+  white-space: nowrap;
+}
+
+.scribe-return {
+  background: linear-gradient(135deg, #ffd700, #ffa500);
+  color: #1a1a1a;
+  padding: 0.3rem 0.8rem;
+  border-radius: 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(255, 215, 0, 0.3);
+  white-space: nowrap;
+  margin-left: 0.5rem;
+}
+
+.scribe-samples {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(249, 250, 251, 0.8);
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.samples-title {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+.samples-gallery {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sample-image-container {
+  position: relative;
+  min-width: 80px;
+  max-width: 200px;
+  flex: 1;
+}
+
+.sample-image {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 2px solid #d1d5db;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.sample-image:hover {
+  border-color: #6366f1;
+  transform: scale(1.02);
+}
+
+.sample-error {
+  padding: 1rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  color: #dc2626;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.sample-image:hover {
+  transform: scale(1.05);
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.sample-error {
+  font-size: 0.8rem;
+  color: #6b7280;
+  padding: 0.5rem;
+  text-align: center;
+  background: #f3f4f6;
+  border-radius: 4px;
+  border: 1px dashed #d1d5db;
 }
 
 .confidence {

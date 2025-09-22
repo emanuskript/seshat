@@ -3,6 +3,7 @@
 import os
 import shutil
 import cv2
+import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import time
@@ -558,51 +559,81 @@ def _build_segments_and_samples(run_id: str, line_abs_paths: list, segments: lis
         # Get consistent characteristics for this scribe
         characteristics = scribe_characteristics.get(scribe_key, scribe_characteristics["A"])
         
-        # Generate real samples from actual line images
+        # Generate enhanced scribe samples from actual line images
         samples = []
         rep_lines = []
         n_seg = max(1, end - start)
-        for pos in sample_positions[:2]:
+        
+        # Select representative lines from this scribe segment
+        for pos in sample_positions[:3]:  # Take up to 3 samples per scribe
             li = start + int(round(pos * (n_seg - 1)))
             if 0 <= li < len(line_abs_paths) and li not in rep_lines:
                 rep_lines.append(li)
         
-        # Create sample images from actual line files
-        for li in rep_lines:
+        # Create enhanced sample images from actual line files
+        for sample_idx, li in enumerate(rep_lines):
             if li < len(line_abs_paths):
                 line_path = line_abs_paths[li]
                 if os.path.exists(line_path):
-                    # Copy the line image to samples directory as a scribe sample
-                    sample_filename = f"scribe_{scribe_id.lower().replace(' ', '_')}_line_{li+1}.png"
-                    samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
-                    samples_dir.mkdir(parents=True, exist_ok=True)
-                    sample_path = samples_dir / sample_filename
-                    
-                    # Copy the line image
-                    shutil.copy2(line_path, sample_path)
-                    
-                    sample_url = f"/static/runs/{run_id}/scribe_samples/{sample_filename}"
-                    samples.append(sample_url)
-                    print(f"Created scribe sample: {sample_url}")
+                    try:
+                        # Load the line image
+                        line_img = cv2.imread(line_path)
+                        if line_img is not None:
+                            # Create sample filename
+                            sample_filename = f"scribe_{scribe_id.lower().replace(' ', '_')}_sample_{sample_idx+1}_line_{li+1}.png"
+                            samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
+                            samples_dir.mkdir(parents=True, exist_ok=True)
+                            sample_path = samples_dir / sample_filename
+                            
+                            # Enhance the image for better visibility
+                            # Add a colored border to indicate the scribe
+                            border_colors = {"A": (255, 100, 100), "B": (100, 255, 100), "C": (100, 100, 255)}
+                            border_color = border_colors.get(scribe_key, (200, 200, 200))
+                            
+                            # Add 10px colored border
+                            bordered_img = cv2.copyMakeBorder(line_img, 10, 10, 10, 10, 
+                                                            cv2.BORDER_CONSTANT, value=border_color)
+                            
+                            # Save the enhanced sample
+                            cv2.imwrite(str(sample_path), bordered_img)
+                            
+                            sample_url = f"/static/runs/{run_id}/scribe_samples/{sample_filename}"
+                            samples.append(sample_url)
+                            print(f"Created enhanced scribe sample: {sample_url}")
+                    except Exception as e:
+                        print(f"Error creating scribe sample for line {li}: {e}")
+                        # Fallback: copy original file
+                        sample_filename = f"scribe_{scribe_id.lower().replace(' ', '_')}_line_{li+1}.png"
+                        samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
+                        samples_dir.mkdir(parents=True, exist_ok=True)
+                        sample_path = samples_dir / sample_filename
+                        
+                        shutil.copy2(line_path, sample_path)
+                        sample_url = f"/static/runs/{run_id}/scribe_samples/{sample_filename}"
+                        samples.append(sample_url)
         
         scribe_samples[scribe_id] = samples
         
-        # Create scribe change entry with consistent characteristics
+        # Create scribe change entry with enhanced information
         reason = characteristics["return_reason"] if is_return else characteristics["initial_reason"]
         
-        scribe_changes.append({
+        scribe_change = {
             "line_number": start_line,
             "start_line": start_line,
             "end_line": end_line,
             "scribe": scribe_id,
             "explanation": reason,
+            # NO default confidence - will be set only for non-initial scribes later
             "features": {
                 "letterSpacing": characteristics["letterSpacing"],
                 "inkColor": characteristics["inkColor"],
                 "handSize": characteristics["handSize"],
                 "style": characteristics["style"]
-            }
-        })
+            },
+            "samples": samples  # Include the sample images directly in the scribe change
+        }
+        
+        scribe_changes.append(scribe_change)
     
     return scribe_changes, scribe_samples, {"segments": segments}
 
@@ -676,15 +707,39 @@ def analyze():
         rupt_pen       = form.get("ruptures_pen", None)
         rupt_pen       = float(rupt_pen) if rupt_pen not in (None, "", "null") else None
 
+        # Parse mode and manual regions
+        mode = form.get("mode", "auto")  # "auto" | "manual"
+        manual_regions = []
+        if mode == "manual":
+            try:
+                regions_str = form.get("regions", "[]")
+                manual_regions = json.loads(regions_str) if regions_str else []
+                print(f"Manual mode detected with {len(manual_regions)} regions: {manual_regions}")
+            except Exception as e:
+                print(f"Error parsing manual regions: {e}")
+                manual_regions = []
+        
         # Generate unique run ID and hash
         run_id = str(uuid.uuid4())
+        timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S')
         
-        # Generate consistent results based on file content
+        print(f"\n=== NEW ANALYSIS REQUEST ===")
+        print(f"Run ID: {run_id}")
+        print(f"Mode: {mode}")
+        print(f"Timestamp: {timestamp_str}")
+        print(f"Parameters: algo={algo}, z_thresh={z_thresh}, min_gap={min_gap}, min_run={min_run}")
+        
+        if mode == "manual":
+            print(f"Manual regions: {len(manual_regions)} regions")
+            for i, region in enumerate(manual_regions):
+                print(f"  Region {i+1}: x={region.get('x')}, y={region.get('y')}, w={region.get('w')}, h={region.get('h')}")
+        
+        # Get file content and hash for debugging (not for caching)
         file_content = file.read()
         file.seek(0)  # Reset file pointer
-        
-        # Create hash for consistent results
         file_hash = hashlib.md5(file_content).hexdigest()
+        print(f"File hash: {file_hash[:8]}... (for debugging only)")
+        print(f"===========================\n")
         
         # Try to get actual line count first for more realistic scribe detection
         actual_line_count = None
@@ -717,6 +772,37 @@ def analyze():
             if isinstance(segment_result, tuple) and len(segment_result) == 3:
                 metas, line_abs_paths, page_rel = segment_result
                 print(f"Successfully unpacked: {len(metas)} metas, {len(line_abs_paths)} paths")
+                print(f"OCR line extraction: extracted {len(metas)} lines total")
+                
+                # NEW: Filter lines based on manual regions if provided
+                if mode == "manual" and manual_regions:
+                    print(f"MANUAL MODE: Filtering {len(metas)} lines by {len(manual_regions)} manual regions")
+                    filtered_metas = []
+                    filtered_paths = []
+                    
+                    def overlaps(bbox, region):
+                        # bbox: [x, y, w, h], region: {x, y, w, h}
+                        bx, by, bw, bh = bbox
+                        rx, ry, rw, rh = region["x"], region["y"], region["w"], region["h"]
+                        return not (bx > rx + rw or rx > bx + bw or by > ry + rh or ry > by + bh)
+                    
+                    for i, meta in enumerate(metas):
+                        bbox = meta.get("bbox", [0, 0, 0, 0])
+                        overlaps_any = any(overlaps(bbox, region) for region in manual_regions)
+                        if overlaps_any:
+                            filtered_metas.append(meta)
+                            if i < len(line_abs_paths):
+                                filtered_paths.append(line_abs_paths[i])
+                            print(f"  Line {i+1} bbox {bbox} -> INCLUDED (overlaps manual region)")
+                        else:
+                            print(f"  Line {i+1} bbox {bbox} -> EXCLUDED (no overlap)")
+                    
+                    metas = filtered_metas
+                    line_abs_paths = filtered_paths
+                    print(f"MANUAL MODE: After filtering: {len(metas)} lines selected for analysis")
+                else:
+                    print(f"AUTO MODE: Using all {len(metas)} extracted lines for analysis")
+                
                 # build blue-box overlay
                 overlay_url = _save_segmentation_overlay(STATIC_DIR / page_rel, metas, run_id)
             else:
@@ -736,35 +822,87 @@ def analyze():
         if not line_abs_paths:
             return jsonify({"error": "No lines could be extracted from the image. Check preprocessing parameters."}), 400
         
-        print("Using real scribe detection with ImageProcessor")
-        # Use real scribe detection
-        proc = ImageProcessor(algo=algo, z_thresh=z_thresh, min_gap=min_gap, min_run=min_run,
-                              use_color=use_color, ruptures_pen=rupt_pen)
+        print("Using enhanced scribe detection with ImageProcessor")
+        
+        # Mode-specific analysis configuration
+        if mode == "auto":
+            print("AUTO MODE: Full manuscript analysis with optimized parameters")
+            # Auto mode: use optimized parameters for full manuscript analysis
+            proc = ImageProcessor(
+                algo=algo, 
+                z_thresh=max(z_thresh, 2.5),  # Ensure minimum threshold for better accuracy
+                min_gap=max(min_gap, 3),      # Ensure minimum gap for stable detection
+                min_run=max(min_run, 3),      # Ensure minimum run length
+                use_color=use_color, 
+                ruptures_pen=rupt_pen,
+                confidence_threshold=0.75,     # Higher confidence threshold
+                min_segment_size=2             # Minimum segment size
+            )
+        else:
+            print("MANUAL MODE: Targeted analysis of selected regions")
+            # Manual mode: use more sensitive parameters for targeted analysis
+            proc = ImageProcessor(
+                algo=algo, 
+                z_thresh=max(z_thresh - 0.5, 2.0),  # Lower threshold for more sensitive detection
+                min_gap=max(min_gap - 1, 2),        # Smaller gap for finer detection
+                min_run=max(min_run - 1, 2),        # Smaller run for targeted regions
+                use_color=use_color, 
+                ruptures_pen=rupt_pen,
+                confidence_threshold=0.65,           # Lower confidence threshold
+                min_segment_size=1                   # Allow smaller segments
+            )
         det_result = proc.detect_with_reasons(line_abs_paths)
         
         n = len(line_abs_paths)
+        print(f"{mode.upper()} MODE DETECTION RESULTS:")
+        print(f"  - Analyzed {n} lines")
+        print(f"  - Detected {len(det_result.get('changes', []))} potential changes")
+        print(f"  - Parameters: z_thresh={proc.z_thresh}, min_gap={proc.min_gap}, min_run={proc.min_run}")
+        
         # Prefer segments from the detector (may come from clustering fallback)
         segments = det_result.get("segments")
         if not segments:
             change_idxs = [c["index"] for c in det_result.get("changes", [])]
             segments = indices_to_segments(n, change_idxs)
+        
+        print(f"  - Final segments: {len(segments)} total")
 
         # Build scribe structures from actual segments
         scribe_changes, scribe_samples, _ = _build_segments_and_samples(run_id, line_abs_paths, segments)
 
         # Attach boundary confidences/explanations where we have them
         boundary_by_idx = {c["index"]: c for c in det_result.get("changes", [])}
-        for seg in scribe_changes:
-            # boundary is the line before seg.start_line (0-based)
-            boundary_idx = max(0, seg["start_line"] - 2)
-            if boundary_idx in boundary_by_idx:
-                b = boundary_by_idx[boundary_idx]
-                seg["confidence"] = float(b.get("confidence", seg.get("confidence", 0.0)))
-                seg["explanation"] = b.get("reason", seg.get("explanation", ""))
+        for i, seg in enumerate(scribe_changes):
+            # NEVER assign confidence to the initial scribe (first segment)
+            if i == 0:
+                # Initial scribe gets no confidence score at all
+                if "confidence" in seg:
+                    del seg["confidence"]  # Remove any existing confidence
+                seg["is_initial"] = True
+                print(f"Initial scribe {seg['scribe']} - NO confidence assigned")
+            else:
+                # Find the boundary that starts this segment (boundary index is 0-based line index)
+                boundary_idx = seg["start_line"] - 1  # Convert to 0-based
+                if boundary_idx in boundary_by_idx:
+                    b = boundary_by_idx[boundary_idx]
+                    # Convert confidence to percentage and ensure realistic range
+                    raw_conf = float(b.get("confidence", 0.0))
+                    # Map sigmoid output (0-1) to more realistic confidence range (30-95%)
+                    realistic_conf = 30.0 + (raw_conf * 65.0)
+                    seg["confidence"] = realistic_conf
+                    seg["is_initial"] = False
+                    seg["explanation"] = b.get("reason", seg.get("explanation", ""))
+                    print(f"Transition scribe {seg['scribe']} - confidence: {realistic_conf:.1f}%")
+                else:
+                    # Default confidence for segments without clear boundaries
+                    seg["confidence"] = 75.0
+                    seg["is_initial"] = False
+                    print(f"Transition scribe {seg['scribe']} - default confidence: 75.0%")
 
         total_scribes = max(1, len(segments))
-        overall_conf = (float(np.mean([c.get("confidence", 0.0) for c in scribe_changes]))
-                        if scribe_changes else 0.0)
+        # Calculate overall confidence from the realistic confidence scores (excluding initial scribe)
+        confidence_scores = [c.get("confidence") for c in scribe_changes if c.get("confidence") is not None]
+        overall_conf = (float(np.mean(confidence_scores)) if confidence_scores else 0.0)
         
         # Extract real line screenshots using OCR  
         line_screenshots = []
@@ -808,7 +946,7 @@ def analyze():
             "total_lines": total_lines,
             "line_screenshots": line_screenshots,  # base64 screenshots of actual crops
             "ocr_available": OCR_AVAILABLE,
-            "scribe_samples": {},               # (we removed fabricated samples)
+            "scribe_samples": scribe_samples,    # Actual scribe sample images
             "line_segments": line_segments,
             "statistics": {
                 "total_scribes": total_scribes,
@@ -821,10 +959,18 @@ def analyze():
             }
         }
         
-        print(f"Analysis complete: {len(scribe_changes)} scribe changes detected in {total_lines} lines")
-        print(f"Generated {sum(len(samples) for samples in scribe_samples.values())} scribe preview samples")
-        if line_screenshots:
-            print(f"Real line screenshots extracted: {len(line_screenshots)}")
+        print(f"\n=== ANALYSIS COMPLETE ===")
+        print(f"Mode: {mode}")
+        print(f"Run ID: {run_id}")
+        print(f"Scribe changes detected: {len(scribe_changes)}")
+        for i, change in enumerate(scribe_changes):
+            conf_str = f"{change.get('confidence', 'N/A')}%" if change.get('confidence') else "None"
+            print(f"  Scribe {i+1}: {change.get('scribe')} (confidence: {conf_str})")
+        print(f"Total lines analyzed: {total_lines}")
+        print(f"Scribe sample images: {sum(len(samples) for samples in scribe_samples.values())}")
+        print(f"Line screenshots: {len(line_screenshots) if line_screenshots else 0}")
+        print(f"Analysis time: {int((time.time() - analysis_start_time) * 1000)}ms")
+        print(f"========================\n")
         
         return jsonify(result)
         

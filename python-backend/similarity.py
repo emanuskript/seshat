@@ -200,8 +200,8 @@ class ImageProcessor:
                  smooth_win=4,
                  z_method="mad",
                  z_thresh: Optional[float]=None,
-                 min_gap=2,
-                 min_run=2,
+                 min_gap=3,           # Increased from 2 to reduce false positives
+                 min_run=3,           # Increased from 2 to ensure more stable segments
                  resize_height=128,
                  central_band_frac=0.6,
                  central_band_pad=2,
@@ -210,11 +210,14 @@ class ImageProcessor:
                  w_hog=1.0,
                  w_color=0.5,
                  algo: str = "auto",        # "auto" | "peaks" | "ruptures"
-                 ruptures_pen: Optional[float] = None):
+                 ruptures_pen: Optional[float] = None,
+                 # Enhanced detection parameters
+                 confidence_threshold=0.7,  # Minimum confidence for accepting changes
+                 min_segment_size=2):       # Minimum lines per segment
         self.metric = metric
         self.smooth_win = smooth_win
         self.z_method = z_method
-        self.z_thresh = z_thresh
+        self.z_thresh = z_thresh if z_thresh is not None else 2.5  # Increased default threshold
         self.min_gap = min_gap
         self.min_run = min_run
         self.resize_height = resize_height
@@ -226,10 +229,9 @@ class ImageProcessor:
         self.w_color = w_color
         self.algo = algo
         self.ruptures_pen = ruptures_pen
-        self.use_color = use_color
-        self.w_lbp = w_lbp
-        self.w_hog = w_hog
-        self.w_color = w_color
+        # Enhanced detection parameters
+        self.confidence_threshold = confidence_threshold
+        self.min_segment_size = min_segment_size
 
     def _band_views(self, img: np.ndarray):
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -444,6 +446,8 @@ class ImageProcessor:
         segments = indices_to_segments(len(imgs), final_changes) if len(imgs) else []
 
         changes = []
+        high_confidence_changes = []
+        
         for i in final_changes:
             if 0 <= i < len(imgs) - 1:
                 # build a percentile-based confidence from the whole distance field
@@ -452,15 +456,25 @@ class ImageProcessor:
                     base = np.sort(all_d)
                     # percentile of this boundary's distance among all boundaries
                     pct = float(np.searchsorted(base, dist[i], side="right")) / float(len(base))
-                    # sharpen mapping; avoids flat ~0.85 values
-                    conf = float(1.0 / (1.0 + np.exp(- (pct - 0.5) * 6.0)))
+                    # Enhanced sharpen mapping for more realistic confidence scores
+                    conf = float(1.0 / (1.0 + np.exp(- (pct - 0.6) * 8.0)))
                 else:
                     # fallback to z only if too few samples
-                    conf = float(1.0 / (1.0 + np.exp(-(z[i] - 2.0))))
-                a, b = diags[i], diags[i+1]
-                a["lbp_chi2"] = _chi2(a["lbp"], b["lbp"])
-                reason = _reason_from_diffs(a, b)
-                changes.append({"index": int(i), "confidence": float(conf), "reason": reason})
+                    conf = float(1.0 / (1.0 + np.exp(-(z[i] - 2.5))))
+                
+                # Only include high-confidence changes
+                if conf >= self.confidence_threshold:
+                    a, b = diags[i], diags[i+1]
+                    a["lbp_chi2"] = _chi2(a["lbp"], b["lbp"])
+                    reason = _reason_from_diffs(a, b)
+                    changes.append({"index": int(i), "confidence": float(conf), "reason": reason})
+                    high_confidence_changes.append(i)
+        
+        # Filter segments based on high-confidence changes only
+        if high_confidence_changes:
+            segments = indices_to_segments(len(imgs), high_confidence_changes)
+            # Remove segments that are too small
+            segments = [(start, end) for start, end in segments if (end - start) >= self.min_segment_size]
 
         # Fallback: contiguous clustering if we found no boundaries
         if not changes:

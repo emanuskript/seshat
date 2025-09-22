@@ -141,7 +141,7 @@ export default {
   border-radius: 12px;
   box-shadow: 0 10px 26px rgba(0,0,0,.18);
   overflow: hidden;
-  z-index: 1500;
+  z-index: 10000000 !important;
   font-size: 12px;
 }
 
