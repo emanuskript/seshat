@@ -67,6 +67,47 @@ STATIC_DIR = Path(__file__).parent / "static"
 RUNS_DIR = STATIC_DIR / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
+MAX_IMAGE_DIM = int(os.getenv("PHAROSIGHT_MAX_IMAGE_DIM", "2400"))
+
+
+def _ensure_rgb(img: Image.Image) -> Image.Image:
+    """Return an RGB copy of the given PIL image."""
+    if img.mode in ("RGBA", "LA"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[-1])
+        return background
+    if img.mode != "RGB":
+        return img.convert("RGB")
+    return img
+
+
+def _downscale_image_if_needed(file_bytes: bytes, max_dim: int = MAX_IMAGE_DIM):
+    """
+    Downscale large images to avoid exhausting memory on Render.
+    Returns (new_bytes, original_size, resized_size).
+    """
+    try:
+        with Image.open(io.BytesIO(file_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            orig_size = img.size
+            resized_size = orig_size
+
+            if max_dim and max(orig_size) > max_dim:
+                resample_ctx = getattr(Image, "Resampling", Image)
+                resample_filter = getattr(resample_ctx, "LANCZOS", Image.BICUBIC)
+                scale = max_dim / float(max(orig_size))
+                new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+                img = img.resize(new_size, resample_filter)
+                resized_size = new_size
+
+            img = _ensure_rgb(img)
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=90, optimize=True)
+            return out.getvalue(), orig_size, resized_size
+    except Exception as e:
+        print(f"[WARN] _downscale_image_if_needed failed: {e}")
+    return file_bytes, None, None
+
 # -------- Param + input helpers (avoid 400s when frontend posts query/JSON) ------
 def _get_param(key: str, default=None):
     """Fetch param from form, querystring, or JSON body (in that order)."""
@@ -1530,11 +1571,19 @@ def analyze():
         print(f"File hash: {file_hash[:8]}... (for debugging only)")
         print(f"===========================\n")
 
+        # Downscale huge images to keep memory usage reasonable on Render
+        file_content, orig_size, resized_size = _downscale_image_if_needed(file_content)
+        if orig_size:
+            if resized_size and resized_size != orig_size:
+                print(f"Downscaled page from {orig_size[0]}x{orig_size[1]} to {resized_size[0]}x{resized_size[1]}")
+            else:
+                print(f"Image size after normalization: {orig_size[0]}x{orig_size[1]}")
+
         # ------------- NEW: normalize manual regions into processed image space -------------
         # We must know the processed image size (after EXIF)
-        _tmp = Image.open(io.BytesIO(file_content))
-        _tmp = ImageOps.exif_transpose(_tmp)
-        img_w, img_h = _tmp.size
+        with Image.open(io.BytesIO(file_content)) as _tmp_img:
+            _tmp_img = ImageOps.exif_transpose(_tmp_img)
+            img_w, img_h = _tmp_img.size
         if mode == "manual":
             src_w = _get_param("regions_src_w", None)
             src_h = _get_param("regions_src_h", None)
@@ -2181,7 +2230,10 @@ def _preflight():
 
 # Ensure the Flask server starts
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", os.environ.get("HF_SPACE_PORT", "7860")))
+    host = "0.0.0.0"
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     print("Starting OCR-based scribe detection backend...")
-    print("Backend: http://localhost:5001")
-    print("Health:  http://localhost:5001/health")
-    app.run(debug=True, port=5001, host="0.0.0.0")
+    print(f"Listening on http://{host}:{port}")
+    print("Health endpoint: /health")
+    app.run(debug=debug, port=port, host=host)

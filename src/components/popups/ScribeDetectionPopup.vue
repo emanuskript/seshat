@@ -308,36 +308,32 @@
 </template>
 
 <script>
+/* eslint-disable no-console */
 import logo from '@/assets/pharosight_icon_no_text.png'
 
 export default {
   name: 'ScribeDetectionPopup',
   props: {
-    currentPage: {
-      type: Number,
-      default: 1
-    },
-    totalPages: {
-      type: Number,
-      default: 1
-    },
-    currentPageImage: {
-      type: String,
-      default: null
-    }
+    currentPage: { type: Number, default: 1 },
+    totalPages:  { type: Number, default: 1 },
+    currentPageImage: { type: String, default: null }
   },
   data() {
     return {
       logo,
+      // UI state
       isVisible: false,
+      step: 1,
+      mode: null, // 'auto' | 'manual'
+      // Analysis state
       isAnalyzing: false,
       analysisCompleted: false,
       results: null,
       segmentationOverlay: null,
-      totalLinesEstimate: 25,
       highlightedScribe: null,
       loadingMessage: 'Analyzing handwriting patterns...',
-      loadingDetail: 'Initializing scribe detection algorithm',
+      loadingDetail:  'Initializing scribe detection algorithm',
+      // Params
       params: {
         z_thresh: 2.5,
         min_gap: 3,
@@ -346,23 +342,24 @@ export default {
         sauvola_window: 31,
         algo: 'auto'
       },
-      step: 1,
-      mode: null,
-      allowEmptyManual: false,
+      // Manual drawing
       regions: [],
+      lastPayloadRegions: [],
       drawActive: false,
       liveBox: null,
-      stageRect: null,
       drawImgNaturalW: 0,
       drawImgNaturalH: 0,
+      stageRect: null,
       drawImgBox: null,
-      strictPerLine: false,
+      canDraw: false,
+      // Prepared page (server-side preprocessing cache)
       preparedJobId: null,
       preparedPageUrl: null,
       isPreparingPage: false,
+      // Debug overlay
       debugOverlayEnabled: false,
-      lastPayloadRegions: [],
-      canDraw: false,
+      // Fallback/preview cache when OCR line crops aren't present
+      segmentPreviews: Object.create(null),
     }
   },
   watch: {
@@ -375,13 +372,13 @@ export default {
             ocr_available: newResults.ocr_available,
             total_lines: newResults.total_lines
           })
-          
+          // If no OCR line screenshots, create basic previews from page image
           setTimeout(() => {
             this.$nextTick(() => {
               if (newResults.line_screenshots && newResults.line_screenshots.length > 0) {
                 console.log('Using OCR-extracted line screenshots:', newResults.line_screenshots.length)
-              } else {
-                console.log('No OCR screenshots available, using canvas method')
+              } else if (Array.isArray(newResults.scribe_changes)) {
+                console.log('No OCR screenshots available, generating fallback previews from canvas')
                 newResults.scribe_changes.forEach((change, index) => {
                   this.captureLineScreenshot(change, index)
                 })
@@ -394,47 +391,49 @@ export default {
       immediate: true
     },
     currentPage() {
-      this._resetPreparedAndDrawing();
+      this._resetPreparedAndDrawing()
     },
     currentPageImage() {
-      this._resetPreparedAndDrawing();
-      if (this.isVisible && this.mode === 'manual' && this.currentPageImage) {
-        this.$nextTick(() => this.preparePageIfNeeded());
+      this._resetPreparedAndDrawing()
+      // Only prepare in manual mode where selections depend on server-side prepped page
+      if (this.isVisible && this.currentPageImage && this.mode === 'manual') {
+        this.$nextTick(() => this.preparePageIfNeeded())
       }
     },
   },
   computed: {
     hasResults() {
-      return this.results && (this.results.primary_scribe || (this.results.scribe_changes && this.results.scribe_changes.length > 0))
+      return !!(
+        this.results &&
+        (this.results.primary_scribe ||
+         (Array.isArray(this.results.scribe_changes) && this.results.scribe_changes.length > 0))
+      )
     },
-backendBase() {
-  const vite = (typeof import.meta !== 'undefined' && import.meta.env)
-    ? import.meta.env.VITE_PHAROSIGHT_API_BASE
-    : undefined
-  const cli = (typeof process !== 'undefined' && process.env)
-    ? process.env.VUE_APP_PHAROSIGHT_API_BASE
-    : undefined
-  const base = vite || cli || 'http://localhost:5001'
-  return String(base).replace(/\/+$/, '')
-},
-
+    backendBase() {
+      const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}
+      const fromEnv = env?.VITE_PHAROSIGHT_API_BASE || env?.VUE_APP_PHAROSIGHT_API_BASE
+      const fromWindow = (typeof window !== 'undefined' && window.__PHAROSIGHT_API_BASE__) ? window.__PHAROSIGHT_API_BASE__ : null
+      const prodDefault = 'https://pharosight.onrender.com'
+      const base = fromEnv || fromWindow || prodDefault
+      return String(base).replace(/\/+$/, '')
+    },
     drawImageSrc() {
-      return (this.mode === 'manual' && this.preparedPageUrl)
-        ? this.preparedPageUrl
-        : this.currentPageImage
+      return (this.mode === 'manual' && this.preparedPageUrl) ? this.preparedPageUrl : this.currentPageImage
     },
     drawImageKey() {
-      return `${this.drawImageSrc || ''}::p=${this.currentPage}::j=${this.preparedJobId || 'none'}`;
+      return `${this.drawImageSrc || ''}::p=${this.currentPage}::j=${this.preparedJobId || 'none'}`
     },
     analyzedImageSrc() {
       return this.drawImageSrc
     },
     analyzedImageKey() {
-      return this.drawImageKey;
+      return this.drawImageKey
     },
     runButtonDisabled() {
-      const disabled = this.isAnalyzing || this.isPreparingPage || (this.mode === 'manual' && this.regions.length === 0)
-      return disabled
+      // Allow running while preparing; backend accepts raw image if no prepared job yet
+      const waiting = this.isAnalyzing
+      const manualNeedsSelection = (this.mode === 'manual' && this.regions.length === 0)
+      return waiting || manualNeedsSelection
     }
   },
   mounted() {
@@ -444,16 +443,57 @@ backendBase() {
     window.removeEventListener('resize', this.drawPageOverlay)
   },
   methods: {
+    // ---------- Lifecycle helpers ----------
+    openPopup() {
+      this.isVisible = true
+      this.resetAnalysis()
+    },
+    closePopup() {
+      this.isVisible = false
+      this.resetAnalysis()
+    },
+    resetAnalysis() {
+      this.isAnalyzing = false
+      this.analysisCompleted = false
+      this.results = null
+      this.step = 1
+      this.mode = null
+      this.regions = []
+      this.lastPayloadRegions = []
+      this.drawActive = false
+      this.liveBox = null
+      this.segmentPreviews = Object.create(null)
+    },
+    goStep(stepNum) {
+      this.step = stepNum
+    },
+    selectMode(modeType) {
+      this.mode = modeType
+      this._resetPreparedAndDrawing()
+      this.$nextTick(async () => {
+        // Only pre-prepare for manual. Auto can run without a prepared job.
+        if (this.currentPageImage && modeType === 'manual') {
+          await this.preparePageIfNeeded()
+        }
+      })
+    },
+
+    // ---------- Prepare page (server-side cache) ----------
     async preparePageIfNeeded() {
       try {
         if (!this.currentPageImage || this.preparedJobId) return
         this.isPreparingPage = true
-        const resp = await fetch(this.currentPageImage)
+        const resp = await fetch(this.currentPageImage, { mode: 'cors', cache: 'no-cache' })
         if (!resp.ok) return
         const blob = await resp.blob()
         const fd = new FormData()
         fd.append('image', blob, 'manuscript_page.jpg')
-        const r = await fetch(`${this.backendBase}/prepare`, { method: 'POST', body: fd })
+        const r = await fetch(`${this.backendBase}/prepare`, {
+          method: 'POST',
+          body: fd,
+          cache: 'no-cache',
+          mode: 'cors'
+        })
         if (!r.ok) return
         const data = await r.json()
         if (data && data.job_id && data.page_image) {
@@ -466,50 +506,13 @@ backendBase() {
         this.isPreparingPage = false
       }
     },
-    openPopup() {
-      this.isVisible = true
-      this.resetAnalysis()
-    },
-    
-    closePopup() {
-      this.isVisible = false
-      this.resetAnalysis()
-    },
-    
-    resetAnalysis() {
-      this.isAnalyzing = false
-      this.analysisCompleted = false
-      this.results = null
-      this.step = 1
-      this.mode = null
-      this.regions = []
-      this.drawActive = false
-      this.liveBox = null
-    },
 
-    goStep(stepNum) {
-      this.step = stepNum
-    },
-
-    selectMode(modeType) {
-      this.mode = modeType
-      if (modeType === 'manual') {
-        this._resetPreparedAndDrawing();
-        this.$nextTick(async () => {
-          await this.preparePageIfNeeded()
-          this.$nextTick(() => {
-            /* Image will call onDrawImgLoad when ready */
-          })
-        })
-      }
-    },
-
+    // ---------- Drawing (manual selection) ----------
     stageBounds() {
       if (!this.$refs.drawStage) return null
       this.stageRect = this.$refs.drawStage.getBoundingClientRect()
       return this.stageRect
     },
-
     updateDrawImageMetrics() {
       const stageEl = this.$refs.drawStage
       if (!stageEl) return
@@ -520,49 +523,38 @@ backendBase() {
       this.drawImgBox = imgEl.getBoundingClientRect()
       this.stageBounds()
     },
-
     onDrawImgLoad() {
       this.updateDrawImageMetrics()
       this.canDraw = true
     },
-
     toggleDraw() {
       if (!this.canDraw) return
       this.drawActive = !this.drawActive
     },
-
     clearRegions() {
       this.regions = []
     },
-
     boxStyle(r) {
-      return {
-        left: `${r.x}px`,
-        top: `${r.y}px`,
-        width: `${r.w}px`, 
-        height: `${r.h}px`,
-      }
+      return { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }
     },
-
     getDisplayedContentBox(imgEl) {
-      const rect = imgEl.getBoundingClientRect();
-      const natW = imgEl.naturalWidth;
-      const natH = imgEl.naturalHeight;
+      const rect = imgEl.getBoundingClientRect()
+      const natW = imgEl.naturalWidth
+      const natH = imgEl.naturalHeight
       if (!natW || !natH || !rect.width || !rect.height) {
-        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, offX: 0, offY: 0 };
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, offX: 0, offY: 0 }
       }
-      const natAR = natW / natH;
-      const rectAR = rect.width / rect.height;
-
-      let contentW, contentH, offX = 0, offY = 0;
+      const natAR = natW / natH
+      const rectAR = rect.width / rect.height
+      let contentW, contentH, offX = 0, offY = 0
       if (rectAR > natAR) {
-        contentH = rect.height;
-        contentW = contentH * natAR;
-        offX = (rect.width - contentW) / 2;
+        contentH = rect.height
+        contentW = contentH * natAR
+        offX = (rect.width - contentW) / 2
       } else {
-        contentW = rect.width;
-        contentH = contentW / natAR;
-        offY = (rect.height - contentH) / 2;
+        contentW = rect.width
+        contentH = contentW / natAR
+        offY = (rect.height - contentH) / 2
       }
       return {
         left: rect.left + offX,
@@ -572,167 +564,179 @@ backendBase() {
         offX,
         offY,
         rect
-      };
+      }
     },
-    _clamp(v, min, max) { return Math.max(min, Math.min(v, max)); },
-
+    _clamp(v, min, max) { return Math.max(min, Math.min(v, max)) },
     onImgDown(e) {
-      if (this.mode !== 'manual' || !this.drawActive || !this.canDraw) return;
-      const img = e.currentTarget;
-      const box = this.getDisplayedContentBox(img);
-      const natW = img.naturalWidth, natH = img.naturalHeight;
-
-      const sxC = this._clamp(e.clientX - box.left, 0, box.width);
-      const syC = this._clamp(e.clientY - box.top,  0, box.height);
-      const scaleX = natW / box.width;
-      const scaleY = natH / box.height;
-
+      if (this.mode !== 'manual' || !this.drawActive || !this.canDraw) return
+      const img = e.currentTarget
+      const box = this.getDisplayedContentBox(img)
+      const natW = img.naturalWidth, natH = img.naturalHeight
+      const sxC = this._clamp(e.clientX - box.left, 0, box.width)
+      const syC = this._clamp(e.clientY - box.top, 0, box.height)
+      const scaleX = natW / box.width
+      const scaleY = natH / box.height
       this.liveBox = {
         x: box.offX + sxC,
         y: box.offY + syC,
-        w: 0,
-        h: 0,
-        _sxC: sxC,
-        _syC: syC,
-        _box: box,
+        w: 0, h: 0,
+        _sxC: sxC, _syC: syC, _box: box,
         nx: Math.round(sxC * scaleX),
         ny: Math.round(syC * scaleY),
-        nw: 0,
-        nh: 0
-      };
-    },
-
-    onImgMove(e) {
-      if (!this.liveBox) return;
-      const img = e.currentTarget;
-      const box = this.getDisplayedContentBox(img);
-      const natW = img.naturalWidth, natH = img.naturalHeight;
-      const scaleX = natW / box.width;
-      const scaleY = natH / box.height;
-
-      const cx = this._clamp(e.clientX - box.left, 0, box.width);
-      const cy = this._clamp(e.clientY - box.top,  0, box.height);
-
-      const sx = this.liveBox._sxC;
-      const sy = this.liveBox._syC;
-
-      const leftC = Math.min(cx, sx);
-      const topC  = Math.min(cy, sy);
-      const wC    = Math.abs(cx - sx);
-      const hC    = Math.abs(cy - sy);
-
-      this.liveBox.x = box.offX + leftC;
-      this.liveBox.y = box.offY + topC;
-      this.liveBox.w = wC;
-      this.liveBox.h = hC;
-
-      this.liveBox.nx = Math.round(leftC * scaleX);
-      this.liveBox.ny = Math.round(topC  * scaleY);
-      this.liveBox.nw = Math.round(wC    * scaleX);
-      this.liveBox.nh = Math.round(hC    * scaleY);
-    },
-
-    onImgUp() {
-      if (!this.liveBox) return;
-      const r = this.liveBox;
-      if (r.w > 6 && r.h > 6) {
-        this.regions.push({
-          x: r.x, y: r.y, w: r.w, h: r.h,
-          nx: r.nx, ny: r.ny, nw: r.nw, nh: r.nh
-        });
+        nw: 0, nh: 0
       }
-      this.liveBox = null;
+    },
+    onImgMove(e) {
+      if (!this.liveBox) return
+      const img = e.currentTarget
+      const box = this.getDisplayedContentBox(img)
+      const natW = img.naturalWidth, natH = img.naturalHeight
+      const scaleX = natW / box.width
+      const scaleY = natH / box.height
+      const cx = this._clamp(e.clientX - box.left, 0, box.width)
+      const cy = this._clamp(e.clientY - box.top, 0, box.height)
+      const sx = this.liveBox._sxC
+      const sy = this.liveBox._syC
+      const leftC = Math.min(cx, sx)
+      const topC  = Math.min(cy, sy)
+      const wC    = Math.abs(cx - sx)
+      const hC    = Math.abs(cy - sy)
+      this.liveBox.x = box.offX + leftC
+      this.liveBox.y = box.offY + topC
+      this.liveBox.w = wC
+      this.liveBox.h = hC
+      this.liveBox.nx = Math.round(leftC * scaleX)
+      this.liveBox.ny = Math.round(topC  * scaleY)
+      this.liveBox.nw = Math.round(wC    * scaleX)
+      this.liveBox.nh = Math.round(hC    * scaleY)
+    },
+    onImgUp() {
+      if (!this.liveBox) return
+      const r = this.liveBox
+      if (r.w > 6 && r.h > 6) {
+        this.regions.push({ x: r.x, y: r.y, w: r.w, h: r.h, nx: r.nx, ny: r.ny, nw: r.nw, nh: r.nh })
+      }
+      this.liveBox = null
     },
 
+    // ---------- Running detection ----------
     async runDetection() {
-      console.log('runDetection called!', {
-        mode: this.mode,
-        regions: this.regions,
-        regionsLength: this.regions.length,
-        isAnalyzing: this.isAnalyzing
-      })
-      
+      console.log('runDetection()', { mode: this.mode, regions: this.regions.length, isAnalyzing: this.isAnalyzing })
       this.analysisCompleted = false
       this.results = null
       this.segmentationOverlay = null
       this.highlightedScribe = null
-      console.log('State forcefully reset for new analysis')
-      
+      this.segmentPreviews = Object.create(null)
+
       try {
         if (this.mode === 'auto') {
-          console.log('Running AUTO mode detection...')
           await this.analyzeScribes()
         } else {
-          console.log('Running MANUAL mode detection with regions...')
           const payloadRegions = this.regions.map(r => ({
-            x: Math.round(r.nx),
-            y: Math.round(r.ny),
-            w: Math.round(r.nw),
-            h: Math.round(r.nh)
+            x: Math.round(r.nx), y: Math.round(r.ny),
+            w: Math.round(r.nw), h: Math.round(r.nh)
           }))
-          console.log('Using stored natural pixel coordinates:', payloadRegions)
-          
           this.lastPayloadRegions = payloadRegions
-
           const imgEl = this.$refs.drawStage?.querySelector('img')
           const srcW = imgEl?.naturalWidth || this.drawImgNaturalW || 0
           const srcH = imgEl?.naturalHeight || this.drawImgNaturalH || 0
-          await this.analyzeScribesWithRegions(payloadRegions, srcW, srcH, this.drawImageSrc)
+          await this.analyzeScribesWithRegions(payloadRegions, srcW, srcH)
         }
-      } catch (error) {
-        console.error('Detection error:', error)
+      } catch (err) {
+        console.error('Detection error:', err)
       }
     },
 
-    async analyzeScribesWithRegions(regions, srcW = 0, srcH = 0) {
-      console.log('=== MANUAL MODE ANALYSIS START ===')
-      console.log('Mode: MANUAL (Selected Regions)')
-      console.log('Regions count:', regions.length)
-      console.log('Regions detail:', regions)
-      console.log('Parameters:', this.params)
-      console.log('Timestamp:', new Date().toISOString())
-      
-      if (this.isAnalyzing) {
-        console.log('Already analyzing, returning')
-        return
-      }
-      
+    async analyzeScribes() {
+      if (this.isAnalyzing) return
       this.isAnalyzing = true
       this.analysisCompleted = false
       this.results = null
       this.segmentationOverlay = null
       this.loadingMessage = 'Preparing manuscript image...'
-      this.loadingDetail = 'Decoding and pre-processing for region analysis'
-      
-      try {
-        console.log('Starting manual scribe analysis with regions:', regions)
+      this.loadingDetail  = 'Initializing auto analysis'
 
-        if (!this.currentPageImage) {
-          throw new Error('No page image available for analysis')
-        }
-        
-        this.loadingMessage = 'Loading page image...'
-        this.loadingDetail = 'Converting image for processing'
-        
-        console.log('Fetching image...')
-        const imageResponse = await fetch(this.currentPageImage)
-        if (!imageResponse.ok) {
-          throw new Error('Failed to fetch page image')
-        }
-        const imageBlob = await imageResponse.blob()
-        console.log('Image blob created:', imageBlob.size, 'bytes')
-        
-        this.loadingMessage = 'Configuring manual analysis...'
-        this.loadingDetail = 'Mapping selections and segmenting lines'
-        
-        const formData = new FormData()
+      try {
+        // Only send the image when we don't already have a prepared job
+        let imageBlob = null
         if (!this.preparedJobId) {
-          formData.append('image', imageBlob, 'manuscript_page.jpg')
+          if (!this.currentPageImage) throw new Error('No page image available')
+          const res = await fetch(this.currentPageImage, { mode: 'cors', cache: 'no-cache' })
+          if (!res.ok) throw new Error('Failed to fetch page image')
+          imageBlob = await res.blob()
         }
+
+        const fd = new FormData()
+        fd.append('mode', 'auto')
+        if (imageBlob) fd.append('image', imageBlob, 'manuscript_page.jpg')
+        if (this.preparedJobId) fd.append('prepared_job', this.preparedJobId)
+
+        if (this.params.z_thresh) fd.append('z_thresh', String(this.params.z_thresh))
+        fd.append('min_gap', String(this.params.min_gap))
+        fd.append('min_run', String(this.params.min_run))
+        fd.append('illum_frac', String(this.params.illum_frac))
+        fd.append('sauvola_window', String(this.params.sauvola_window))
+        fd.append('algo', this.params.algo)
+
+        const ts = Date.now() + Math.random()
+        const resp = await fetch(`${this.backendBase}/analyze?t=${ts}`, {
+          method: 'POST',
+          body: fd,
+          cache: 'no-cache',
+          mode: 'cors'
+        })
+        if (!resp.ok) throw new Error(await resp.text())
+
+        const data = await resp.json()
+        this.results = this.transformBackendResults(data)
+        if (data.segmentation_overlay) {
+          this.segmentationOverlay = `${this.backendBase}${data.segmentation_overlay}`
+        }
+        this.analysisCompleted = true
+        this.$nextTick(() => this.drawPageOverlay())
+      } catch (err) {
+        console.error('Auto analysis error:', err)
+        this.loadingMessage = 'Analysis failed'
+        this.loadingDetail = err.message || 'Unknown error'
+      } finally {
+        this.isAnalyzing = false
+      }
+    },
+
+    async analyzeScribesWithRegions(regions, srcW = 0, srcH = 0) {
+      console.log('=== MANUAL MODE ANALYSIS START ===', { regions, srcW, srcH, params: this.params })
+      if (this.isAnalyzing) return
+
+      this.isAnalyzing = true
+      this.analysisCompleted = false
+      this.results = null
+      this.segmentationOverlay = null
+      this.loadingMessage = 'Preparing manuscript image...'
+      this.loadingDetail  = 'Decoding and pre-processing for region analysis'
+
+      try {
+        if (!this.currentPageImage) throw new Error('No page image available for analysis')
+
+        // Only send the image when we don't already have a prepared job
+        let imageBlob = null
+        if (!this.preparedJobId) {
+          this.loadingMessage = 'Loading page image...'
+          this.loadingDetail  = 'Converting image for processing'
+          const imageResponse = await fetch(this.currentPageImage, { mode: 'cors', cache: 'no-cache' })
+          if (!imageResponse.ok) throw new Error('Failed to fetch page image')
+          imageBlob = await imageResponse.blob()
+        }
+
+        this.loadingMessage = 'Configuring manual analysis...'
+        this.loadingDetail  = 'Mapping selections and segmenting lines'
+
+        const formData = new FormData()
         formData.append('mode', 'manual')
         formData.append('regions', JSON.stringify(regions))
         formData.append('regions_src_w', String(srcW || 0))
         formData.append('regions_src_h', String(srcH || 0))
+        if (imageBlob) formData.append('image', imageBlob, 'manuscript_page.jpg')
+        if (this.preparedJobId) formData.append('prepared_job', this.preparedJobId)
 
         if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
         formData.append('min_gap', String(this.params.min_gap))
@@ -740,82 +744,62 @@ backendBase() {
         formData.append('illum_frac', String(this.params.illum_frac))
         formData.append('sauvola_window', String(this.params.sauvola_window))
         formData.append('algo', this.params.algo)
-        if (this.preparedJobId) formData.append('prepared_job', this.preparedJobId)
-        console.log('FormData prepared with:', {
-          mode: 'manual',
-          regions: JSON.stringify(regions),
-          regions_src_w: srcW,
-          regions_src_h: srcH,
-          prepared_job: this.preparedJobId || 'N/A'
-        })
-        
+
         this.loadingMessage = 'Extracting line features...'
-        this.loadingDetail = 'Measuring stroke width, spacing, and slant'
-        
-        console.log('Calling backend at http://localhost:5001/analyze...')
-  const timestamp = Date.now() + Math.random()
-  const response = await fetch(`${this.backendBase}/analyze?t=${timestamp}&mode=manual`, {
+        this.loadingDetail  = 'Measuring stroke width, spacing, and slant'
+
+        const ts = Date.now() + Math.random()
+        const response = await fetch(`${this.backendBase}/analyze?t=${ts}&mode=manual`, {
           method: 'POST',
           body: formData,
           cache: 'no-cache',
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
+          mode: 'cors'
         })
-        
-        console.log('Backend response status:', response.status, response.statusText)
-        
+
         if (!response.ok) {
           const errorText = await response.text()
-          console.error('Backend error response:', errorText)
           throw new Error(`Analysis failed: ${response.status} ${response.statusText}\n${errorText}`)
         }
-        
+
         const data = await response.json()
-        console.log('Manual analysis complete:', data)
-        
         this.loadingMessage = 'Clustering styles and scoring...'
-        this.loadingDetail = 'Detecting scribe transitions and computing confidence'
+        this.loadingDetail  = 'Detecting scribe transitions and computing confidence'
+
         this.results = this.transformBackendResults(data)
-        this.$nextTick(() => this.drawPageOverlay())
         if (data.segmentation_overlay) {
           this.segmentationOverlay = `${this.backendBase}${data.segmentation_overlay}`
         }
-        
+
         this.analysisCompleted = true
         this.loadingMessage = 'Analysis complete!'
-        this.loadingDetail = `Detected ${data.statistics?.total_scribes || 'multiple'} scribes in selected regions`
-        
+        this.loadingDetail  = `Detected ${data.statistics?.total_scribes || 'multiple'} scribes in selected regions`
+
+        this.$nextTick(() => this.drawPageOverlay())
       } catch (error) {
         console.error('Manual analysis error:', error)
         this.loadingMessage = 'Analysis failed'
-        this.loadingDetail = error.message || 'Unknown error occurred'
+        this.loadingDetail  = error.message || 'Unknown error occurred'
         throw error
       } finally {
-        console.log('Setting isAnalyzing to false')
         this.isAnalyzing = false
       }
     },
-    
+
     analyzeAgain() {
       this.resetAnalysis()
     },
-    
+
+    // ---------- Results helpers / previews ----------
     onAnalyzedImageLoad() {
       this.drawPageOverlay()
     },
-    
     highlightScribe(scribeName) {
       this.highlightedScribe = scribeName
     },
-    
     handleImageError(event) {
-      console.error('Failed to load scribe sample image:', event.target.src)
+      console.error('Failed to load image:', event.target.src)
       event.target.style.display = 'none'
     },
-    
     onScribeSampleError(event) {
       console.error('Failed to load scribe sample image:', event.target.src)
       event.target.style.display = 'none'
@@ -833,7 +817,9 @@ backendBase() {
         const shots = (this.results?.line_screenshots || [])
           .filter(ls => {
             const ln = ls.lineNumber || ls.line_number
-            return typeof ln === 'number' && ln >= change.start_line && ln <= change.end_line
+            return typeof ln === 'number' &&
+              ln >= (change.start_line ?? change.line_number ?? 1) &&
+              ln <= (change.end_line ?? change.line_number ?? 1)
           })
           .map(ls => ls.screenshot || ls.image || ls.data)
           .filter(Boolean)
@@ -855,6 +841,23 @@ backendBase() {
       return segImgs || []
     },
 
+    lineSegmentImagesFor(change) {
+      const idx = change && typeof change.__index === 'number' ? change.__index : null
+      if (idx == null) return []
+      return this.segmentPreviews[idx] || []
+    },
+
+    captureLineScreenshot(change, index) {
+      try {
+        const imgs = this.generateFallbackPreviews(change)
+        if (imgs && imgs.length) {
+          this.$set ? this.$set(this.segmentPreviews, index, imgs) : (this.segmentPreviews[index] = imgs)
+        }
+      } catch (e) {
+        console.warn('captureLineScreenshot failed', e)
+      }
+    },
+
     generateFallbackPreviews(change) {
       try {
         const imgEl = this.$refs.manuscriptImage
@@ -862,16 +865,14 @@ backendBase() {
 
         const totalLines = this.results?.statistics?.total_lines || this.results?.total_lines || 30
         const startLineIndex = Math.max(0, (change.start_line || 1) - 1)
-        const endLineIndex = Math.max(startLineIndex, ((change.end_line || (startLineIndex + 1)) - 1))
+        const endLineIndex = Math.max(startLineIndex, (change.end_line || (startLineIndex + 1)) - 1)
 
         const splits = (endLineIndex > startLineIndex + 1)
-          ? [
-              [startLineIndex, Math.floor((startLineIndex + endLineIndex) / 2)],
-              [Math.floor((startLineIndex + endLineIndex) / 2) + 1, endLineIndex]
-            ]
+          ? [[startLineIndex, Math.floor((startLineIndex + endLineIndex) / 2)],
+             [Math.floor((startLineIndex + endLineIndex) / 2) + 1, endLineIndex]]
           : [[startLineIndex, endLineIndex]]
 
-        const results = []
+        const out = []
         const W = imgEl.naturalWidth
         const H = imgEl.naturalHeight
         const topMargin = 0.08
@@ -881,9 +882,8 @@ backendBase() {
 
         for (const [sIdx, eIdx] of splits) {
           const startY = topMargin + ((sIdx - 0.6) * lineSpacing)
-          const endY = topMargin + ((eIdx + 1.6) * lineSpacing)
-          const cropX = 0.02
-          const cropWidth = 0.96
+          const endY   = topMargin + ((eIdx + 1.6) * lineSpacing)
+          const cropX = 0.02, cropWidth = 0.96
           const cropY = Math.max(0, startY)
           const cropHeight = Math.min(1 - cropY, endY - startY)
 
@@ -900,64 +900,368 @@ backendBase() {
           canvas.height = ch
           const ctx = canvas.getContext('2d')
           ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, cw, ch)
-          results.push(canvas.toDataURL('image/png'))
+          out.push(canvas.toDataURL('image/png'))
         }
-
-        return results
+        return out
       } catch (e) {
         console.warn('Fallback preview generation failed', e)
         return []
       }
     },
-    
-    formatLineRange(start, end) {
-      const s = Number(start ?? 1);
-      const e = Number(end ?? s);
-      return (e && e !== s) ? `lines ${s}–${e}` : `line ${s}`;
-    },
 
+    // ---------- Copy / text helpers ----------
+    formatLineRange(start, end) {
+      const s = Number(start ?? 1)
+      const e = Number(end ?? s)
+      return (e && e !== s) ? `lines ${s}–${e}` : `line ${s}`
+    },
     lastRangeForScribe(name, uptoIndex) {
-      if (!this.results?.scribe_changes) return null;
+      if (!this.results?.scribe_changes) return null
       for (let i = uptoIndex - 1; i >= 0; i--) {
-        const c = this.results.scribe_changes[i];
+        const c = this.results.scribe_changes[i]
         if (c && c.scribe === name) {
-          const s = c.start_line ?? c.line_number ?? 1;
-          const e = c.end_line ?? s;
-          return this.formatLineRange(s, e);
+          const s = c.start_line ?? c.line_number ?? 1
+          const e = c.end_line ?? s
+          return this.formatLineRange(s, e)
         }
       }
-      return null;
+      return null
     },
-
+    isScribeReturn(name, uptoIndex) {
+      return !!this.lastRangeForScribe(name, uptoIndex)
+    },
     explain(change, index) {
-      const s = change.start_line ?? change.line_number ?? 1;
-      const e = change.end_line ?? s;
-      const rangeText = this.formatLineRange(s, e);
-      const hasConf = (index > 0) && typeof change.confidence === 'number';
-      const confText = hasConf ? ` ${Math.round(change.confidence)}% confidence.` : '';
+      const s = change.start_line ?? change.line_number ?? 1
+      const e = change.end_line ?? s
+      const rangeText = this.formatLineRange(s, e)
+      const lines = []
+
+      const prevChange = index > 0 && Array.isArray(this.results?.scribe_changes)
+        ? this.results.scribe_changes[index - 1]
+        : null
 
       if (index === 0 || change.is_initial === true) {
-        return `Initial hand: ${change.scribe}. Writes ${rangeText}.`;
+        lines.push(`Initial hand: ${change.scribe}. Writes ${rangeText}.`)
+      } else {
+        const prevRange = this.lastRangeForScribe(change.scribe, index)
+        if (prevRange) {
+          lines.push(`Scribe ${change.scribe} returns — previously ${prevRange}. Now ${rangeText}.`)
+        } else {
+          lines.push(`New hand detected: ${change.scribe} takes over ${rangeText}.`)
+        }
       }
 
-      const prevRange = this.lastRangeForScribe(change.scribe, index);
-      if (prevRange) {
-        return `Scribe ${change.scribe} returns — previously ${prevRange}. Now ${rangeText}.${confText}`;
+      const featureNarrative = this.describeFeatureNarrative(change.features, prevChange?.features)
+      if (featureNarrative) {
+        lines.push(featureNarrative)
       }
 
-      return `Change to ${change.scribe}: ${rangeText}.${confText}`;
+      if (typeof change.confidence === 'number' && !change.is_initial) {
+        lines.push(this.describeConfidence(change.confidence))
+      }
+
+      return lines.join('\n')
     },
 
-    transformBackendResults(results) {
-      return results.map((change, idx) => ({
-        explanation: change.explanation ?? null,
-        samples: Array.isArray(change.samples) ? change.samples : [],
-        is_initial: change.is_initial === true || idx === 0,
-        is_return: change.is_return === true,
-        features: (change.features && typeof change.features === 'object') ? change.features : null,
-      }));
+    describeConfidence(raw) {
+      const value = Math.max(0, Math.min(100, Math.round(raw)))
+      let tier = 'moderate support'
+      if (value >= 85) tier = 'strong support'
+      else if (value < 60) tier = 'lower confidence'
+      return `Confidence: ${value}% (${tier}).`
     },
 
+    describeFeatureNarrative(features, prevFeatures) {
+      if (!features || typeof features !== 'object') {
+        return null
+      }
+
+      const comparisons = this.buildFeatureComparisons(features, prevFeatures)
+      if (comparisons.length) {
+        return `Compared with the previous hand, ${comparisons.slice(0, 2).join('; ')}.`
+      }
+
+      const cues = this.buildFeatureCues(features)
+      if (cues.length) {
+        return `Visual cues: ${cues.slice(0, 3).join(', ')}.`
+      }
+
+      return 'Visual cues: noticeable shifts in stroke weight, spacing, and rhythm.'
+    },
+
+    buildFeatureComparisons(current, previous = {}) {
+      if (!previous || typeof previous !== 'object') return []
+      const phrases = []
+      const keys = this.featurePriorityList()
+      keys.forEach(key => {
+        const curr = current?.[key]
+        const prev = previous?.[key]
+        if (curr == null || prev == null) return
+        const phrase = this.describeFeatureDifference(key, prev, curr)
+        if (phrase) phrases.push(phrase)
+      })
+      return phrases
+    },
+
+    buildFeatureCues(features) {
+      const phrases = []
+      const keys = this.featurePriorityList()
+      keys.forEach(key => {
+        const value = features?.[key]
+        if (value == null) return
+        const phrase = this.describeFeatureValue(key, value)
+        if (phrase) phrases.push(phrase)
+      })
+      return phrases
+    },
+
+    featurePriorityList() {
+      return [
+        'inkColor', 'ink_colour', 'ink_tone',
+        'slant', 'slant_angle', 'slantAngle', 'slant_consistency',
+        'baseline_straightness', 'baselineStraightness',
+        'letterSpacing', 'letter_spacing',
+        'word_spacing', 'wordSpacing',
+        'handSize',
+        'style',
+        'stroke_texture', 'stroke_texture_variance',
+        'avg_stroke_width', 'stroke_width_variance',
+        'pressure_avg', 'pressure_variance',
+        'curvature_avg', 'angularity_score',
+        'letter_height_avg', 'letter_height_variance'
+      ]
+    },
+
+    describeFeatureDifference(key, prev, curr) {
+      if (typeof curr === 'string' && typeof prev === 'string') {
+        if (curr.toLowerCase() === prev.toLowerCase()) return null
+        return `${this.friendlyFeatureName(key)} shifts from ${prev.toLowerCase()} to ${curr.toLowerCase()}`
+      }
+      if (typeof curr === 'number' && typeof prev === 'number') {
+        const delta = curr - prev
+        if (!Number.isFinite(delta)) return null
+        const threshold = this.featureDifferenceThreshold(key, prev)
+        if (Math.abs(delta) < threshold) return null
+        const direction = delta > 0 ? 'increases' : 'drops'
+        const numericText = this.formatNumericPair(key, prev, curr)
+        return `${this.friendlyFeatureName(key)} ${direction} ${numericText}`
+      }
+      return null
+    },
+
+    describeFeatureValue(key, value) {
+      if (typeof value === 'string') {
+        return this.describeStringFeature(key, value)
+      }
+      if (typeof value === 'number') {
+        return this.describeNumericFeature(key, value)
+      }
+      return null
+    },
+
+    describeStringFeature(key, value) {
+      const v = value.toLowerCase()
+      const name = this.friendlyFeatureName(key)
+      switch (key) {
+        case 'inkColor':
+        case 'ink_colour':
+        case 'ink_tone':
+          return `${name} leans ${v}`
+        case 'letterSpacing':
+        case 'letter_spacing':
+          return `${name} appears ${v}`
+        case 'style':
+          return `overall style feels ${v}`
+        case 'handSize':
+          return `hand size reads as ${v}`
+        default:
+          return `${name} looks ${v}`
+      }
+    },
+
+    describeNumericFeature(key, value) {
+      if (!Number.isFinite(value)) return null
+      switch (key) {
+        case 'slant':
+        case 'slant_angle':
+        case 'slantAngle': {
+          const angle = Math.round(value)
+          const lean = angle > 0 ? 'right' : angle < 0 ? 'left' : 'upright'
+          return `slant angle leans ${lean} (~${Math.abs(angle)}°)`
+        }
+        case 'slant_consistency': {
+          const tier = value >= 0.85 ? 'very consistent' : value >= 0.7 ? 'steady' : 'varied'
+          return `slant consistency is ${tier} (${value.toFixed(2)})`
+        }
+        case 'baseline_straightness':
+        case 'baselineStraightness': {
+          const tier = value >= 0.9 ? 'level baselines' : value >= 0.75 ? 'mostly steady baselines' : 'wavering baselines'
+          return `${tier} (${value.toFixed(2)})`
+        }
+        case 'avg_stroke_width':
+          return `stroke width averages ${value.toFixed(2)} px`
+        case 'stroke_width_variance':
+          return `stroke width variation at ${value.toFixed(2)}`
+        case 'pressure_avg': {
+          const tier = value >= 0.65 ? 'firm pressure' : value >= 0.45 ? 'medium pressure' : 'light pressure'
+          return `${tier} (${value.toFixed(2)})`
+        }
+        case 'pressure_variance':
+          return `pressure modulation ${value.toFixed(2)}`
+        case 'curvature_avg':
+          return `stroke curvature averages ${value.toFixed(2)}`
+        case 'angularity_score':
+          return `angularity score ${value.toFixed(2)}`
+        case 'letter_spacing':
+        case 'letterSpacing':
+          return `letter spacing metric ${value.toFixed(2)}`
+        case 'word_spacing':
+        case 'wordSpacing':
+          return `word spacing metric ${value.toFixed(2)}`
+        case 'letter_height_avg':
+          return `average letter height ${value.toFixed(1)} px`
+        case 'letter_height_variance':
+          return `letter height variance ${value.toFixed(2)}`
+        default:
+          return `${this.friendlyFeatureName(key)} ${value.toFixed(2)}`
+      }
+    },
+
+    friendlyFeatureName(key) {
+      const map = {
+        inkColor: 'ink tone',
+        ink_colour: 'ink tone',
+        ink_tone: 'ink tone',
+        slant: 'slant angle',
+        slant_angle: 'slant angle',
+        slantAngle: 'slant angle',
+        slant_consistency: 'slant consistency',
+        baseline_straightness: 'baseline straightness',
+        baselineStraightness: 'baseline straightness',
+        letterSpacing: 'letter spacing',
+        letter_spacing: 'letter spacing',
+        word_spacing: 'word spacing',
+        wordSpacing: 'word spacing',
+        handSize: 'hand size',
+        style: 'style',
+        avg_stroke_width: 'stroke width',
+        stroke_width_variance: 'stroke width variance',
+        pressure_avg: 'pressure',
+        pressure_variance: 'pressure variation',
+        curvature_avg: 'stroke curvature',
+        angularity_score: 'angularity',
+        letter_height_avg: 'letter height',
+        letter_height_variance: 'letter height variance'
+      }
+      if (map[key]) return map[key]
+      return key.replace(/[_\W]+/g, ' ').trim()
+    },
+
+    featureDifferenceThreshold(key, prevValue) {
+      const absolute = {
+        slant: 2,
+        slant_angle: 2,
+        slantAngle: 2,
+        baseline_straightness: 0.05,
+        baselineStraightness: 0.05,
+        pressure_avg: 0.05,
+        pressure_variance: 0.05,
+        avg_stroke_width: 0.15,
+        stroke_width_variance: 0.1,
+        letter_spacing: 0.3,
+        word_spacing: 0.5,
+        letterSpacing: 0.3,
+        wordSpacing: 0.5,
+        letter_height_avg: 0.8,
+        letter_height_variance: 0.2
+      }
+      if (absolute[key] != null) return absolute[key]
+      const base = Math.abs(prevValue) || 1
+      return Math.max(0.05 * base, 0.05)
+    },
+
+    formatNumericPair(key, prev, curr) {
+      if (['slant', 'slant_angle', 'slantAngle'].includes(key)) {
+        return `(from ${Math.round(prev)}° to ${Math.round(curr)}°)`
+      }
+      if (['letter_height_avg', 'avg_stroke_width'].includes(key)) {
+        return `(from ${prev.toFixed(1)} to ${curr.toFixed(1)} px)`
+      }
+      return `(from ${prev.toFixed(2)} to ${curr.toFixed(2)})`
+    },
+
+    transformBackendResults(data) {
+      // Preserve original fields; normalize scribe_changes and tack on indices for preview cache
+      const normalized = Array.isArray(data?.scribe_changes)
+        ? data.scribe_changes.map((ch, idx) => ({
+            ...ch,
+            __index: idx,
+            is_initial: ch.is_initial === true || idx === 0
+          }))
+        : []
+      return { ...data, scribe_changes: normalized }
+    },
+
+    // ---------- Overlay ----------
+    drawPageOverlay() {
+      try {
+        const canvas = this.$refs.pageOverlay
+        const image  = this.$refs.manuscriptImage
+        if (!canvas || !image) return
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+
+        // Size canvas to displayed image box
+        canvas.width  = image.clientWidth
+        canvas.height = image.clientHeight
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+        if (!this.debugOverlayEnabled) return
+
+        // Map natural-image pixel coords -> displayed coords within object-fit: contain box
+        const natW = image.naturalWidth || 1
+        const natH = image.naturalHeight || 1
+        const box  = this.getDisplayedContentBox(image)
+        const scaleX = box.width  / natW
+        const scaleY = box.height / natH
+
+        ctx.save()
+        ctx.translate(0, 0)
+
+        // Draw manual selection regions (if any ran)
+        if (Array.isArray(this.lastPayloadRegions) && this.lastPayloadRegions.length) {
+          ctx.strokeStyle = 'rgba(220,38,38,0.95)' // red
+          ctx.lineWidth = 2
+          ctx.fillStyle = 'rgba(220,38,38,0.15)'
+          this.lastPayloadRegions.forEach(r => {
+            const x = Math.round(box.offX + r.x * scaleX)
+            const y = Math.round(box.offY + r.y * scaleY)
+            const w = Math.round(r.w * scaleX)
+            const h = Math.round(r.h * scaleY)
+            ctx.strokeRect(x, y, w, h)
+            ctx.fillRect(x, y, w, h)
+          })
+        }
+
+        // Optionally: draw backend-provided regions if present
+        if (Array.isArray(this.results?.regions) && this.results.regions.length) {
+          ctx.strokeStyle = 'rgba(59,130,246,0.95)' // blue
+          ctx.lineWidth = 2
+          this.results.regions.forEach(({ x, y, width, height }) => {
+            const rx = Math.round(box.offX + (x || 0) * scaleX)
+            const ry = Math.round(box.offY + (y || 0) * scaleY)
+            const rw = Math.round((width  || 0) * scaleX)
+            const rh = Math.round((height || 0) * scaleY)
+            ctx.strokeRect(rx, ry, rw, rh)
+          })
+        }
+        ctx.restore()
+      } catch (e) {
+        console.warn('drawPageOverlay failed', e)
+      }
+    },
+
+    // ---------- Export ----------
     async exportPDF() {
       try {
         const el = this.$refs.exportWrapper || this.$el.querySelector('.results-section')
@@ -969,7 +1273,6 @@ backendBase() {
         const pageWidth = pdf.internal.pageSize.getWidth()
         const pageHeight = pdf.internal.pageSize.getHeight()
         const margin = 24
-
         const contentWidthPt = pageWidth - margin * 2
         const scale = contentWidthPt / canvas.width
         const contentHeightPt = canvas.height * scale
@@ -995,28 +1298,31 @@ backendBase() {
             y += sliceHeight
           }
         }
-
         pdf.save(`scribe-analysis-page-${this.currentPage || 1}.pdf`)
       } catch (e) {
         console.error(e)
         alert('Failed to export PDF')
       }
     },
+
+    // ---------- Reset helpers ----------
     _resetPreparedAndDrawing() {
-      this.preparedJobId = null;
-      this.preparedPageUrl = null;
-      this.regions = [];
-      this.liveBox = null;
-      this.lastPayloadRegions = [];
-      this.canDraw = false;
-      this.drawActive = false;
-      this.results = null;
-      this.analysisCompleted = false;
-      this.$nextTick(() => this.drawPageOverlay());
+      this.preparedJobId = null
+      this.preparedPageUrl = null
+      this.regions = []
+      this.liveBox = null
+      this.lastPayloadRegions = []
+      this.canDraw = false
+      this.drawActive = false
+      this.results = null
+      this.analysisCompleted = false
+      this.segmentPreviews = Object.create(null)
+      this.$nextTick(() => this.drawPageOverlay())
     },
   }
 }
 </script>
+
 
 <style scoped>
 /* New Two-Step Flow Styles */
@@ -1265,6 +1571,7 @@ backendBase() {
   font-size: 13px; 
   color: #4b5563; 
   line-height: 1.4; 
+  white-space: pre-line;
 }
 .scribe-features { 
   display: flex; 
