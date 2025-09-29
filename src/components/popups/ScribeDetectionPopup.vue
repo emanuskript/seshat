@@ -413,9 +413,21 @@ export default {
       const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}
       const fromEnv = env?.VITE_PHAROSIGHT_API_BASE || env?.VUE_APP_PHAROSIGHT_API_BASE
       const fromWindow = (typeof window !== 'undefined' && window.__PHAROSIGHT_API_BASE__) ? window.__PHAROSIGHT_API_BASE__ : null
-      const prodDefault = 'https://pharosight.onrender.com'
-      const base = fromEnv || fromWindow || prodDefault
-      return String(base).replace(/\/+$/, '')
+      const prodDefault = 'https://basuony-pharosight.hf.space'
+      let base = fromEnv || fromWindow || prodDefault
+
+      // Guard against legacy endpoints that should no longer receive traffic.
+      if (typeof base === 'string' && /pharosight\.onrender\.com/i.test(base)) {
+        console.warn('Legacy backend URL detected; forcing Hugging Face endpoint instead.')
+        base = prodDefault
+      }
+
+      const normalized = String(base).replace(/\/+$/, '')
+      if (!/^https?:\/\//i.test(normalized)) {
+        console.warn('Unexpected backend base URL, defaulting to Hugging Face endpoint.', normalized)
+        return prodDefault
+      }
+      return normalized
     },
     drawImageSrc() {
       return (this.mode === 'manual' && this.preparedPageUrl) ? this.preparedPageUrl : this.currentPageImage

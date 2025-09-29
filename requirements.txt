@@ -1,2 +1,0 @@
-# Reuse the backend dependency list
--r python-backend/requirements.txt

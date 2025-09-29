@@ -52,22 +52,53 @@ except ImportError as e:
     print(f"Feature extraction not available: {e}")
     FEATURE_EXTRACTION_AVAILABLE = False
 
-app = Flask(__name__, static_folder="static", static_url_path="/static")
+# Ensure logging is imported before usage
+import logging
+
+# Update dynamic data directory handling to use /tmp as the final fallback
+def get_data_dir():
+    default_data_dir = "/data" if os.environ.get("SPACE_ID") else str(Path(__file__).parent / "static")
+    data_dir = Path(os.environ.get("PHAROSIGHT_DATA_DIR", default_data_dir))
+
+    try:
+        # Test if the directory is writable
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        logging.warning(f"Permission denied for {data_dir}. Falling back to /tmp directory.")
+        data_dir = Path("/tmp/pharosight_data")
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+    return data_dir
+
+DATA_ROOT = get_data_dir()
+STATIC_ROOT = DATA_ROOT / "static"
+RUNS_DIR = STATIC_ROOT / "runs"
+
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
+RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+BASE_STATIC_DIR = Path(__file__).parent / "static"
+try:
+    if BASE_STATIC_DIR.exists():
+        shutil.copytree(BASE_STATIC_DIR, STATIC_ROOT, dirs_exist_ok=True)
+except Exception as exc:
+    logging.warning(f"Could not sync bundled static assets: {exc}")
+
+def public_url(p: Path) -> str:
+    # Build a URL under /static for anything we save
+    return "/static/" + p.relative_to(STATIC_ROOT).as_posix()
+
+# Update Flask app to use the new static folder
+app = Flask(__name__, static_url_path="/static", static_folder=str(STATIC_ROOT))
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)  # Enable CORS for Vue.js frontend
 
 # Limit request size to 10 MB
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 
 # Enable logging
-import logging
 logging.basicConfig(level=logging.INFO)
 
-# Create static directory for serving scribe samples
-STATIC_DIR = Path(__file__).parent / "static"
-RUNS_DIR = STATIC_DIR / "runs"
-RUNS_DIR.mkdir(parents=True, exist_ok=True)
-
-MAX_IMAGE_DIM = int(os.getenv("PHAROSIGHT_MAX_IMAGE_DIM", "2400"))
+MAX_IMAGE_DIM = int(os.getenv("PHAROSIGHT_MAX_IMAGE_DIM", "0"))
 
 
 def _ensure_rgb(img: Image.Image) -> Image.Image:
@@ -83,7 +114,7 @@ def _ensure_rgb(img: Image.Image) -> Image.Image:
 
 def _downscale_image_if_needed(file_bytes: bytes, max_dim: int = MAX_IMAGE_DIM):
     """
-    Downscale large images to avoid exhausting memory on Render.
+    Downscale large images to avoid exhausting memory on constrained deployments.
     Returns (new_bytes, original_size, resized_size).
     """
     try:
@@ -514,7 +545,7 @@ def _segments_to_manual_changes(segments: List[Tuple[int,int]], segment_stats: L
             sample_indices = {start, max(start, min(end - 1, start + (end - start) // 2))}
             color_map = {0: (255, 120, 120), 1: (120, 255, 120), 2: (120, 120, 255)}
             color = color_map.get(len(assigned_stats) - 1, (210, 210, 210))
-            samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
+            samples_dir = RUNS_DIR / run_id / "scribe_samples"
             samples_dir.mkdir(parents=True, exist_ok=True)
             for s_idx, img_idx in enumerate(sorted(sample_indices)):
                 if 0 <= img_idx < len(imgs_for_samples):
@@ -778,7 +809,8 @@ def _save_segmentation_overlay(page_abs_path, metas, run_id):
         cv2.rectangle(overlay, (x, y), (x + w, y + h), (255, 0, 0), 2)
     blended = cv2.addWeighted(overlay, 0.85, img, 0.15, 0)
     out_rel = f"runs/{run_id}/segmentation_overlay.jpg"
-    out_abs = STATIC_DIR / out_rel
+    out_abs = STATIC_ROOT / out_rel
+    out_abs.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_abs), blended)
     return f"/static/{out_rel}"
 
@@ -876,7 +908,7 @@ def _segment_and_crop(run_id, file_bytes, illum_frac=0.035, sauvola_window=31, s
     run_dir.mkdir(parents=True, exist_ok=True)
     pages = _split_double_page_if_needed(image)
     page_rel = f"runs/{run_id}/manuscript_page.jpg"
-    page_abs = STATIC_DIR / page_rel
+    page_abs = STATIC_ROOT / page_rel
     image.save(page_abs, 'JPEG')
     
     # Use preprocessing parameters with improved line segmentation
@@ -892,7 +924,7 @@ def _segment_and_crop(run_id, file_bytes, illum_frac=0.035, sauvola_window=31, s
         for p_idx, p_img in enumerate(pages):
             p_tag = "L" if (len(pages) == 2 and p_idx == 0) else ("R" if len(pages) == 2 else "S")
             p_rel = f"runs/{run_id}/manuscript_page_{p_tag}.jpg"
-            p_abs = STATIC_DIR / p_rel
+            p_abs = STATIC_ROOT / p_rel
             p_img.save(p_abs, "JPEG")
             metas, line_abs_paths, _ = _try_line_segmentation_method(
                 p_abs, run_dir, f"{run_id}_{p_tag}", illum_frac, sauvola_window, sauvola_k, do_deskew
@@ -991,7 +1023,7 @@ def _try_line_segmentation_method(page_abs, run_dir, run_id, illum_frac, sauvola
             raise RuntimeError("Line cropping produced no results")
         
         # Convert to absolute paths
-        line_abs_paths = [str(STATIC_DIR / rel_path) for rel_path in line_rel_paths]
+        line_abs_paths = [str(STATIC_ROOT / rel_path) for rel_path in line_rel_paths]
         
         # Generate metadata
         metas = []
@@ -1004,7 +1036,7 @@ def _try_line_segmentation_method(page_abs, run_dir, run_id, illum_frac, sauvola
                 
             metas.append({
                 "line_number": i + 1,
-                "path": str(STATIC_DIR / line_path),
+                "path": str(STATIC_ROOT / line_path),
                 "relative_path": line_path,
                 "bbox": bbox,
                 "polygon": poly
@@ -1288,7 +1320,7 @@ def _build_segments_and_samples(run_id: str, line_abs_paths: list, segments: lis
                         if line_img is not None:
                             # Create sample filename
                             sample_filename = f"scribe_{scribe_id.lower().replace(' ', '_')}_sample_{sample_idx+1}_line_{li+1}.png"
-                            samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
+                            samples_dir = RUNS_DIR / run_id / "scribe_samples"
                             samples_dir.mkdir(parents=True, exist_ok=True)
                             sample_path = samples_dir / sample_filename
                             
@@ -1311,7 +1343,7 @@ def _build_segments_and_samples(run_id: str, line_abs_paths: list, segments: lis
                         print(f"Error creating scribe sample for line {li}: {e}")
                         # Fallback: copy original file
                         sample_filename = f"scribe_{scribe_id.lower().replace(' ', '_')}_line_{li+1}.png"
-                        samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
+                        samples_dir = RUNS_DIR / run_id / "scribe_samples"
                         samples_dir.mkdir(parents=True, exist_ok=True)
                         sample_path = samples_dir / sample_filename
                         
@@ -1408,7 +1440,7 @@ def prepare():
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     page_rel = f"runs/{run_id}/manuscript_page.jpg"
-    page_abs = STATIC_DIR / page_rel
+    page_abs = STATIC_ROOT / page_rel
 
     try:
         if file is not None:
@@ -1571,7 +1603,7 @@ def analyze():
         print(f"File hash: {file_hash[:8]}... (for debugging only)")
         print(f"===========================\n")
 
-        # Downscale huge images to keep memory usage reasonable on Render
+        # Downscale huge images to keep memory usage reasonable on constrained hosts
         file_content, orig_size, resized_size = _downscale_image_if_needed(file_content)
         if orig_size:
             if resized_size and resized_size != orig_size:
@@ -1588,6 +1620,7 @@ def analyze():
             src_w = _get_param("regions_src_w", None)
             src_h = _get_param("regions_src_h", None)
             manual_regions = _normalize_regions_to_image(manual_regions, src_w, src_h, img_w, img_h)
+           
             print(f"Normalized manual regions using src({src_w}x{src_h}) -> dst({img_w}x{img_h})")
         # ------------------------------------------------------------------------------------
 
@@ -1628,7 +1661,7 @@ def analyze():
                 if mode == "manual" and manual_regions:
                     print("MANUAL MODE: Region-driven analysis (no OCR line dependency)")
                     # Create run directory for this analysis
-                    run_dir = STATIC_DIR / "runs" / run_id
+                    run_dir = RUNS_DIR / run_id
                     run_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             print(f"Error during segmentation and cropping: {e}")
@@ -1637,7 +1670,7 @@ def analyze():
         if mode == "manual" and manual_regions:
             print("MANUAL MODE: Region-driven analysis (no OCR line dependency)")
             # Create run directory for this analysis
-            run_dir = STATIC_DIR / "runs" / run_id
+            run_dir = RUNS_DIR / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             
             # 1) crop exact regions
@@ -1874,7 +1907,7 @@ def analyze():
                             color = border_colors.get(k, (200,200,200))
                             img = imgs_for_samples[i]
                             bordered = cv2.copyMakeBorder(img, 10,10,10,10, cv2.BORDER_CONSTANT, value=color)
-                            sp = STATIC_DIR / f"runs/{run_id}/scribe_samples"
+                            sp = RUNS_DIR / run_id / "scribe_samples"
                             sp.mkdir(parents=True, exist_ok=True)
                             fname = f"scribe_{chr(ord('a')+k)}_region_{i+1}.png"
                             fpath = sp / fname
@@ -1973,7 +2006,7 @@ def analyze():
         print(f"AUTO MODE: Using all {len(metas)} extracted lines for analysis")
         
         # build blue-box overlay
-        overlay_url = _save_segmentation_overlay(STATIC_DIR / page_rel, metas, run_id)
+        overlay_url = _save_segmentation_overlay(STATIC_ROOT / page_rel, metas, run_id)
     except Exception as e:
         print(f"Exception in _segment_and_crop: {e}")
         import traceback
