@@ -3,7 +3,7 @@
     <div class="scribe-card">
       <header class="scribe-header">
         <div class="header-left">
-          <img :src="require('@/assets/pharosight_icon_no_text.png')" alt="PharoSight" class="pharaonic-icon" />
+          <img :src="logo" alt="PharoSight" class="pharaonic-icon" />
           <span class="pharosight-text">PharoSight</span>
           <h3>Scribe Detection</h3>
         </div>
@@ -57,14 +57,14 @@
           </div>
 
           <!-- The same image you show in the viewer popup; use a fitted container -->
-          <div class="draw-stage"
-               ref="drawStage"
-               @mousedown="onDrawStart"
-               @mousemove="onDrawMove"
-               @mouseup="onDrawEnd"
-               @mouseleave="onDrawEnd">
-            <img v-if="currentPageImage" :src="currentPageImage" alt="Manuscript page"
-                 class="draw-img" draggable="false" />
+          <div class="draw-stage" ref="drawStage">
+            <img v-if="drawImageSrc" :src="drawImageSrc" alt="Manuscript page"
+                 class="draw-img" draggable="false"
+                 @load="onDrawImgLoad"
+                 @mousedown="onImgDown"
+                 @mousemove="onImgMove"
+                 @mouseup="onImgUp"
+                 @mouseleave="onImgUp" />
             <!-- existing rectangles -->
             <div v-for="(r, i) in regions" :key="i" class="box"
                  :style="boxStyle(r)"></div>
@@ -118,59 +118,101 @@
             </div>
           </div>
 
-          <!-- Results content would go here - keeping existing structure -->
-          <div class="scribe-results">
-            <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
-              <h5>Detected Scribes</h5>
-              <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item">
-                <div class="scribe-header">
-                  <h6 class="scribe-title">{{ change.scribe }}</h6>
-                  <!-- NEVER show confidence for initial scribe (index 0) -->
-                  <span v-if="index > 0 && change.confidence && !change.is_initial && change.confidence !== null && change.confidence !== undefined" class="scribe-confidence">
-                    {{ Math.round(change.confidence) }}% confidence
-                  </span>
-                  <!-- Show return indicator for returning scribes -->
-                  <span v-if="!change.is_initial && isScribeReturn(change.scribe, index)" class="scribe-return">
-                    (Returns)
-                  </span>
+          <!-- Export wrapper includes analyzed page + results for PDF -->
+          <div class="pdf-layout" ref="exportWrapper">
+            <div class="pdf-left" v-if="currentPageImage">
+              <div class="analyzed-card">
+                <div class="analyzed-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                  <span>Analyzed Page</span>
+                  <label class="param-label" style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                    <input type="checkbox" v-model="debugOverlayEnabled" @change="drawPageOverlay" /> Debug overlay
+                  </label>
                 </div>
-                <p class="scribe-explanation">{{ change.explanation }}</p>
-                
-                <!-- Scribe Sample Images -->
-                <div v-if="change.samples && change.samples.length > 0" class="scribe-samples">
-                  <h6 class="samples-title">Sample Handwriting:</h6>
-                  <div class="samples-gallery">
-                    <div v-for="(sample, sampleIndex) in change.samples" :key="sampleIndex" class="sample-image-container">
-                      <img :src="`http://localhost:5001${sample}`" 
-                           :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
-                           class="sample-image"
-                           @error="onScribeSampleError">
-                    </div>
+                <div class="analyzed-card-body">
+                  <div class="page-stage">
+                    <img :src="analyzedImageSrc"
+                       alt="Analyzed page"
+                       class="pdf-page-image"
+                       ref="manuscriptImage"
+                       crossorigin="anonymous"
+                       @load="onAnalyzedImageLoad"/>
+                    <canvas ref="pageOverlay" class="page-overlay"></canvas>
                   </div>
-                </div>
-                
-                <!-- Alternative: Use scribe_samples from results if samples not in change object -->
-                <div v-else-if="results.scribe_samples && results.scribe_samples[change.scribe]" class="scribe-samples">
-                  <h6 class="samples-title">Sample Handwriting:</h6>
-                  <div class="samples-gallery">
-                    <div v-for="(sample, sampleIndex) in results.scribe_samples[change.scribe]" :key="sampleIndex" class="sample-image-container">
-                      <img :src="`http://localhost:5001${sample}`" 
-                           :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
-                           class="sample-image"
-                           @error="onScribeSampleError">
-                    </div>
-                  </div>
-                </div>
-                
-                <div v-if="change.features" class="scribe-features">
-                  <span class="feature-tag" v-for="(value, key) in change.features" :key="key">
-                    {{ key }}: {{ value }}
-                  </span>
                 </div>
               </div>
             </div>
-            <div v-else>
-              <p>No scribe changes detected. The entire selection appears to be written by a single hand.</p>
+
+            <div class="pdf-right">
+              <!-- Results content -->
+              <div class="scribe-results">
+                <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
+                  <h5>Detected Scribes</h5>
+                  <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item">
+                    <div class="scribe-header">
+                      <h6 class="scribe-title">{{ change.scribe }}</h6>
+                      <!-- NEVER show confidence for initial scribe (index 0) -->
+                      <span v-if="index > 0 && change.confidence && !change.is_initial && change.confidence !== null && change.confidence !== undefined" class="scribe-confidence">
+                        {{ Math.round(change.confidence) }}% confidence
+                      </span>
+                      <!-- Show return indicator for returning scribes -->
+                      <span v-if="!change.is_initial && isScribeReturn(change.scribe, index)" class="scribe-return">
+                        (Returns)
+                      </span>
+                    </div>
+                <p class="scribe-explanation">{{ change.explanation }}</p>
+
+                <!-- Scribe Previews (prefer OCR screenshots; fallback to page crop) -->
+                <div class="scribe-samples">
+                  <h6 class="samples-title">Scribe Previews:</h6>
+                  <div class="samples-gallery">
+                    <div v-for="(shot, sIdx) in previewImagesFor(change)" :key="sIdx" class="preview-image-container">
+                      <img :src="shot"
+                           :alt="`Preview for ${change.scribe} #${sIdx+1}`"
+                           class="preview-image"
+                           @error="onScribeSampleError" />
+                    </div>
+                  </div>
+                </div>
+
+                    <!-- Scribe Sample Images (fallback only if no previews available) -->
+                    <div v-if="previewImagesFor(change).length === 0 && change.samples && change.samples.length > 0" class="scribe-samples">
+                      <h6 class="samples-title">Sample Handwriting:</h6>
+                      <div class="samples-gallery">
+                        <div v-for="(sample, sampleIndex) in change.samples" :key="sampleIndex" class="sample-image-container">
+                          <img :src="`http://localhost:5001${sample}`" 
+                               :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
+                               class="sample-image"
+                               crossorigin="anonymous"
+                               @error="onScribeSampleError">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Alternative: Use scribe_samples from results if samples not in change object -->
+                    <div v-else-if="previewImagesFor(change).length === 0 && results.scribe_samples && results.scribe_samples[change.scribe]" class="scribe-samples">
+                      <h6 class="samples-title">Sample Handwriting:</h6>
+                      <div class="samples-gallery">
+                        <div v-for="(sample, sampleIndex) in results.scribe_samples[change.scribe]" :key="sampleIndex" class="sample-image-container">
+                          <img :src="`http://localhost:5001${sample}`" 
+                               :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
+                               class="sample-image"
+                               crossorigin="anonymous"
+                               @error="onScribeSampleError">
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="change.features" class="scribe-features">
+                      <span class="feature-tag" v-for="(value, key) in change.features" :key="key">
+                        {{ key }}: {{ value }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div v-else>
+                  <p>No scribe changes detected. The entire selection appears to be written by a single hand.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -178,6 +220,13 @@
         <!-- Tuning Controls (when not analyzing and no results) -->
         <div v-else class="tuning-section">
           <div class="params-container">
+            <div v-if="mode==='manual'" class="param-group" style="margin-bottom:8px;">
+              <label class="param-label" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" v-model="strictPerLine" />
+                Strict per-line (no merging)
+              </label>
+              <p class="hint">Each drawn region is a separate segment; labels may be reused if they match strongly.</p>
+            </div>
             <h4 class="params-title">Analysis Parameters</h4>
             <div class="params-grid">
               <div class="param-group">
@@ -266,6 +315,8 @@
 </template>
 
 <script>
+import logo from '@/assets/pharosight_icon_no_text.png'
+
 export default {
   name: 'ScribeDetectionPopup',
   props: {
@@ -284,32 +335,41 @@ export default {
   },
   data() {
     return {
+      logo,
       isVisible: false,
       isAnalyzing: false,
       analysisCompleted: false,
       results: null,
-      segmentationOverlay: null, // Store overlay image URL
-      totalLinesEstimate: 25, // Default estimate for line visualization
+      segmentationOverlay: null,
+      totalLinesEstimate: 25,
       highlightedScribe: null,
       loadingMessage: 'Analyzing handwriting patterns...',
       loadingDetail: 'Initializing scribe detection algorithm',
       params: {
-        z_thresh: 2.5,    // Increased default threshold for better accuracy
-        min_gap: 3,       // Increased to reduce false positives
-        min_run: 3,       // Increased for more stable segments
+        z_thresh: 2.5,
+        min_gap: 3,
+        min_run: 3,
         illum_frac: 0.035,
         sauvola_window: 31,
         algo: 'auto'
       },
-      // New two-step flow data
       step: 1,
-      mode: null, // 'auto' or 'manual'
+      mode: null,
       allowEmptyManual: false,
-      // Manual drawing state
       regions: [],
       drawActive: false,
       liveBox: null,
-      stageRect: null
+      stageRect: null,
+      drawImgNaturalW: 0,
+      drawImgNaturalH: 0,
+      drawImgBox: null,
+      strictPerLine: false,
+      preparedJobId: null,
+      preparedPageUrl: null,
+      isPreparingPage: false,
+      debugOverlayEnabled: false,
+      lastPayloadRegions: [],
+      canDraw: false,
     }
   },
   watch: {
@@ -323,22 +383,17 @@ export default {
             total_lines: newResults.total_lines
           })
           
-          // Add a small delay to ensure DOM is fully rendered
           setTimeout(() => {
             this.$nextTick(() => {
-              // Use OCR line screenshots if available, otherwise fall back to canvas
               if (newResults.line_screenshots && newResults.line_screenshots.length > 0) {
                 console.log('Using OCR-extracted line screenshots:', newResults.line_screenshots.length)
-                console.log('Sample line screenshot:', newResults.line_screenshots[0])
-                this.displayOcrLineScreenshots(newResults)
               } else {
                 console.log('No OCR screenshots available, using canvas method')
-                console.log('line_screenshots field:', newResults.line_screenshots)
-                // Capture screenshots for each scribe change using canvas
                 newResults.scribe_changes.forEach((change, index) => {
                   this.captureLineScreenshot(change, index)
                 })
               }
+              this.drawPageOverlay()
             })
           }, 100)
         }
@@ -353,19 +408,46 @@ export default {
     backendBase() {
       return 'http://localhost:5001'
     },
+    drawImageSrc() {
+      return (this.mode === 'manual' && this.preparedPageUrl) ? this.preparedPageUrl : this.currentPageImage
+    },
+    analyzedImageSrc() {
+      return this.drawImageSrc
+    },
     runButtonDisabled() {
-      const disabled = this.isAnalyzing || (this.mode === 'manual' && this.regions.length === 0)
-      console.log('Run button disabled:', {
-        disabled,
-        isAnalyzing: this.isAnalyzing,
-        mode: this.mode,
-        regionsLength: this.regions.length,
-        step: this.step
-      })
+      const disabled = this.isAnalyzing || this.isPreparingPage || (this.mode === 'manual' && this.regions.length === 0)
       return disabled
     }
   },
+  mounted() {
+    window.addEventListener('resize', this.drawPageOverlay)
+  },
+  beforeUnmount() {
+    window.removeEventListener('resize', this.drawPageOverlay)
+  },
   methods: {
+    async preparePageIfNeeded() {
+      try {
+        if (!this.currentPageImage || this.preparedJobId) return
+        this.isPreparingPage = true
+        const resp = await fetch(this.currentPageImage)
+        if (!resp.ok) return
+        const blob = await resp.blob()
+        const fd = new FormData()
+        fd.append('image', blob, 'manuscript_page.jpg')
+        const r = await fetch(`${this.backendBase}/prepare`, { method: 'POST', body: fd })
+        if (!r.ok) return
+        const data = await r.json()
+        if (data && data.job_id && data.page_image) {
+          this.preparedJobId = data.job_id
+          this.preparedPageUrl = `${this.backendBase}/static/${data.page_image}`
+        }
+      } catch (e) {
+        console.warn('preparePageIfNeeded failed', e)
+      } finally {
+        this.isPreparingPage = false
+      }
+    },
     openPopup() {
       this.isVisible = true
       this.resetAnalysis()
@@ -387,58 +469,48 @@ export default {
       this.liveBox = null
     },
 
-    // Two-step flow methods
     goStep(stepNum) {
       this.step = stepNum
     },
 
     selectMode(modeType) {
       this.mode = modeType
+      if (modeType === 'manual') {
+        this.canDraw = false
+        this.drawActive = false
+        this.$nextTick(async () => {
+          await this.preparePageIfNeeded()
+          this.$nextTick(() => {
+            /* Image will call onDrawImgLoad when ready */
+          })
+        })
+      }
     },
 
-    // Manual drawing methods
     stageBounds() {
       if (!this.$refs.drawStage) return null
       this.stageRect = this.$refs.drawStage.getBoundingClientRect()
       return this.stageRect
     },
 
-    toStage(e) {
-      const r = this.stageBounds()
-      if (!r) return {x: 0, y: 0}
-      return { 
-        x: Math.max(0, e.clientX - r.left), 
-        y: Math.max(0, e.clientY - r.top) 
-      }
+    updateDrawImageMetrics() {
+      const stageEl = this.$refs.drawStage
+      if (!stageEl) return
+      const imgEl = stageEl.querySelector('img')
+      if (!imgEl) return
+      this.drawImgNaturalW = imgEl.naturalWidth || 0
+      this.drawImgNaturalH = imgEl.naturalHeight || 0
+      this.drawImgBox = imgEl.getBoundingClientRect()
+      this.stageBounds()
     },
 
-    onDrawStart(e) {
-      if (this.mode !== 'manual' || !this.drawActive) return
-      const {x, y} = this.toStage(e)
-      this.liveBox = { x, y, w: 0, h: 0 }
-    },
-
-    onDrawMove(e) {
-      if (!this.liveBox) return
-      const {x, y} = this.toStage(e)
-      this.liveBox = {
-        x: Math.min(x, this.liveBox.x),
-        y: Math.min(y, this.liveBox.y),
-        w: Math.abs(x - this.liveBox.x),
-        h: Math.abs(y - this.liveBox.y),
-      }
-    },
-
-    onDrawEnd() {
-      if (!this.liveBox) return
-      const {w, h} = this.liveBox
-      if (w > 6 && h > 6) {
-        this.regions.push({...this.liveBox})
-      }
-      this.liveBox = null
+    onDrawImgLoad() {
+      this.updateDrawImageMetrics()
+      this.canDraw = true
     },
 
     toggleDraw() {
+      if (!this.canDraw) return
       this.drawActive = !this.drawActive
     },
 
@@ -455,7 +527,106 @@ export default {
       }
     },
 
-    // Updated detection method
+    getDisplayedContentBox(imgEl) {
+      const rect = imgEl.getBoundingClientRect();
+      const natW = imgEl.naturalWidth;
+      const natH = imgEl.naturalHeight;
+      if (!natW || !natH || !rect.width || !rect.height) {
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, offX: 0, offY: 0 };
+      }
+      const natAR = natW / natH;
+      const rectAR = rect.width / rect.height;
+
+      let contentW, contentH, offX = 0, offY = 0;
+      if (rectAR > natAR) {
+        contentH = rect.height;
+        contentW = contentH * natAR;
+        offX = (rect.width - contentW) / 2;
+      } else {
+        contentW = rect.width;
+        contentH = contentW / natAR;
+        offY = (rect.height - contentH) / 2;
+      }
+      return {
+        left: rect.left + offX,
+        top: rect.top + offY,
+        width: contentW,
+        height: contentH,
+        offX,
+        offY,
+        rect
+      };
+    },
+    _clamp(v, min, max) { return Math.max(min, Math.min(v, max)); },
+
+    onImgDown(e) {
+      if (this.mode !== 'manual' || !this.drawActive || !this.canDraw) return;
+      const img = e.currentTarget;
+      const box = this.getDisplayedContentBox(img);
+      const natW = img.naturalWidth, natH = img.naturalHeight;
+
+      const sxC = this._clamp(e.clientX - box.left, 0, box.width);
+      const syC = this._clamp(e.clientY - box.top,  0, box.height);
+      const scaleX = natW / box.width;
+      const scaleY = natH / box.height;
+
+      this.liveBox = {
+        x: box.offX + sxC,
+        y: box.offY + syC,
+        w: 0,
+        h: 0,
+        _sxC: sxC,
+        _syC: syC,
+        _box: box,
+        nx: Math.round(sxC * scaleX),
+        ny: Math.round(syC * scaleY),
+        nw: 0,
+        nh: 0
+      };
+    },
+
+    onImgMove(e) {
+      if (!this.liveBox) return;
+      const img = e.currentTarget;
+      const box = this.getDisplayedContentBox(img);
+      const natW = img.naturalWidth, natH = img.naturalHeight;
+      const scaleX = natW / box.width;
+      const scaleY = natH / box.height;
+
+      const cx = this._clamp(e.clientX - box.left, 0, box.width);
+      const cy = this._clamp(e.clientY - box.top,  0, box.height);
+
+      const sx = this.liveBox._sxC;
+      const sy = this.liveBox._syC;
+
+      const leftC = Math.min(cx, sx);
+      const topC  = Math.min(cy, sy);
+      const wC    = Math.abs(cx - sx);
+      const hC    = Math.abs(cy - sy);
+
+      this.liveBox.x = box.offX + leftC;
+      this.liveBox.y = box.offY + topC;
+      this.liveBox.w = wC;
+      this.liveBox.h = hC;
+
+      this.liveBox.nx = Math.round(leftC * scaleX);
+      this.liveBox.ny = Math.round(topC  * scaleY);
+      this.liveBox.nw = Math.round(wC    * scaleX);
+      this.liveBox.nh = Math.round(hC    * scaleY);
+    },
+
+    onImgUp() {
+      if (!this.liveBox) return;
+      const r = this.liveBox;
+      if (r.w > 6 && r.h > 6) {
+        this.regions.push({
+          x: r.x, y: r.y, w: r.w, h: r.h,
+          nx: r.nx, ny: r.ny, nw: r.nw, nh: r.nh
+        });
+      }
+      this.liveBox = null;
+    },
+
     async runDetection() {
       console.log('runDetection called!', {
         mode: this.mode,
@@ -464,7 +635,6 @@ export default {
         isAnalyzing: this.isAnalyzing
       })
       
-      // FORCE COMPLETE STATE RESET before each analysis
       this.analysisCompleted = false
       this.results = null
       this.segmentationOverlay = null
@@ -474,35 +644,30 @@ export default {
       try {
         if (this.mode === 'auto') {
           console.log('Running AUTO mode detection...')
-          // Use existing auto detection
           await this.analyzeScribes()
         } else {
           console.log('Running MANUAL mode detection with regions...')
-          // Manual mode with regions
+          const payloadRegions = this.regions.map(r => ({
+            x: Math.round(r.nx),
+            y: Math.round(r.ny),
+            w: Math.round(r.nw),
+            h: Math.round(r.nh)
+          }))
+          console.log('Using stored natural pixel coordinates:', payloadRegions)
+          
+          this.lastPayloadRegions = payloadRegions
+
           const imgEl = this.$refs.drawStage?.querySelector('img')
-          let payloadRegions = this.regions
-          
-          // Scale regions to original image size if needed
-          if (imgEl && imgEl.naturalWidth && imgEl.naturalHeight) {
-            const scaleX = imgEl.naturalWidth / imgEl.clientWidth
-            const scaleY = imgEl.naturalHeight / imgEl.clientHeight
-            payloadRegions = this.regions.map(r => ({
-              x: Math.round(r.x * scaleX),
-              y: Math.round(r.y * scaleY),
-              w: Math.round(r.w * scaleX),
-              h: Math.round(r.h * scaleY),
-            }))
-            console.log('Scaled regions:', payloadRegions)
-          }
-          
-          await this.analyzeScribesWithRegions(payloadRegions)
+          const srcW = imgEl?.naturalWidth || this.drawImgNaturalW || 0
+          const srcH = imgEl?.naturalHeight || this.drawImgNaturalH || 0
+          await this.analyzeScribesWithRegions(payloadRegions, srcW, srcH, this.drawImageSrc)
         }
       } catch (error) {
         console.error('Detection error:', error)
       }
     },
 
-    async analyzeScribesWithRegions(regions) {
+    async analyzeScribesWithRegions(regions, srcW = 0, srcH = 0) {
       console.log('=== MANUAL MODE ANALYSIS START ===')
       console.log('Mode: MANUAL (Selected Regions)')
       console.log('Regions count:', regions.length)
@@ -520,7 +685,7 @@ export default {
       this.results = null
       this.segmentationOverlay = null
       this.loadingMessage = 'Preparing manuscript image...'
-      this.loadingDetail = 'Processing image for manual analysis'
+      this.loadingDetail = 'Decoding and pre-processing for region analysis'
       
       try {
         console.log('Starting manual scribe analysis with regions:', regions)
@@ -529,12 +694,9 @@ export default {
           throw new Error('No page image available for analysis')
         }
         
-        console.log('Current page image:', this.currentPageImage)
+        this.loadingMessage = 'Loading page image...'
+        this.loadingDetail = 'Converting image for processing'
         
-        this.loadingMessage = 'Fetching manuscript data...'
-        this.loadingDetail = 'Converting image format'
-        
-        // Fetch the image and convert to blob for upload
         console.log('Fetching image...')
         const imageResponse = await fetch(this.currentPageImage)
         if (!imageResponse.ok) {
@@ -544,36 +706,43 @@ export default {
         console.log('Image blob created:', imageBlob.size, 'bytes')
         
         this.loadingMessage = 'Configuring manual analysis...'
-        this.loadingDetail = 'Setting up detection for selected regions'
+        this.loadingDetail = 'Mapping selections and segmenting lines'
         
-        // Create FormData for upload with manual mode
         const formData = new FormData()
-        formData.append('image', imageBlob, 'manuscript_page.jpg')
+        if (!this.preparedJobId) {
+          formData.append('image', imageBlob, 'manuscript_page.jpg')
+        }
         formData.append('mode', 'manual')
         formData.append('regions', JSON.stringify(regions))
+        formData.append('regions_src_w', String(srcW || 0))
+        formData.append('regions_src_h', String(srcH || 0))
+
         if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
         formData.append('min_gap', String(this.params.min_gap))
         formData.append('min_run', String(this.params.min_run))
         formData.append('illum_frac', String(this.params.illum_frac))
         formData.append('sauvola_window', String(this.params.sauvola_window))
         formData.append('algo', this.params.algo)
-        
+        if (this.preparedJobId) formData.append('prepared_job', this.preparedJobId)
+        formData.append('strict_per_line', this.strictPerLine ? '1' : '0')
+
         console.log('FormData prepared with:', {
           mode: 'manual',
-          regions: regions,
-          params: this.params
+          regions: JSON.stringify(regions),
+          regions_src_w: srcW,
+          regions_src_h: srcH,
+          prepared_job: this.preparedJobId || 'N/A'
         })
         
-        this.loadingMessage = 'Analyzing selected regions...'
-        this.loadingDetail = 'Running scribe detection on manual selections'
+        this.loadingMessage = 'Extracting line features...'
+        this.loadingDetail = 'Measuring stroke width, spacing, and slant'
         
-        // Call the Python backend with aggressive cache-busting
         console.log('Calling backend at http://localhost:5001/analyze...')
-        const timestamp = Date.now() + Math.random()  // Extra random for uniqueness
+        const timestamp = Date.now() + Math.random()
         const response = await fetch(`http://localhost:5001/analyze?t=${timestamp}&mode=manual`, {
           method: 'POST',
           body: formData,
-          cache: 'no-cache',  // Disable caching
+          cache: 'no-cache',
           headers: {
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
@@ -592,7 +761,10 @@ export default {
         const data = await response.json()
         console.log('Manual analysis complete:', data)
         
-        this.results = data
+        this.loadingMessage = 'Clustering styles and scoring...'
+        this.loadingDetail = 'Detecting scribe transitions and computing confidence'
+        this.results = this.transformBackendResults(data)
+        this.$nextTick(() => this.drawPageOverlay())
         if (data.segmentation_overlay) {
           this.segmentationOverlay = `${this.backendBase}${data.segmentation_overlay}`
         }
@@ -614,11 +786,10 @@ export default {
     
     analyzeAgain() {
       this.resetAnalysis()
-      // This will show the parameter controls again since hasResults will be false
     },
     
-    onImageLoad() {
-      console.log('Manuscript image loaded successfully')
+    onAnalyzedImageLoad() {
+      this.drawPageOverlay()
     },
     
     highlightScribe(scribeName) {
@@ -633,7 +804,6 @@ export default {
     onScribeSampleError(event) {
       console.error('Failed to load scribe sample image:', event.target.src)
       event.target.style.display = 'none'
-      // Optionally, show a placeholder or error message
       const container = event.target.parentElement
       if (container && !container.querySelector('.sample-error')) {
         const errorMsg = document.createElement('div')
@@ -642,9 +812,90 @@ export default {
         container.appendChild(errorMsg)
       }
     },
+
+    lineScreenshotsFor(change) {
+      try {
+        const shots = (this.results?.line_screenshots || [])
+          .filter(ls => {
+            const ln = ls.lineNumber || ls.line_number
+            return typeof ln === 'number' && ln >= change.start_line && ln <= change.end_line
+          })
+          .map(ls => ls.screenshot || ls.image || ls.data)
+          .filter(Boolean)
+
+        if (shots.length <= 3) return shots
+        const mid = Math.floor(shots.length / 2)
+        const last = shots.length - 1
+        return [shots[0], shots[mid], shots[last]]
+      } catch (e) {
+        console.warn('Failed to derive line screenshots for change', change, e)
+        return []
+      }
+    },
+
+    previewImagesFor(change) {
+      const ocrShots = this.lineScreenshotsFor(change)
+      if (ocrShots && ocrShots.length) return ocrShots
+      const segImgs = this.lineSegmentImagesFor(change)
+      return segImgs || []
+    },
+
+    generateFallbackPreviews(change) {
+      try {
+        const imgEl = this.$refs.manuscriptImage
+        if (!imgEl || !imgEl.complete || imgEl.naturalWidth === 0) return []
+
+        const totalLines = this.results?.statistics?.total_lines || this.results?.total_lines || 30
+        const startLineIndex = Math.max(0, (change.start_line || 1) - 1)
+        const endLineIndex = Math.max(startLineIndex, ((change.end_line || (startLineIndex + 1)) - 1))
+
+        const splits = (endLineIndex > startLineIndex + 1)
+          ? [
+              [startLineIndex, Math.floor((startLineIndex + endLineIndex) / 2)],
+              [Math.floor((startLineIndex + endLineIndex) / 2) + 1, endLineIndex]
+            ]
+          : [[startLineIndex, endLineIndex]]
+
+        const results = []
+        const W = imgEl.naturalWidth
+        const H = imgEl.naturalHeight
+        const topMargin = 0.08
+        const bottomMargin = 0.12
+        const textAreaHeight = 1 - topMargin - bottomMargin
+        const lineSpacing = textAreaHeight / totalLines
+
+        for (const [sIdx, eIdx] of splits) {
+          const startY = topMargin + ((sIdx - 0.6) * lineSpacing)
+          const endY = topMargin + ((eIdx + 1.6) * lineSpacing)
+          const cropX = 0.02
+          const cropWidth = 0.96
+          const cropY = Math.max(0, startY)
+          const cropHeight = Math.min(1 - cropY, endY - startY)
+
+          const sx = Math.round(cropX * W)
+          const sy = Math.round(cropY * H)
+          const sw = Math.round(cropWidth * W)
+          const sh = Math.round(cropHeight * H)
+          if (sw <= 4 || sh <= 4) continue
+
+          const canvas = document.createElement('canvas')
+          const cw = 600
+          const ch = Math.max(140, Math.round(cw * (sh / sw)))
+          canvas.width = cw
+          canvas.height = ch
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, cw, ch)
+          results.push(canvas.toDataURL('image/png'))
+        }
+
+        return results
+      } catch (e) {
+        console.warn('Fallback preview generation failed', e)
+        return []
+      }
+    },
     
     isScribeReturn(scribeName, currentIndex) {
-      // Check if this scribe appeared earlier in the list
       if (!this.results?.scribe_changes || currentIndex === 0) return false
       
       for (let i = 0; i < currentIndex; i++) {
@@ -663,15 +914,12 @@ export default {
       console.log('Displaying OCR line screenshots')
       console.log('Available screenshots:', results.line_screenshots?.length || 0)
       
-      // If no OCR screenshots, use canvas method
       if (!results.line_screenshots || results.line_screenshots.length === 0) {
         console.log('No OCR screenshots available, using canvas fallback')
         return
       }
       
-      // Update each canvas with the corresponding screenshot
       results.scribe_changes.forEach((change, index) => {
-        // Find the canvas for this scribe change
         this.$nextTick(() => {
           const canvas = this.$refs[`lineCanvas${index}`]
           if (!canvas || !canvas[0]) {
@@ -679,7 +927,6 @@ export default {
             return
           }
           
-          // Find OCR screenshots for this scribe change
           const relatedScreenshots = results.line_screenshots.filter(lineData => 
             lineData.lineNumber >= change.start_line && lineData.lineNumber <= change.end_line
           )
@@ -687,25 +934,18 @@ export default {
           console.log(`Scribe change ${change.scribe}: found ${relatedScreenshots.length} related screenshots`)
           
           if (relatedScreenshots.length > 0) {
-            // Use the first related screenshot
             const lineData = relatedScreenshots[0]
             const ctx = canvas[0].getContext('2d')
             
-            // Create an image from the base64 data
             const img = new Image()
             img.onload = () => {
-              // Clear the canvas
               ctx.clearRect(0, 0, canvas[0].width, canvas[0].height)
-              
-              // Draw the screenshot image
               ctx.drawImage(img, 0, 0, canvas[0].width, canvas[0].height)
-              
               console.log(`Successfully displayed screenshot for line ${lineData.lineNumber}`)
             }
             
             img.onerror = () => {
               console.error(`Failed to load screenshot for line ${lineData.lineNumber}`)
-              // Draw error indicator
               ctx.fillStyle = '#ff0000'
               ctx.fillRect(0, 0, canvas[0].width, canvas[0].height)
               ctx.fillStyle = '#ffffff'
@@ -713,7 +953,6 @@ export default {
               ctx.fillText('Image Load Error', 10, 30)
             }
             
-            // Set the image source to trigger loading
             img.src = lineData.screenshot
           }
         })
@@ -721,9 +960,134 @@ export default {
       
       console.log('OCR line screenshots display complete')
     },
+
+    drawPageOverlay() {
+      try {
+        const imgEl = this.$refs.manuscriptImage
+        const canvas = this.$refs.pageOverlay
+        if (!imgEl || !canvas) return
+
+        const parent = imgEl.parentElement
+        const parentRect = parent.getBoundingClientRect()
+        const imgRect = imgEl.getBoundingClientRect()
+        const cs = getComputedStyle(imgEl)
+
+        const bl = parseFloat(cs.borderLeftWidth)  || 0
+        const br = parseFloat(cs.borderRightWidth) || 0
+        const bt = parseFloat(cs.borderTopWidth)   || 0
+        const bb = parseFloat(cs.borderBottomWidth)|| 0
+
+        const left = (imgRect.left - parentRect.left) + bl
+        const top  = (imgRect.top  - parentRect.top)  + bt
+        const cssW = imgRect.width  - bl - br
+        const cssH = imgRect.height - bt - bb
+
+        const dpr = window.devicePixelRatio || 1
+        canvas.style.left = left + 'px'
+        canvas.style.top  = top  + 'px'
+        canvas.style.width  = cssW + 'px'
+        canvas.style.height = cssH + 'px'
+        canvas.width  = Math.max(1, Math.round(cssW * dpr))
+        canvas.height = Math.max(1, Math.round(cssH * dpr))
+
+        const ctx = canvas.getContext('2d')
+        ctx.setTransform(1,0,0,1,0,0)
+        ctx.clearRect(0,0,canvas.width,canvas.height)
+        ctx.scale(dpr, dpr)
+
+        const naturalW = imgEl.naturalWidth
+        const naturalH = imgEl.naturalHeight
+        if (!naturalW || !naturalH || cssW <= 0 || cssH <= 0) return
+
+        const scaleX = cssW / naturalW
+        const scaleY = cssH / naturalH
+
+        const segments = (this.results && this.results.line_segments) ? this.results.line_segments : []
+        if (!segments || segments.length === 0) return
+
+        ctx.lineWidth = 2
+        ctx.strokeStyle = 'rgba(255, 193, 7, 0.9)'
+        ctx.fillStyle   = 'rgba(255, 193, 7, 0.15)'
+
+        for (const seg of segments) {
+          const b = seg.bbox || [0,0,0,0]
+          const x = b[0] * scaleX
+          const y = b[1] * scaleY
+          const w = b[2] * scaleX
+          const h = b[3] * scaleY
+          if (w > 2 && h > 2) {
+            ctx.beginPath()
+            ctx.rect(x, y, w, h)
+            ctx.stroke()
+            ctx.fill()
+          }
+        }
+
+        if (this.debugOverlayEnabled && this.lastPayloadRegions && this.lastPayloadRegions.length) {
+          ctx.save()
+          ctx.setLineDash([6, 4])
+          ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)'
+          ctx.fillStyle = 'rgba(0, 255, 255, 0.10)'
+          this.lastPayloadRegions.forEach((r) => {
+            const x = (r.x || 0) * scaleX
+            const y = (r.y || 0) * scaleY
+            const w = (r.w || 0) * scaleX
+            const h = (r.h || 0) * scaleY
+            if (w > 2 && h > 2) {
+              ctx.beginPath()
+              ctx.rect(x, y, w, h)
+              ctx.stroke()
+              ctx.fill()
+            }
+          })
+          ctx.restore()
+        }
+
+        if (this.debugOverlayEnabled) {
+          ctx.save()
+          ctx.setTransform(1,0,0,1,0,0)
+          ctx.scale(dpr, dpr)
+          ctx.fillStyle = 'rgba(0,0,0,0.65)'
+          ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+          ctx.font = '12px monospace'
+          const lines = [
+            `natural: ${naturalW}x${naturalH}`,
+            `display: ${cssW}x${cssH} dpr:${dpr}`,
+            `segments: ${segments.length} payload:${this.lastPayloadRegions?.length || 0}`,
+            `prepared: ${!!this.preparedJobId}`
+          ]
+          let y0 = 8
+          lines.forEach(t => {
+            const wtext = ctx.measureText(t).width
+            ctx.fillRect(8, y0, wtext + 6, 14)
+            ctx.fillStyle = '#fff'
+            ctx.fillText(t, 11, y0 + 10)
+            ctx.fillStyle = 'rgba(0,0,0,0.65)'
+            y0 += 18
+          })
+          ctx.restore()
+        }
+      } catch (e) {
+        console.warn('Failed to draw overlay', e)
+      }
+    },
+
+    lineSegmentImagesFor(change) {
+      try {
+        const segs = (this.results && this.results.line_segments) ? this.results.line_segments : []
+        if (!segs || segs.length === 0) return []
+        const start = Math.max(0, (change.start_line || 1) - 1)
+        const end = Math.max(start, (change.end_line || (start + 1)) - 1)
+        const imgs = []
+        for (let i = start; i <= end && i < segs.length; i++) {
+          const img = segs[i]?.image
+          if (img) imgs.push(img)
+        }
+        return imgs
+      } catch (_) { return [] }
+    },
     
     captureLineScreenshot(change, index) {
-      // Use a longer timeout to ensure everything is rendered
       setTimeout(() => {
         this.$nextTick(() => {
           const canvas = this.$refs[`lineCanvas${index}`]
@@ -740,7 +1104,6 @@ export default {
             return
           }
           
-          // Wait for image to be fully loaded and visible
           if (!manuscriptImg.complete || manuscriptImg.naturalWidth === 0) {
             console.log('Image not ready, retrying in 500ms...')
             setTimeout(() => this.captureLineScreenshot(change, index), 500)
@@ -759,36 +1122,28 @@ export default {
             return
           }
           
-          // Use the actual total lines from results
           const totalLines = this.results?.statistics?.total_lines || 30
           console.log(`Total lines in document: ${totalLines}`)
           
-          // More precise positioning based on manuscript structure
-          const topMargin = 0.08 // 8% top margin
-          const bottomMargin = 0.12 // 12% bottom margin  
+          const topMargin = 0.08
+          const bottomMargin = 0.12
           const textAreaHeight = 1 - topMargin - bottomMargin
-          
-          // Calculate line spacing
           const lineSpacing = textAreaHeight / totalLines
           
-          // Calculate positions for the specific lines with padding
           const startLineIndex = Math.max(0, change.start_line - 1)
           const endLineIndex = Math.min(totalLines - 1, change.end_line - 1)
           
-          // Add padding above and below the target lines
           const paddingLines = 1.0
           const startY = topMargin + ((startLineIndex - paddingLines) * lineSpacing)
           const endY = topMargin + ((endLineIndex + paddingLines + 1) * lineSpacing)
           
-          // Crop area calculations - wider area to capture full lines
-          const cropX = 0.02 // 2% left margin
-          const cropWidth = 0.96 // 96% width to include full lines
+          const cropX = 0.02
+          const cropWidth = 0.96
           const cropY = Math.max(0, startY)
           const cropHeight = Math.min(1 - cropY, endY - startY)
           
           console.log(`Crop percentages - x:${cropX}, y:${cropY}, w:${cropWidth}, h:${cropHeight}`)
           
-          // Convert to pixel coordinates
           const sourceX = Math.round(cropX * imgNaturalWidth)
           const sourceY = Math.round(cropY * imgNaturalHeight)
           const sourceWidth = Math.round(cropWidth * imgNaturalWidth)
@@ -796,13 +1151,11 @@ export default {
           
           console.log(`Source pixels: x=${sourceX}, y=${sourceY}, w=${sourceWidth}, h=${sourceHeight}`)
           
-          // Ensure we have valid dimensions
           if (sourceWidth <= 0 || sourceHeight <= 0) {
             console.error('Invalid crop dimensions calculated')
             return
           }
           
-          // Set canvas dimensions
           const canvasWidth = 400
           const aspectRatio = sourceWidth / sourceHeight
           const canvasHeight = Math.max(60, Math.round(canvasWidth / aspectRatio))
@@ -810,27 +1163,22 @@ export default {
           canvas[0].width = canvasWidth
           canvas[0].height = canvasHeight
           
-          // Clear canvas
           ctx.clearRect(0, 0, canvasWidth, canvasHeight)
           
           try {
-            // Draw the cropped section
             ctx.drawImage(
               manuscriptImg,
               sourceX, sourceY, sourceWidth, sourceHeight,
               0, 0, canvasWidth, canvasHeight
             )
             
-            // Add a border to help visualize the crop
             ctx.strokeStyle = 'rgba(220, 20, 60, 0.8)'
             ctx.lineWidth = 2
             ctx.strokeRect(1, 1, canvasWidth - 2, canvasHeight - 2)
             
-            // Add line indicators
             ctx.strokeStyle = 'rgba(255, 0, 0, 0.4)'
             ctx.lineWidth = 1
             
-            // Draw lines to indicate where each text line should be
             for (let i = startLineIndex; i <= endLineIndex; i++) {
               const relativeY = ((topMargin + (i * lineSpacing)) - cropY) / cropHeight
               const lineY = relativeY * canvasHeight
@@ -841,18 +1189,16 @@ export default {
                 ctx.lineTo(canvasWidth - 10, lineY)
                 ctx.stroke()
                 
-                // Add line number
                 ctx.fillStyle = 'rgba(255, 0, 0, 0.8)'
                 ctx.font = '10px Arial'
                 ctx.fillText(`${i + 1}`, 5, lineY - 2)
               }
             }
             
-            console.log(`✓ Successfully captured screenshot for lines ${change.start_line}-${change.end_line}`)
+            console.log(`Successfully captured screenshot for lines ${change.start_line}-${change.end_line}`)
             
           } catch (error) {
             console.error('Failed to capture line screenshot:', error)
-            // Draw a detailed error placeholder
             ctx.fillStyle = '#f8f9fa'
             ctx.fillRect(0, 0, canvasWidth, canvasHeight)
             
@@ -867,15 +1213,13 @@ export default {
             ctx.fillText(change.scribe, canvasWidth / 2, canvasHeight / 2 + 20)
           }
         })
-      }, 200) // Initial delay to ensure DOM is ready
+      }, 200)
     },
     
-    // Debug method to help calibrate line positioning
     showLineGrid() {
       const manuscriptImg = this.$refs.manuscriptImage
       if (!manuscriptImg || !manuscriptImg.complete) return
       
-      // Create a temporary overlay to show all line positions
       const overlay = document.createElement('canvas')
       const ctx = overlay.getContext('2d')
       
@@ -889,12 +1233,10 @@ export default {
       
       manuscriptImg.parentElement.appendChild(overlay)
       
-      // Set canvas size to match image
       const rect = manuscriptImg.getBoundingClientRect()
       overlay.width = rect.width
       overlay.height = rect.height
       
-      // Draw line grid
       const totalLines = 30
       const topMargin = 0.10
       const bottomMargin = 0.15
@@ -911,13 +1253,11 @@ export default {
         ctx.lineTo(overlay.width, y)
         ctx.stroke()
         
-        // Add line number
         ctx.fillStyle = 'red'
         ctx.font = '12px Arial'
         ctx.fillText(`Line ${i + 1}`, 5, y - 2)
       }
       
-      // Remove overlay after 5 seconds
       setTimeout(() => {
         overlay.remove()
       }, 5000)
@@ -934,9 +1274,9 @@ export default {
       this.isAnalyzing = true
       this.analysisCompleted = false
       this.results = null
-      this.segmentationOverlay = null // Reset overlay
+      this.segmentationOverlay = null
       this.loadingMessage = 'Preparing manuscript image...'
-      this.loadingDetail = 'Processing image for analysis'
+      this.loadingDetail = 'Decoding and pre-processing for analysis'
       
       try {
         console.log('Starting scribe analysis...')
@@ -945,10 +1285,9 @@ export default {
           throw new Error('No page image available for analysis')
         }
         
-        this.loadingMessage = 'Fetching manuscript data...'
-        this.loadingDetail = 'Converting image format'
+        this.loadingMessage = 'Loading page image...'
+        this.loadingDetail = 'Converting image for processing'
         
-        // Fetch the image and convert to blob for upload
         const imageResponse = await fetch(this.currentPageImage)
         if (!imageResponse.ok) {
           throw new Error('Failed to fetch page image')
@@ -956,12 +1295,13 @@ export default {
         const imageBlob = await imageResponse.blob()
         
         this.loadingMessage = 'Configuring analysis parameters...'
-        this.loadingDetail = 'Setting up detection algorithms'
+        this.loadingDetail = 'Selecting algorithms and thresholds'
         
-        // Create FormData for upload (+ params)
         const formData = new FormData()
-        formData.append('image', imageBlob, 'manuscript_page.jpg')
-        formData.append('mode', 'auto')  // Explicitly set auto mode
+        if (!this.preparedJobId) {
+          formData.append('image', imageBlob, 'manuscript_page.jpg')
+        }
+        formData.append('mode', 'auto')
         if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
         formData.append('min_gap', String(this.params.min_gap))
         formData.append('min_run', String(this.params.min_run))
@@ -969,15 +1309,14 @@ export default {
         formData.append('sauvola_window', String(this.params.sauvola_window))
         formData.append('algo', this.params.algo)
         
-        this.loadingMessage = 'Analyzing handwriting patterns...'
-        this.loadingDetail = 'Running scribe detection algorithms'
+        this.loadingMessage = 'Extracting line features...'
+        this.loadingDetail = 'Measuring stroke width, spacing, and slant'
         
-        // Call the Python backend with aggressive cache-busting
-        const timestamp = Date.now() + Math.random()  // Extra random for uniqueness
+        const timestamp = Date.now() + Math.random()
         const response = await fetch(`http://localhost:5001/analyze?t=${timestamp}&mode=auto`, {
           method: 'POST',
           body: formData,
-          cache: 'no-cache',  // Disable caching
+          cache: 'no-cache',
           headers: {
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
@@ -989,8 +1328,8 @@ export default {
           throw new Error(`Analysis failed: ${response.statusText}`)
         }
         
-        this.loadingMessage = 'Processing results...'
-        this.loadingDetail = 'Identifying unique scribes'
+        this.loadingMessage = 'Clustering styles and scoring...'
+        this.loadingDetail = 'Detecting scribe transitions and confidence'
         
         const data = await response.json()
         console.log('Raw backend response:', {
@@ -1001,8 +1340,8 @@ export default {
           total_lines: data.total_lines
         })
         
-        // Transform backend response to frontend format
         this.results = this.transformBackendResults(data)
+        this.$nextTick(() => this.drawPageOverlay())
         console.log('Analysis results transformed:', this.results)
         
       } catch (error) {
@@ -1019,27 +1358,60 @@ export default {
       const scribeChanges = data.scribe_changes || []
       const totalLines = data.total_lines || 30
       
-      // Store the segmentation overlay URL
       if (data.segmentation_overlay) {
         this.segmentationOverlay = `http://localhost:5001${data.segmentation_overlay}`
         console.log('Segmentation overlay available:', this.segmentationOverlay)
       }
       
-      // Use the backend scribe changes directly - no more "primary scribe" creation
-      const transformedChanges = scribeChanges.map((change) => ({
+      const transformedChanges = scribeChanges.map((change, idx) => ({
         scribe: change.scribe || `Scribe at line ${change.line_number}`,
-        confidence: change.confidence || 0.7,
-        start_line: change.start_line || change.line_number,
-        end_line: change.end_line || (change.line_number + 1),
+        confidence: (change.confidence !== undefined && change.confidence !== null)
+          ? change.confidence
+          : undefined,
+        start_line: change.start_line ?? change.line_number,
+        end_line: change.end_line ?? (change.line_number + 1),
         explanation: change.explanation || "Handwriting change detected through analysis.",
-        samples: change.samples || []
+        samples: change.samples || [],
+        is_initial: change.is_initial === true || idx === 0,
+        is_return: change.is_return === true,
+        features: change.features || {
+          handSize: 'medium',
+          inkColor: 'black',
+          letterSpacing: 'normal',
+          style: 'formal'
+        }
       }))
       
-      // Calculate statistics
-      const totalScribes = transformedChanges.length
-      const avgConfidence = transformedChanges.length > 0 
-        ? transformedChanges.reduce((sum, s) => sum + s.confidence, 0) / totalScribes
-        : 0.8
+      const uniqScribes = Array.from(new Set(transformedChanges.map(c => c.scribe)))
+      let finalChanges = transformedChanges
+      if (uniqScribes.length <= 1 && transformedChanges.length > 0) {
+        const s = transformedChanges.reduce((acc, c) => ({
+          start: Math.min(acc.start, c.start_line),
+          end: Math.max(acc.end, c.end_line)
+        }), { start: transformedChanges[0].start_line, end: transformedChanges[0].end_line })
+        finalChanges = [{
+          scribe: transformedChanges[0].scribe,
+          confidence: undefined,
+          start_line: s.start,
+          end_line: s.end,
+          explanation: 'No scribe changes detected across the analyzed selection; handwriting appears consistent.',
+          samples: transformedChanges.flatMap(c => c.samples || []).slice(0, 3),
+          is_initial: true,
+          is_return: false,
+          features: transformedChanges[0].features || {}
+        }]
+      }
+
+      const confs = finalChanges
+        .slice(1)
+        .map(s => s.confidence)
+        .filter(v => typeof v === 'number')
+
+      const avgConfidence = confs.length
+        ? confs.reduce((a, b) => a + b, 0) / confs.length
+        : undefined
+
+      const totalScribes = finalChanges.length
       
       console.log('Transformed results:', {
         scribe_changes: transformedChanges,
@@ -1048,9 +1420,11 @@ export default {
       })
 
       return {
-        scribe_changes: transformedChanges,
+        scribe_changes: finalChanges,
         line_screenshots: data.line_screenshots || [],
         ocr_available: data.ocr_available,
+        page_image: data.page_image || null,
+        line_segments: data.line_segments || [],
         statistics: {
           total_scribes: totalScribes,
           overall_confidence: avgConfidence,
@@ -1062,20 +1436,42 @@ export default {
 
     async exportPDF() {
       try {
-        const el = this.$el.querySelector('.results-section')
+        const el = this.$refs.exportWrapper || this.$el.querySelector('.results-section')
         if (!el) return
         const { jsPDF } = await import('jspdf')
         const html2canvas = (await import('html2canvas')).default
-        const canvas = await html2canvas(el, { scale: 2 })
-        const imgData = canvas.toDataURL('image/png')
+        const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true })
         const pdf = new jsPDF('p', 'pt', 'a4')
         const pageWidth = pdf.internal.pageSize.getWidth()
         const pageHeight = pdf.internal.pageSize.getHeight()
-        // fit within margins
         const margin = 24
-        const w = pageWidth - margin * 2
-        const h = canvas.height * (w / canvas.width)
-        pdf.addImage(imgData, 'PNG', margin, margin, w, Math.min(h, pageHeight - margin*2))
+
+        const contentWidthPt = pageWidth - margin * 2
+        const scale = contentWidthPt / canvas.width
+        const contentHeightPt = canvas.height * scale
+        const pageContentHeightPt = pageHeight - margin * 2
+
+        if (contentHeightPt <= pageContentHeightPt) {
+          const imgData = canvas.toDataURL('image/png')
+          pdf.addImage(imgData, 'PNG', margin, margin, contentWidthPt, contentHeightPt)
+        } else {
+          const pageCanvasHeightPx = Math.floor(pageContentHeightPt / scale)
+          let y = 0
+          while (y < canvas.height) {
+            const sliceHeight = Math.min(pageCanvasHeightPx, canvas.height - y)
+            const sliceCanvas = document.createElement('canvas')
+            sliceCanvas.width = canvas.width
+            sliceCanvas.height = sliceHeight
+            const sctx = sliceCanvas.getContext('2d')
+            sctx.drawImage(canvas, 0, y, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight)
+            const sliceImg = sliceCanvas.toDataURL('image/png')
+            const sliceHeightPt = sliceHeight * scale
+            if (y > 0) pdf.addPage()
+            pdf.addImage(sliceImg, 'PNG', margin, margin, contentWidthPt, sliceHeightPt)
+            y += sliceHeight
+          }
+        }
+
         pdf.save(`scribe-analysis-page-${this.currentPage || 1}.pdf`)
       } catch (e) {
         console.error(e)
@@ -1106,13 +1502,108 @@ export default {
 .scribe-header{
   display:flex; align-items:center; justify-content:space-between;
   margin-bottom: 8px;
+  background: 
+    linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
+  padding: 12px 18px;
+  border-radius: 14px 14px 0px 0px;
+  margin: -16px -18px 0px -18px;
+  box-shadow: 
+    0 4px 12px rgba(0,0,0,0.3), 
+    inset 0 1px 0 rgba(212, 175, 55, 0.2),
+    inset 0 -1px 0 rgba(212, 175, 55, 0.3);
+  position: relative;
+  overflow: hidden;
 }
-.scribe-header h3{ margin:0; font-size: 22px; }
-.header-left { display: flex; align-items: center; gap: 8px; }
-.pharaonic-icon { width: 24px; height: 24px; }
-.pharosight-text { font-weight: 600; color: #3b82f6; }
+
+/* Faded gold scribe icon pattern for topbar (subtle, less icons) */
+.scribe-header::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ctext x='0' y='24' font-size='28' fill='%23eac663' fill-opacity='0.07'%3E%E2%98%A5%3C/text%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ctext x='0' y='24' font-size='28' fill='%23f6d684' fill-opacity='0.06'%3E%E2%98%A5%3C/text%3E%3C/svg%3E");
+  background-size: 32px 32px;
+  background-position:
+    0px 0px,
+    64px 32px;
+  background-repeat: repeat;
+}
+
+.scribe-header > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* Add separator between header and content */
+.scribe-header + .steps {
+  border-top: 1px solid rgba(212, 175, 55, 0.2);
+  margin-top: 16px !important;
+  padding-top: 8px;
+}
+
+.scribe-header h3{ 
+  margin:0; 
+  font-size: 22px; 
+  color: #f4d03f;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7), 0 0 10px rgba(244, 208, 63, 0.3);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.header-left { 
+  display: flex; 
+  align-items: center; 
+  gap: 12px; 
+}
+.pharaonic-icon { 
+  width: 32px; 
+  height: 32px; 
+  filter: drop-shadow(0 0 8px rgba(244, 208, 63, 0.6)) 
+          drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+  transition: all 0.3s ease;
+}
+.pharaonic-icon:hover {
+  filter: drop-shadow(0 0 12px rgba(244, 208, 63, 0.8)) 
+          drop-shadow(0 2px 6px rgba(0,0,0,0.6));
+  transform: scale(1.05);
+}
+.pharosight-text { 
+  font-weight: 700; 
+  color: #f4d03f;
+  font-size: 20px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7), 0 0 10px rgba(244, 208, 63, 0.3);
+  letter-spacing: 1px;
+  background: linear-gradient(45deg, #d4af37, #f4d03f, #d4af37);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: pharaonicGlow 3s ease-in-out infinite;
+}
 .icon-btn{
-  border:none; background:transparent; cursor:pointer; font-size:18px;
+  border:none; 
+  background: rgba(212, 175, 55, 0.1); 
+  cursor:pointer; 
+  font-size:20px;
+  color: #f4d03f;
+  transition: all 0.2s ease;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+.icon-btn:hover {
+  background: rgba(212, 175, 55, 0.2);
+  border-color: #d4af37;
+  transform: scale(1.1);
+  box-shadow: 0 0 12px rgba(244, 208, 63, 0.4);
+}
+
+@keyframes pharaonicGlow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
 }
 
 .steps{
@@ -1131,7 +1622,7 @@ export default {
 .line{ height:1px; flex:1; background:#e5e7eb; }
 
 .step-pane{ padding: 8px 2px 2px; }
-.helper{ color:#374151; margin:6px 0 12px; }
+.helper{ color:#374151; margin:6px  0 12px; }
 
 .method-grid{
   display:grid; grid-template-columns: repeat(3, 1fr); gap:12px;
@@ -1142,7 +1633,7 @@ export default {
   transition: transform .05s, filter .15s;
 }
 .method-card:hover{ filter:brightness(.98); }
-.method-card.selected{ border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.15) inset; }
+.method-card.selected{ border-color:#3b82f6; box-shadow:0 0 0 0 3px rgba(59,130,246,.15) inset; }
 .method-card.disabled{ cursor:not-allowed; filter:grayscale(1); opacity:.6; }
 .method-title{ font-weight:700; color:#0f172a; }
 .method-sub{ color:#475569; font-size:13px; margin-top:3px; }
@@ -1150,6 +1641,7 @@ export default {
 
 .draw-wrap{ margin-top: 12px; }
 .draw-toolbar{
+ 
   display:flex; align-items:center; gap:10px; margin-bottom:8px;
 }
 .spacer{ flex:1; }
@@ -1218,11 +1710,12 @@ export default {
   align-items: center; 
   margin-bottom: 8px; 
 }
-.scribe-title { 
-  margin: 0; 
-  font-size: 14px; 
-  font-weight: 600; 
-  color: #3b82f6; 
+.scribe-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #f4d03f; /* gold like header */
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7), 0 0 6px rgba(244, 208, 63, 0.25);
 }
 .scribe-range { 
   font-size: 12px; 
@@ -1309,6 +1802,9 @@ export default {
 }
 
 .close-button {
+
+
+
   background: none;
   border: 1px solid #ffd700;
   color: #ffd700;
@@ -1554,6 +2050,73 @@ export default {
   font-size: 1.1rem;
 }
 
+/* PDF layout: analyzed page + results side-by-side */
+.pdf-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.pdf-left {
+  flex: 1;
+  max-width: 45%;
+}
+
+.pdf-right {
+  flex: 1.4;
+}
+
+.analyzed-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.analyzed-card-header {
+  padding: 10px 12px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.analyzed-card-body {
+  padding: 10px;
+}
+
+.page-stage {
+  position: relative;
+  width: 100%;
+}
+
+.page-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.pdf-page-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+  object-fit: contain;
+  border-radius: 6px;
+  /* Removed border from image */
+  border: none;
+}
+
+/* Added border to the container */
+.analyzed-card {
+  border: 1px solid #e5e7eb;
+}
+
 .scribe-item {
   background: #f8f9fa;
   border-radius: 12px;
@@ -1582,10 +2145,10 @@ export default {
 
 .scribe-title {
   margin: 0;
-  color: #1e40af;
+  color: #f4d03f; /* gold like header */
   font-size: 1.2rem;
-  font-weight: 700;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  font-weight: 800;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7), 0 0 6px rgba(244, 208, 63, 0.25);
 }
 
 .scribe-range {
@@ -1632,33 +2195,62 @@ export default {
   font-weight: 600;
 }
 
+
+/* Fix sample thumbnails rendering as black rectangles */
 .samples-gallery {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
+  max-width: 100%;
 }
 
 .sample-image-container {
   position: relative;
-  min-width: 80px;
-  max-width: 200px;
-  flex: 1;
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;            /* prevent bleed while allowing natural sizing */
+  box-shadow: none;
+  max-width: 280px;            /* cap width so tiles don't overflow */
 }
 
 .sample-image {
-  width: 100%;
+  display: block;
+  width: auto;
   height: auto;
-  border-radius: 6px;
-  border: 2px solid #d1d5db;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
+  max-width: 100%;
+  max-height: 180px;           /* keep tall images contained */
+  background: transparent;
+  border: none;
+  transition: transform 0.2s ease;
   cursor: pointer;
 }
 
 .sample-image:hover {
-  border-color: #6366f1;
   transform: scale(1.02);
+}
+
+/* Dedicated preview sizing (for OCR/fallback previews) */
+.preview-image-container {
+  position: relative;
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;            /* keep content inside tile */
+  box-shadow: none;
+  max-width: 280px;            /* cap width per tile */
+}
+
+.preview-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 180px;           /* keep tall previews within view */
+  background: transparent;
 }
 
 .sample-error {
@@ -1883,7 +2475,7 @@ export default {
 
 /* Pharaonic Theme Styles */
 .pharaonic-header {
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #020617 100%);
+  background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%);
   border-bottom: 4px solid #fbbf24;
   position: relative;
   overflow: hidden;

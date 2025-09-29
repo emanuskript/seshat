@@ -600,5 +600,5 @@ def static_files(filename):
 
 if __name__ == "__main__":
     # Change default port if 5000 is busy
-    port = int(os.getenv("PORT", "5001"))
+    port = int(os.getenv("PORT", "5002"))
     app.run(host="0.0.0.0", port=port, debug=True)

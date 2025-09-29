@@ -9,9 +9,19 @@ import numpy as np
 # try SciPy for extra distance metrics; not required
 try:
     from scipy.spatial.distance import cdist as _scipy_cdist
+    from scipy.stats import norm
     _HAS_SCIPY = True
 except Exception:
     _HAS_SCIPY = False
+
+# Try scikit-learn for PCA and covariance
+try:
+    from sklearn.decomposition import PCA
+    from sklearn.covariance import EmpiricalCovariance
+    from sklearn.linear_model import LogisticRegression
+    _HAS_SKLEARN = True
+except Exception:
+    _HAS_SKLEARN = False
 
 # Optional, principled change-point detection
 try:
@@ -54,6 +64,41 @@ def consecutive_distances(X: np.ndarray, metric: str = "cosine") -> np.ndarray:
     else:
         return _cosine_consecutive(X)
 
+def _whiten(X: np.ndarray, keep: int = 32):
+    """PCA whitening for robust Mahalanobis distance computation."""
+    if not _HAS_SKLEARN:
+        return X, None  # fallback
+    k = min(keep, X.shape[1], max(4, X.shape[0]-1))
+    try:
+        p = PCA(n_components=k, svd_solver='auto', random_state=0)
+        Z = p.fit_transform(X)  # centered & projected
+        cov = EmpiricalCovariance().fit(Z)
+        return Z, cov
+    except Exception:
+        return X, None
+
+def _fused_consecutive(X: np.ndarray) -> np.ndarray:
+    """Fused cosine + whitened Mahalanobis distance for robust change detection."""
+    # raw cosine
+    cos = _cosine_consecutive(X)
+    # whitened mahalanobis on PCA
+    if X.shape[0] >= 6 and _HAS_SKLEARN:
+        try:
+            Z, cov = _whiten(X)
+            if cov is not None:
+                maha = []
+                for i in range(Z.shape[0]-1):
+                    d = Z[i+1] - Z[i]
+                    maha.append(float(np.sqrt(cov.mahalanobis([d])[0])))
+                maha = np.array(maha, np.float32)
+                # fuse (normalize each to median=1)
+                cos_n  = cos / (np.median(cos)+1e-9)
+                maha_n = maha / (np.median(maha)+1e-9)
+                return 0.5*cos_n + 0.5*maha_n
+        except Exception:
+            pass  # fallback to cosine only
+    return cos
+
 def _smooth(x: np.ndarray, win: int = 3) -> np.ndarray:
     x = np.asarray(x, np.float64)
     if x.size == 0 or win <= 1: return x.copy()
@@ -90,19 +135,60 @@ def _nms_min_gap(peaks: List[int], z: np.ndarray, min_gap: int) -> List[int]:
             kept.append(p)
     return sorted(kept)
 
+def _bh_fdr(z: np.ndarray, alpha=0.10):
+    """Benjamini-Hochberg FDR control for peak selection."""
+    if not _HAS_SCIPY:
+        # Fallback to simple threshold
+        return _peaks_from_thresh(z, 2.0)
+    p = 2 * (1 - norm.cdf(np.abs(z)))
+    m = len(p)
+    order = np.argsort(p)
+    keep = []
+    for rank, idx in enumerate(order, start=1):
+        if p[idx] <= alpha * rank / m:
+            keep.append(idx)
+    return sorted(keep)
+
+def _calibrate_conf(scores: np.ndarray) -> np.ndarray:
+    """Calibrate confidence scores to realistic 50-95% range."""
+    if scores.size < 6:
+        # min-max to [0.5, 0.95]
+        ptp = float(np.ptp(scores)) if scores.size else 0.0
+        s = (scores - scores.min()) / (ptp + 1e-9)
+        return 0.5 + 0.45 * s
+    
+    if not _HAS_SKLEARN:
+        # Fallback to simple scaling
+        ptp = float(np.ptp(scores)) if scores.size else 0.0
+        s = (scores - scores.min()) / (ptp + 1e-9)
+        return 0.5 + 0.45 * s
+    
+    try:
+        thr = np.percentile(scores, 80)
+        y = (scores >= thr).astype(np.float32)
+        Xlr = scores.reshape(-1, 1)
+        lr = LogisticRegression(C=1.0, solver="lbfgs", max_iter=100)
+        lr.fit(Xlr, y)
+        p = lr.predict_proba(Xlr)[:, 1]
+        return 0.5 + 0.45 * ((p - p.min()) / (p.max() - p.min() + 1e-9))
+    except Exception:
+        # Fallback to simple scaling
+        ptp = float(np.ptp(scores)) if scores.size else 0.0
+        s = (scores - scores.min()) / (ptp + 1e-9)
+        return 0.5 + 0.45 * s
+
 def detect_change_indices(X: np.ndarray, metric="cosine", smooth_win=3, z_method="mad",
                           z_thresh: Optional[float]=None, min_gap=2):
-    dist = consecutive_distances(X, metric=metric)
+    """Detect change points using fused distance and FDR control."""
+    dist = _fused_consecutive(X) if metric == "cosine" else consecutive_distances(X, metric=metric)
     if dist.size == 0:
         return [], dist, np.array([])
     
     smooth_dist = _smooth(dist, win=smooth_win)
     z = _zscore(smooth_dist, method=z_method)
     
-    if z_thresh is None:
-        z_thresh = 2.0
-    
-    peaks = _peaks_from_thresh(z, z_thresh)
+    # Use FDR for peak selection instead of fixed threshold
+    peaks = _bh_fdr(z, alpha=0.10)  # 10% FDR
     peaks = _nms_min_gap(peaks, z, min_gap)
     
     return peaks, smooth_dist, z
@@ -448,26 +534,32 @@ class ImageProcessor:
         changes = []
         high_confidence_changes = []
         
-        for i in final_changes:
+        # Build per-boundary raw score from fused distance for calibration
+        all_d = consecutive_distances(X, metric=self.metric)
+        if all_d.size >= 3 and final_changes:
+            # Extract scores at change points for calibration
+            scores = np.array([abs(z[i]) if i < len(z) else 1.0 for i in final_changes])
+            cal = _calibrate_conf(scores)
+        else:
+            cal = None
+        
+        for idx, i in enumerate(final_changes):
             if 0 <= i < len(imgs) - 1:
-                # build a percentile-based confidence from the whole distance field
-                all_d = consecutive_distances(X, metric=self.metric)
-                if all_d.size >= 3:
-                    base = np.sort(all_d)
-                    # percentile of this boundary's distance among all boundaries
-                    pct = float(np.searchsorted(base, dist[i], side="right")) / float(len(base))
-                    # Enhanced sharpen mapping for more realistic confidence scores
-                    conf = float(1.0 / (1.0 + np.exp(- (pct - 0.6) * 8.0)))
+                # Use calibrated confidence if available
+                if cal is not None:
+                    raw_conf = float(cal[idx])  # already 0.50–0.95
                 else:
-                    # fallback to z only if too few samples
-                    conf = float(1.0 / (1.0 + np.exp(-(z[i] - 2.5))))
+                    # Fallback to simple calculation
+                    zi = float(np.clip(z[i] if i < len(z) else 0.0, 0.0, 4.0)) if z.size else 0.0
+                    raw_conf = 0.60 + 0.10 * (zi / 4.0)
+                    raw_conf = float(np.clip(raw_conf, 0.50, 0.95))
                 
                 # Only include high-confidence changes
-                if conf >= self.confidence_threshold:
+                if raw_conf >= (self.confidence_threshold * 0.01):  # convert percentage to 0-1
                     a, b = diags[i], diags[i+1]
                     a["lbp_chi2"] = _chi2(a["lbp"], b["lbp"])
                     reason = _reason_from_diffs(a, b)
-                    changes.append({"index": int(i), "confidence": float(conf), "reason": reason})
+                    changes.append({"index": int(i), "confidence": float(raw_conf), "reason": reason})
                     high_confidence_changes.append(i)
         
         # Filter segments based on high-confidence changes only

@@ -1,0 +1,8 @@
+# Ignore Trash folders that may contain old project copies
+**/.Trash/**
+**/Library/Mobile Documents/**/.Trash/**
+
+# Standard ignores
+node_modules/
+dist/
+build/

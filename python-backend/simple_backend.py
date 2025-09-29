@@ -11,11 +11,12 @@ import random
 import hashlib
 import base64
 import io
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 import uuid
 from pathlib import Path
 import math
 import numpy as np
+from typing import List, Dict, Tuple
 
 # Try to import OCR functionality, fallback if not available
 try:
@@ -36,14 +37,20 @@ except ImportError as e:
 
 # Try to import similarity analysis
 try:
-    from similarity import ImageProcessor, indices_to_segments
+    # Import helpers to build meaningful explanations
+    from similarity import ImageProcessor, indices_to_segments, _reason_from_diffs, _chi2
     SIMILARITY_AVAILABLE = True
 except ImportError as e:
     print(f"Similarity analysis not available: {e}")
     SIMILARITY_AVAILABLE = False
+
+# Try to import feature extraction for embeddings
+try:
+    from feature_extractor import line_embedding
+    FEATURE_EXTRACTION_AVAILABLE = True
 except ImportError as e:
-    print(f"OCR not available: {e}")
-    OCR_AVAILABLE = False
+    print(f"Feature extraction not available: {e}")
+    FEATURE_EXTRACTION_AVAILABLE = False
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Vue.js frontend
@@ -56,6 +63,47 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 @app.route("/static/<path:filename>")
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
+
+# ----------------------------- NEW: coordinate helper -----------------------------
+def _normalize_regions_to_image(regions, src_w, src_h, dst_w, dst_h):
+    """
+    Map regions drawn in the FRONTEND's source space (usually naturalWidth/naturalHeight)
+    into the ACTUAL processed image space (after EXIF transpose etc).
+
+    If src_w/src_h are 0/empty, we assume coords are already in dst pixels.
+    Returns a list of dicts with integer x,y,w,h.
+    """
+    out = []
+    if not regions:
+        return out
+    try:
+        src_w = int(src_w or 0)
+        src_h = int(src_h or 0)
+    except Exception:
+        src_w, src_h = 0, 0
+
+    if src_w <= 0 or src_h <= 0:
+        # Treat as already in page pixels
+        for r in regions:
+            out.append({
+                "x": int(round(r.get("x", 0))),
+                "y": int(round(r.get("y", 0))),
+                "w": int(round(r.get("w", 0))),
+                "h": int(round(r.get("h", 0))),
+            })
+        return out
+
+    sx = float(dst_w) / float(src_w)
+    sy = float(dst_h) / float(src_h)
+    for r in regions:
+        out.append({
+            "x": int(round(r.get("x", 0) * sx)),
+            "y": int(round(r.get("y", 0) * sy)),
+            "w": int(round(r.get("w", 0) * sx)),
+            "h": int(round(r.get("h", 0) * sy)),
+        })
+    return out
+# -----------------------------------------------------------------------------------
 
 def _split_double_page_if_needed(pil_image):
     """
@@ -90,6 +138,517 @@ def _split_double_page_if_needed(pil_image):
         R = pil_image.crop((min(pil_image.width, gutter + pad), 0, pil_image.width, pil_image.height))
         return [L, R]
     return [pil_image]
+
+def _segments_from_regions(metas, regions):
+    """
+    Convert manual regions (image coords) to contiguous line index segments over 'metas'.
+    Returns a list of (start_idx, end_idx) with end exclusive.
+    """
+    selected = []
+    for i, m in enumerate(metas):
+        bx, by, bw, bh = m.get("bbox", [0,0,0,0])
+        for rg in regions:
+            rx, ry, rw, rh = rg["x"], rg["y"], rg["w"], rg["h"]
+            if not (bx > rx + rw or rx > bx + bw or by > ry + rh or ry > by + bh):
+                selected.append(i)
+                break
+    if not selected:
+        return []
+
+    selected = sorted(set(selected))
+    segs = []
+    start = selected[0]
+    prev  = selected[0]
+    for idx in selected[1:]:
+        if idx == prev + 1:
+            prev = idx
+        else:
+            segs.append((start, prev + 1))  # end exclusive
+            start = prev = idx
+    segs.append((start, prev + 1))
+    return segs
+
+def _overlaps(bbox, region):
+    """
+    Check if a bounding box overlaps with a region.
+    bbox: [x, y, w, h], region: {x, y, w, h}
+    """
+    bx, by, bw, bh = bbox
+    rx, ry, rw, rh = region["x"], region["y"], region["w"], region["h"]
+    return not (bx > rx + rw or rx > bx + bw or by > ry + rh or ry > by + bh)
+
+def _chi2_hist(a: np.ndarray, b: np.ndarray, eps: float = 1e-9) -> float:
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return 0.0
+    a = a.astype(np.float32)
+    b = b.astype(np.float32)
+    return 0.5 * float(np.sum(((a - b) ** 2) / (a + b + eps)))
+
+class _FeatureAccumulator:
+    def __init__(self, diag: dict):
+        lbp = np.asarray(diag.get('lbp', []), dtype=np.float32)
+        self.count = 0
+        self.sum_angle = 0.0
+        self.sum_coverage = 0.0
+        self.sum_v_mean = 0.0
+        self.sum_lbp = np.zeros_like(lbp)
+        self.update(diag)
+
+    def update(self, diag: dict):
+        lbp = np.asarray(diag.get('lbp', []), dtype=np.float32)
+        if self.sum_lbp.size == 0:
+            self.sum_lbp = np.zeros_like(lbp)
+        elif self.sum_lbp.size != lbp.size:
+            # resize gracefully by padding/truncating
+            min_len = min(self.sum_lbp.size, lbp.size)
+            self.sum_lbp = self.sum_lbp[:min_len]
+            lbp = lbp[:min_len]
+        self.count += 1
+        self.sum_angle += float(diag.get('dom_angle', 0.0))
+        self.sum_coverage += float(diag.get('coverage', 0.0))
+        self.sum_v_mean += float(diag.get('v_mean', 0.0))
+        if lbp.size:
+            self.sum_lbp += lbp
+
+    def mean_diag(self) -> dict:
+        if self.count == 0:
+            return {
+                'dom_angle': 0.0,
+                'coverage': 0.0,
+                'v_mean': 0.0,
+                'lbp_vector': np.zeros_like(self.sum_lbp)
+            }
+        return {
+            'dom_angle': self.sum_angle / self.count,
+            'coverage': self.sum_coverage / self.count,
+            'v_mean': self.sum_v_mean / self.count,
+            'lbp_vector': (self.sum_lbp / max(self.count, 1)).astype(np.float32)
+        }
+
+    def diff_metrics(self, diag: dict) -> dict:
+        mean = self.mean_diag()
+        lbp_curr = np.asarray(diag.get('lbp', []), dtype=np.float32)
+        lbp_mean = mean['lbp_vector']
+        if lbp_mean.size and lbp_curr.size:
+            min_len = min(lbp_mean.size, lbp_curr.size)
+            lbp_diff = _chi2_hist(lbp_mean[:min_len], lbp_curr[:min_len])
+        else:
+            lbp_diff = 0.0
+        angle_diff = abs(float(diag.get('dom_angle', 0.0)) - mean['dom_angle'])
+        coverage_diff = abs(float(diag.get('coverage', 0.0)) - mean['coverage'])
+        v_mean_diff = abs(float(diag.get('v_mean', 0.0)) - mean['v_mean'])
+
+        triggers = {
+            'slant': angle_diff > 6.0,
+            'density': coverage_diff > 0.07,
+            'darkness': v_mean_diff > 0.08,
+            'texture': lbp_diff > 0.28
+        }
+        trigger_count = sum(triggers.values())
+        strengths = {
+            'slant': (angle_diff / 6.0) if triggers['slant'] else 0.0,
+            'density': (coverage_diff / 0.07) if triggers['density'] else 0.0,
+            'darkness': (v_mean_diff / 0.08) if triggers['darkness'] else 0.0,
+            'texture': (lbp_diff / 0.28) if triggers['texture'] else 0.0
+        }
+        dominant_trigger = None
+        max_strength = 0.0
+        for key, strength in strengths.items():
+            if strength > max_strength:
+                max_strength = strength
+                dominant_trigger = key
+        score = max_strength
+        return {
+            'score': score,
+            'triggers': triggers,
+            'trigger_count': trigger_count,
+            'angle_diff': angle_diff,
+            'coverage_diff': coverage_diff,
+            'v_mean_diff': v_mean_diff,
+            'lbp_diff': lbp_diff,
+            'max_strength': max_strength,
+            'dominant_trigger': dominant_trigger,
+            'strengths': strengths
+        }
+
+def _heuristic_segments_from_diags(diags: list) -> Tuple[List[Tuple[int,int]], List[dict], List[dict]]:
+    if not diags:
+        return [], [], []
+    segments = []
+    segment_means = []
+    boundary_diffs = []
+
+    seg_start = 0
+    accumulator = _FeatureAccumulator(diags[0])
+    for idx in range(1, len(diags)):
+        diff = accumulator.diff_metrics(diags[idx])
+        if diff['trigger_count'] >= 1 and diff['max_strength'] >= 1.35:
+            segments.append((seg_start, idx))
+            segment_means.append(accumulator.mean_diag())
+            boundary_diffs.append(diff)
+            seg_start = idx
+            accumulator = _FeatureAccumulator(diags[idx])
+        else:
+            accumulator.update(diags[idx])
+
+    segments.append((seg_start, len(diags)))
+    segment_means.append(accumulator.mean_diag())
+    boundary_diffs.append(None)
+
+    return segments, segment_means, boundary_diffs
+
+def _segment_difference(stats_a: dict, stats_b: dict) -> dict:
+    if not stats_a or not stats_b:
+        return {'score': 0.0, 'trigger_count': 0, 'triggers': {}}
+    lbp_a = stats_a.get('lbp_vector', np.array([], dtype=np.float32))
+    lbp_b = stats_b.get('lbp_vector', np.array([], dtype=np.float32))
+    min_len = min(lbp_a.size, lbp_b.size)
+    lbp_diff = _chi2_hist(lbp_a[:min_len], lbp_b[:min_len]) if min_len else 0.0
+    angle_diff = abs(stats_a.get('dom_angle', 0.0) - stats_b.get('dom_angle', 0.0))
+    coverage_diff = abs(stats_a.get('coverage', 0.0) - stats_b.get('coverage', 0.0))
+    v_mean_diff = abs(stats_a.get('v_mean', 0.0) - stats_b.get('v_mean', 0.0))
+    triggers = {
+        'slant': angle_diff > 6.0,
+        'density': coverage_diff > 0.07,
+        'darkness': v_mean_diff > 0.08,
+        'texture': lbp_diff > 0.28
+    }
+    trigger_count = sum(triggers.values())
+    strengths = {
+        'slant': (angle_diff / 6.0) if triggers['slant'] else 0.0,
+        'density': (coverage_diff / 0.07) if triggers['density'] else 0.0,
+        'darkness': (v_mean_diff / 0.08) if triggers['darkness'] else 0.0,
+        'texture': (lbp_diff / 0.28) if triggers['texture'] else 0.0
+    }
+    dominant_trigger = None
+    max_strength = 0.0
+    for key, strength in strengths.items():
+        if strength > max_strength:
+            max_strength = strength
+            dominant_trigger = key
+    score = max_strength
+    return {
+        'score': score,
+        'trigger_count': trigger_count,
+        'triggers': triggers,
+        'angle_diff': angle_diff,
+        'coverage_diff': coverage_diff,
+        'v_mean_diff': v_mean_diff,
+        'lbp_diff': lbp_diff,
+        'max_strength': max_strength,
+        'dominant_trigger': dominant_trigger,
+        'strengths': strengths
+    }
+
+def _explanation_from_diff(prev_stats: dict, curr_stats: dict) -> str:
+    diff = _segment_difference(prev_stats, curr_stats)
+    triggers = diff['triggers']
+    reasons = []
+    if triggers.get('slant'):
+        direction = 'more upright' if curr_stats.get('dom_angle', 0.0) < prev_stats.get('dom_angle', 0.0) else 'more left-leaning'
+        reasons.append(f"pronounced change in letter slant ({direction})")
+    if triggers.get('density'):
+        tendency = 'heavier strokes and ink coverage' if curr_stats.get('coverage', 0.0) > prev_stats.get('coverage', 0.0) else 'lighter, more open strokes'
+        reasons.append(f"stroke density shifts toward {tendency}")
+    if triggers.get('darkness'):
+        reasons.append("overall brightness/ink tone differs markedly")
+    if triggers.get('texture'):
+        reasons.append("letter texture micro-patterns diverge")
+    if not reasons:
+        reasons.append("subtle but consistent paleographic differences across slant, texture, and ink flow")
+    dominant = diff.get('dominant_trigger')
+    if dominant and reasons:
+        reasons[0] = reasons[0] + " (dominant cue)"
+    return "Different scribal hand detected based on " + ", ".join(reasons) + "."
+
+def _segments_to_manual_changes(segments: List[Tuple[int,int]], segment_stats: List[dict], boundary_diffs: List[dict], imgs_for_samples: list, run_id: str) -> Tuple[list, dict]:
+    scribe_changes = []
+    scribe_samples = {}
+    assigned_stats = []  # list of (scribe_id, stats)
+    base_letter_ord = ord('A')
+
+    for idx, (start, end) in enumerate(segments):
+        stats = segment_stats[idx]
+        # Attempt to reuse an existing scribe label if stats are close
+        matched = None
+        for sid, prev_stats in assigned_stats:
+            diff = _segment_difference(prev_stats, stats)
+            if diff['max_strength'] < 1.1 and diff['trigger_count'] <= 1:
+                matched = sid
+                break
+
+        if matched:
+            scribe_id = matched
+            # update stored stats for this scribe to latest segment stats
+            for i_stat, (sid, prev_stats) in enumerate(assigned_stats):
+                if sid == scribe_id:
+                    assigned_stats[i_stat] = (sid, stats)
+                    break
+
+            if scribe_changes and scribe_changes[-1]['scribe'] == scribe_id:
+                # Extend the current segment for the same scribe; no new change entry
+                scribe_changes[-1]['end_line'] = int(end)
+                continue
+
+            # mark as return only if this scribe appeared earlier but not immediately previous
+            is_return = any(change['scribe'] == scribe_id for change in scribe_changes)
+        else:
+            scribe_id = f"Scribe {chr(base_letter_ord + len(assigned_stats))}"
+            assigned_stats.append((scribe_id, stats))
+            is_return = False
+
+        # Sample images (start and mid of segment)
+        samples = []
+        if imgs_for_samples:
+            sample_indices = {start, max(start, min(end - 1, start + (end - start) // 2))}
+            color_map = {0: (255, 120, 120), 1: (120, 255, 120), 2: (120, 120, 255)}
+            color = color_map.get(len(assigned_stats) - 1, (210, 210, 210))
+            samples_dir = Path(f"{STATIC_DIR}/runs/{run_id}/scribe_samples")
+            samples_dir.mkdir(parents=True, exist_ok=True)
+            for s_idx, img_idx in enumerate(sorted(sample_indices)):
+                if 0 <= img_idx < len(imgs_for_samples):
+                    img = imgs_for_samples[img_idx]
+                    # Enhance dark crops to avoid black previews
+                    enhanced = cv2.convertScaleAbs(img, alpha=1.35, beta=28)
+                    bordered = cv2.copyMakeBorder(enhanced, 8, 8, 8, 8, cv2.BORDER_CONSTANT, value=color)
+                    fname = f"manual_{idx}_{s_idx}.png"
+                    fpath = samples_dir / fname
+                    cv2.imwrite(str(fpath), bordered)
+                    samples.append(f"/static/runs/{run_id}/scribe_samples/{fname}")
+        scribe_samples.setdefault(scribe_id, []).extend(samples)
+
+        # Explanation and confidence
+        if idx == 0 and not is_return:
+            explanation = "Initial scribe for selected region; consistent letter proportions, stroke weight, and slant"
+            confidence = None
+        else:
+            prev_stats = segment_stats[idx - 1] if idx > 0 else assigned_stats[0][1]
+            explanation = _explanation_from_diff(prev_stats, stats)
+            diff = boundary_diffs[idx - 1] if idx > 0 else None
+            if diff:
+                max_strength = diff.get('max_strength', 0.0)
+                trig_count = diff.get('trigger_count', 0)
+                confidence = float(min(95.0, 60.0 + max_strength * 18.0 + trig_count * 6.0))
+            else:
+                confidence = 62.0
+
+        change = {
+            "line_number": int(start + 1),
+            "start_line": int(start + 1),
+            "end_line": int(end),
+            "scribe": scribe_id,
+            "explanation": explanation,
+            "is_return": is_return,
+            "is_initial": (idx == 0 and not is_return),
+            "features": {
+                "handSize": "medium",
+                "inkColor": "black",
+                "letterSpacing": "normal",
+                "style": "formal"
+            },
+            "samples": samples
+        }
+        if confidence is not None and not change["is_initial"]:
+            change["confidence"] = confidence
+
+        scribe_changes.append(change)
+
+    return scribe_changes, scribe_samples
+
+def _crop_regions_from_page(image_bytes: bytes, regions: list, out_dir: Path, tag: str) -> tuple[list[str], list[dict]]:
+    """
+    Crop exactly the user-drawn regions from the original page image.
+    Returns:
+      region_paths: list of absolute file paths for each region crop (BGR PNGs)
+      region_metas: list of dicts with bbox + index
+    """
+    from PIL import Image
+    import io
+    
+    im = Image.open(io.BytesIO(image_bytes))
+    im = ImageOps.exif_transpose(im)
+    im = im.convert("RGB")
+    W, H = im.size
+
+    # Detect page ROI to avoid black margins
+    try:
+        import cv2
+        np_img = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(np_img, cv2.COLOR_BGR2HSV)
+        v = hsv[:, :, 2]
+        page_mask = (v > 25).astype(np.uint8) * 255
+        k = max(5, min(W, H) // 200)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+        page_mask = cv2.morphologyEx(page_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        cnts, _ = cv2.findContours(page_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if cnts:
+            areas = [cv2.contourArea(c) for c in cnts]
+            cmax = cnts[int(np.argmax(areas))]
+            rx, ry, rw, rh = cv2.boundingRect(cmax)
+            roi = (rx, ry, rx + rw, ry + rh)
+        else:
+            roi = (0, 0, W, H)
+    except Exception:
+        roi = (0, 0, W, H)
+
+    region_paths = []
+    region_metas = []
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _tight_crop_ink(bgr_img: np.ndarray, pad: int = 2):
+        try:
+            h, w = bgr_img.shape[:2]
+            hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
+            v = hsv[:, :, 2]
+            # Mask to ignore black background (common in e-codices scans)
+            non_black = (v > 30).astype(np.uint8) * 255
+            # If region is mostly black, just return as-is
+            if non_black.mean() < 0.05:
+                return bgr_img, (0, 0, w, h)
+
+            gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+            # Adaptive threshold within non-black area to capture ink
+            thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                        cv2.THRESH_BINARY_INV, 21, 10)
+            thr = cv2.bitwise_and(thr, thr, mask=non_black)
+
+            # Edge-based fallback to avoid selecting page border
+            edges = cv2.Canny(gray, 40, 120)
+            edges = cv2.bitwise_and(edges, edges, mask=non_black)
+            mask = cv2.bitwise_or(thr, edges)
+
+            # Morphological closing to connect strokes slightly
+            k = max(1, max(h, w) // 200)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+            ys, xs = np.where(mask > 0)
+            if ys.size == 0 or xs.size == 0:
+                # Fallback to non-black area bounding box
+                ys, xs = np.where(non_black > 0)
+                if ys.size == 0 or xs.size == 0:
+                    return bgr_img, (0, 0, w, h)
+            y0, y1 = int(np.min(ys)), int(np.max(ys))
+            x0, x1 = int(np.min(xs)), int(np.max(xs))
+            y0 = max(0, y0 - pad); x0 = max(0, x0 - pad)
+            y1 = min(h - 1, y1 + pad); x1 = min(w - 1, x1 + pad)
+            if y1 <= y0 or x1 <= x0:
+                return bgr_img, (0, 0, w, h)
+            return bgr_img[y0:y1+1, x0:x1+1], (x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+        except Exception as e:
+            print(f"tight_crop_ink failed: {e}")
+            return bgr_img, (0, 0, bgr_img.shape[1], bgr_img.shape[0])
+
+    for idx, r in enumerate(regions):
+        x = max(0, int(r.get("x", 0)))
+        y = max(0, int(r.get("y", 0)))
+        w = max(1, int(r.get("w", 1)))
+        h = max(1, int(r.get("h", 1)))
+        x2 = min(W, x + w)
+        y2 = min(H, y + h)
+        # Keep original image coordinates (avoid over-clamping that may zero the crop)
+        # Note: page ROI is still computed for diagnostics, but not enforced here.
+        if x2 <= x or y2 <= y:
+            continue
+        crop = im.crop((x, y, x2, y2))
+        # save as BGR PNG for cv2 pipeline
+        np_crop = cv2.cvtColor(np.array(crop), cv2.COLOR_RGB2BGR)
+        fname = f"manual_region_{tag}_{idx+1}.png"
+        fpath = out_dir / fname
+        cv2.imwrite(str(fpath), np_crop)
+        region_paths.append(str(fpath))
+        # Use exact user selection (page pixels) for bbox
+        region_metas.append({"index": int(idx), "bbox": [int(x), int(y), int(x2 - x), int(y2 - y)]})
+    return region_paths, region_metas
+
+def _cluster_regions_same_scribe(embs: np.ndarray, min_sep: float = 0.12) -> list[int]:
+    """
+    Group regions by cosine separation. Returns a label per row in `embs`.
+    - min_sep is a small margin so *very* similar hands cluster together.
+    """
+    from sklearn.cluster import AgglomerativeClustering
+    # cosine distance in sklearn's AgglomerativeClustering is not native; use 'euclidean'
+    # but our embeddings are L2-normalized so euclidean is ~monotonic to cosine.
+    n = embs.shape[0]
+    if n == 1:
+        return [0]
+    # try multiple K and pick best linkage by minimal intra-cluster variance
+    best_labels = None
+    best_score = 1e9
+    max_k = min(5, n)
+    for k in range(2, max_k + 1):
+        model = AgglomerativeClustering(n_clusters=k, linkage="ward")
+        labels = model.fit_predict(embs)
+        # intra-cluster variance
+        var = 0.0
+        for c in range(k):
+            m = embs[labels == c].mean(axis=0, keepdims=True)
+            d = np.linalg.norm(embs[labels == c] - m, axis=1).mean() if (labels == c).any() else 0.0
+            var += d
+        if var < best_score:
+            best_score = var
+            best_labels = labels
+    if best_labels is None:
+        return [0] * n
+    # optional small merge pass: if two centroids are extremely close, merge
+    cents = []
+    for c in sorted(set(best_labels)):
+        cents.append(embs[best_labels == c].mean(axis=0))
+    cents = np.vstack(cents)
+    # cosine distance of centroids
+    D = np.clip(1.0 - (cents @ cents.T), 0.0, 2.0)
+    # union-find merge if centroid distance < min_sep
+    parent = list(range(len(cents)))
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    def union(a,b):
+        ra, rb = find(a), find(b)
+        if ra != rb: parent[rb] = ra
+    for i in range(len(cents)):
+        for j in range(i+1, len(cents)):
+            if D[i, j] < min_sep:
+                union(i, j)
+    # remap labels via merged components
+    map_old_to_new = {}
+    next_id = 0
+    for c in sorted(set(best_labels)):
+        root = find(c)
+        if root not in map_old_to_new:
+            map_old_to_new[root] = next_id; next_id += 1
+    final = []
+    for lab in best_labels:
+        root = find(lab)
+        final.append(map_old_to_new[root])
+    return final
+
+def _cosine_sim(a: np.ndarray, b: np.ndarray, eps: float = 1e-12) -> float:
+    """Calculate cosine similarity between two vectors."""
+    na = float(np.linalg.norm(a)) + eps
+    nb = float(np.linalg.norm(b)) + eps
+    return float(np.dot(a, b) / (na * nb))
+
+def _segment_centroid(embs: list, start: int, end: int) -> np.ndarray:
+    """Calculate normalized centroid of embeddings in a segment."""
+    # end is exclusive
+    if end <= start or not embs:
+        return np.zeros((1,), dtype=np.float32)
+    
+    # Check if we have valid embeddings
+    valid_embs = []
+    for i in range(start, min(end, len(embs))):
+        if embs[i] is not None and embs[i].size > 0:
+            valid_embs.append(embs[i])
+    
+    if not valid_embs:
+        return np.zeros_like(embs[0] if embs else np.array([0.0], dtype=np.float32))
+    
+    seg = np.stack(valid_embs, axis=0)
+    c = seg.mean(axis=0)
+    n = np.linalg.norm(c) + 1e-12
+    return (c / n).astype(np.float32)
 
 def _save_segmentation_overlay(page_abs_path, metas, run_id):
     """
@@ -142,68 +701,64 @@ def _label_from_index(index):
     else:
         return f"Scribe {chr(ord('A') + index)}"
 
-def _assign_scribe_identities(segments, n_lines):
-    """Assign scribe identities that can handle returns of the same scribe.
-    
-    This simulates a more sophisticated scribe detection that can recognize
-    when the same scribe returns later in the document.
+def _assign_scribe_identities(segments, line_abs_paths, sim_thresh=0.92):
     """
-    scribe_assignments = []
-    seen_scribes = {}  # Track which scribes we've seen
-    
-    # Define some characteristic patterns that would help identify returning scribes
-    # In a real system, this would be based on handwriting analysis features
-    
-    for i, (start, end) in enumerate(segments):
-        # Simulate scribe detection logic - ensure consistent labeling with returns
-        if i == 0:
-            # First segment is always Scribe A
-            scribe_key = "A"
-        elif i == len(segments) - 1 and len(segments) >= 3:
-            # Last segment returns to the main scribe (A) in manuscripts with 3+ segments
-            scribe_key = "A"
-        elif i == 1:
-            # Second segment is Scribe B
-            scribe_key = "B"
-        elif i == 2:
-            # Third segment is Scribe C
-            scribe_key = "C"
-        else:
-            # Any additional segments cycle through letters
-            scribe_key = chr(ord('A') + min(i, 25))  # Cap at Z to avoid issues
-        
-        scribe_id = f"Scribe {scribe_key}"
-        
-        # Track first appearance vs return
-        is_return = scribe_key in seen_scribes
-        if not is_return:
-            seen_scribes[scribe_key] = start + 1  # 1-based line number
-        
-        scribe_assignments.append({
-            "scribe_key": scribe_key,
-            "scribe_id": scribe_id,
+    Assign scribe IDs by centroid cosine similarity; detect returns when
+    a segment centroid matches a seen scribe (>= sim_thresh).
+    """
+    def _centroid(start, end):
+        # [start, end) in 0-based
+        embs = []
+        for i in range(start, end):
+            if 0 <= i < len(line_abs_paths):
+                try:
+                    img = cv2.imread(str(line_abs_paths[i]), cv2.IMREAD_COLOR)
+                    if img is None: 
+                        continue
+                    from feature_extractor import line_embedding
+                    embs.append(line_embedding(img))
+                except Exception as e:
+                    print(f"Warning: Could not compute embedding for {line_abs_paths[i]}: {e}")
+                    continue
+        if not embs:
+            return None
+        c = np.mean(np.vstack(embs), axis=0)
+        c = c / (np.linalg.norm(c) + 1e-12)
+        return c
+
+    seen = []  # list of (key_letter, centroid)
+    out  = []
+    next_ord = ord('A')
+
+    for (s, e) in segments:
+        cen = _centroid(s, e)
+        key = None; is_return = False
+        if cen is not None and seen:
+            sims = [(k, float(np.dot(cen, sc))) for (k, sc) in seen]
+            kbest, sbest = max(sims, key=lambda x: x[1])
+            if sbest >= sim_thresh:
+                key = kbest; is_return = True
+                print(f"Segment [{s}, {e}): Assigned to existing {key} (similarity: {sbest:.3f})")
+        if key is None:
+            key = chr(next_ord); next_ord = min(next_ord + 1, ord('Z'))
+            seen.append((key, cen if cen is not None else np.zeros(1, np.float32)))
+            print(f"Segment [{s}, {e}): New scribe {key}")
+
+        out.append({
+            "scribe_key": key,
+            "scribe_id": f"Scribe {key}",
             "is_return": is_return,
-            "start": start,
-            "end": end
+            "start": s,
+            "end": e
         })
-    
-    return scribe_assignments
+    return out
 
 def _segment_and_crop(run_id, file_bytes, illum_frac=0.035, sauvola_window=31, sauvola_k=0.2, do_deskew=True):
     """Segment lines and crop them using improved line segmentation with multiple methods"""
     
     # Convert file bytes to image and save it
     image = Image.open(io.BytesIO(file_bytes))
-    
-    # Convert RGBA to RGB if necessary (JPEG doesn't support transparency)
-    if image.mode == 'RGBA':
-        # Create a white background and paste the image on it
-        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-        rgb_image.paste(image, mask=image.split()[-1])  # Use alpha channel as mask
-        image = rgb_image
-    elif image.mode not in ('RGB', 'L'):
-        # Convert other modes to RGB
-        image = image.convert('RGB')
+    image = ImageOps.exif_transpose(image)
     
     # Save and (maybe) split double page
     run_dir = RUNS_DIR / run_id
@@ -418,9 +973,9 @@ def _try_ocr_extraction_method(page_abs, run_dir, run_id, file_bytes):
         bbox_data = line_data.get('bbox', {})
         bbox = [
             bbox_data.get('left', 0),
-            bbox_data.get('top', i * 30),
-            bbox_data.get('width', 500),
-            bbox_data.get('height', 30)
+            bbox_data.get('top', 0),
+            bbox_data.get('width', 0),
+            bbox_data.get('height', 0)
         ]
         
         metas.append({
@@ -437,21 +992,43 @@ def _try_ocr_extraction_method(page_abs, run_dir, run_id, file_bytes):
     return metas, moved_line_paths, page_rel
 
 def _try_projection_method(page_abs, run_dir, run_id):
-    """Fallback method using simple horizontal projection"""
+    """Fallback method using horizontal projection with page ROI detection.
+    Restricts analysis to the manuscript page to avoid cropping black borders.
+    """
     import cv2
-    
+
     # Load image
     img = cv2.imread(str(page_abs))
     if img is None:
         raise RuntimeError("Could not load image for projection method")
-    
+
+    H, W = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Simple thresholding
+
+    # Detect page ROI using HSV value channel
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    v = hsv[:, :, 2]
+    page_mask = (v > 25).astype(np.uint8) * 255
+    k = max(5, min(H, W) // 200)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+    page_mask = cv2.morphologyEx(page_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    cnts, _ = cv2.findContours(page_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if cnts:
+        areas = [cv2.contourArea(c) for c in cnts]
+        cmax = cnts[int(np.argmax(areas))]
+        x0, y0, w0, h0 = cv2.boundingRect(cmax)
+        x0 = max(0, x0); y0 = max(0, y0)
+        x1 = min(W, x0 + w0); y1 = min(H, y0 + h0)
+    else:
+        x0, y0, x1, y1 = 0, 0, W, H
+
+    # Simple thresholding (invert so ink=255), then restrict to ROI
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    
-    # Horizontal projection
-    h_projection = np.sum(binary, axis=1)
+    roi = binary[y0:y1, x0:x1]
+
+    # Horizontal projection inside detected page ROI
+    h_projection = np.sum(roi, axis=1)
     
     # Find line boundaries using projection
     threshold = np.max(h_projection) * 0.1
@@ -482,16 +1059,16 @@ def _try_projection_method(page_abs, run_dir, run_id):
     # Extract line images
     moved_line_paths = []
     metas = []
-    height, width = gray.shape
+    height, width = (y1 - y0), (x1 - x0)
     
     for i, (start_y, end_y) in enumerate(line_boundaries):
         # Add some padding
         pad = 5
-        y1 = max(0, start_y - pad)
-        y2 = min(height, end_y + pad)
+        y1p = max(0, start_y - pad)
+        y2p = min(height, end_y + pad)
         
-        # Extract line image
-        line_img = img[y1:y2, 0:width]
+        # Extract line image from ROI only to avoid black margins
+        line_img = img[y0 + y1p:y0 + y2p, x0:x1]
         
         # Save line image
         new_filename = f"line_{i+1}.png"
@@ -505,8 +1082,8 @@ def _try_projection_method(page_abs, run_dir, run_id):
             "line_number": i + 1,
             "path": new_abs_path,
             "relative_path": rel_path,
-            "bbox": [0, y1, width, y2 - y1],
-            "polygon": [[0, y1], [width, y1], [width, y2], [0, y2]]
+            "bbox": [x0, y0 + y1p, width, y2p - y1p],
+            "polygon": [[x0, y0 + y1p], [x1, y0 + y1p], [x1, y0 + y2p], [x0, y0 + y2p]]
         })
     
     page_rel = f"runs/{run_id}/manuscript_page.jpg"
@@ -522,12 +1099,11 @@ def _build_segments_and_samples(run_id: str, line_abs_paths: list, segments: lis
     n = len(line_abs_paths)
     print(f"Processing {len(segments)} detected segments for {n} lines")
     
-    # If there's only one segment, there are no scribe *changes*
-    if len(segments) <= 1:
-        return [], {}, {"segments": segments}
+    # ✅ DO NOT early-return on single segment. We still want a Scribe A entry.
+    # (Removed the old len(segments) <= 1 guard entirely.)
     
     # Get consistent scribe assignments that handle returns
-    scribe_assignments = _assign_scribe_identities(segments, n)
+    scribe_assignments = _assign_scribe_identities(segments, line_abs_paths)
     
     scribe_changes = []
     scribe_samples = {}
@@ -545,6 +1121,26 @@ def _build_segments_and_samples(run_id: str, line_abs_paths: list, segments: lis
               "return_reason": "Tertiary scribal hand resumes with distinctive ornate letterforms and loose spacing. The paleographic identity matches the previous occurrence."}
     }
     
+    # Merge contiguous segments assigned to the same scribe to avoid duplicate "returns"
+    merged_assignments = []
+    for assignment in scribe_assignments:
+        if merged_assignments and assignment["scribe_key"] == merged_assignments[-1]["scribe_key"]:
+            merged_assignments[-1]["end"] = assignment["end"]
+            continue
+        merged_assignments.append(dict(assignment))
+
+    # Recompute return flags after merge so a scribe only "returns" after another scribe intervenes
+    seen_keys = set()
+    for assignment in merged_assignments:
+        key = assignment["scribe_key"]
+        if key in seen_keys:
+            assignment["is_return"] = True
+        else:
+            assignment["is_return"] = False
+            seen_keys.add(key)
+
+    scribe_assignments = merged_assignments
+
     for assignment in scribe_assignments:
         scribe_key = assignment["scribe_key"]
         scribe_id = assignment["scribe_id"]
@@ -618,11 +1214,13 @@ def _build_segments_and_samples(run_id: str, line_abs_paths: list, segments: lis
         reason = characteristics["return_reason"] if is_return else characteristics["initial_reason"]
         
         scribe_change = {
-            "line_number": start_line,
-            "start_line": start_line,
-            "end_line": end_line,
+            "line_number": int(start_line),
+            "start_line": int(start_line),
+            "end_line": int(end_line),
             "scribe": scribe_id,
             "explanation": reason,
+            "is_return": is_return,
+            "is_initial": not is_return and len(scribe_changes) == 0,  # First segment that's not a return
             # NO default confidence - will be set only for non-initial scribes later
             "features": {
                 "letterSpacing": characteristics["letterSpacing"],
@@ -674,19 +1272,64 @@ def extract_lines():
         print(f"Line extraction error: {e}")
         return jsonify({"error": f"Line extraction failed: {str(e)}"}), 500
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
+@app.route("/prepare", methods=["POST"])
+def prepare():
     try:
-        # Check if file is present
         if 'image' not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
-        
         file = request.files['image']
         if not file or not file.filename:
             return jsonify({"error": "No file selected"}), 400
+        run_id = str(uuid.uuid4())
+        run_dir = RUNS_DIR / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        page_rel = f"runs/{run_id}/manuscript_page.jpg"
+        page_abs = STATIC_DIR / page_rel
+        # Save canonical page image as-is
+        try:
+            image = Image.open(file.stream)
+            image = ImageOps.exif_transpose(image).convert('RGB')
+            image.save(page_abs, 'JPEG')
+        except Exception:
+            # Fallback: write raw bytes
+            file.stream.seek(0)
+            with open(page_abs, 'wb') as f:
+                f.write(file.stream.read())
+        return jsonify({
+            'job_id': run_id,
+            'page_image': page_rel
+        })
+    except Exception as e:
+        return jsonify({"error": f"Prepare failed: {str(e)}"}), 500
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    try:
+        # Optional prepared job (use server-saved page image)
+        form = request.form or {}
+        prepared_job = form.get('prepared_job')
+        prepared_path = None
+        if prepared_job:
+            p = RUNS_DIR / prepared_job / 'manuscript_page.jpg'
+            if p.exists():
+                prepared_path = p
+
+        # Accept either uploaded image or prepared job
+        if 'image' in request.files and request.files['image'].filename:
+            file = request.files['image']
+            file_content = file.read()
+            file.seek(0)
+        elif prepared_path is not None:
+            with open(prepared_path, 'rb') as f:
+                file_content = f.read()
+            # create a dummy File-like name for logging
+            class _F: filename = str(prepared_path.name)
+            file = _F()
+        else:
+            return jsonify({"error": "No file uploaded or prepared_job invalid"}), 400
         
         # Read optional tuning params
-        form = request.form or {}
+        # form already defined
         def _getf(k, typ, default):
             try:
                 return typ(form.get(k, default))
@@ -709,6 +1352,7 @@ def analyze():
 
         # Parse mode and manual regions
         mode = form.get("mode", "auto")  # "auto" | "manual"
+        strict_per_line = str(form.get("strict_per_line", "0")).lower() in ("1", "true", "yes", "on")
         manual_regions = []
         if mode == "manual":
             try:
@@ -730,17 +1374,27 @@ def analyze():
         print(f"Parameters: algo={algo}, z_thresh={z_thresh}, min_gap={min_gap}, min_run={min_run}")
         
         if mode == "manual":
-            print(f"Manual regions: {len(manual_regions)} regions")
+            print(f"Manual regions (raw from client): {len(manual_regions)} regions")
             for i, region in enumerate(manual_regions):
                 print(f"  Region {i+1}: x={region.get('x')}, y={region.get('y')}, w={region.get('w')}, h={region.get('h')}")
         
-        # Get file content and hash for debugging (not for caching)
-        file_content = file.read()
-        file.seek(0)  # Reset file pointer
+        # Get file hash for debugging (not for caching)
         file_hash = hashlib.md5(file_content).hexdigest()
         print(f"File hash: {file_hash[:8]}... (for debugging only)")
         print(f"===========================\n")
-        
+
+        # ------------- NEW: normalize manual regions into processed image space -------------
+        # We must know the processed image size (after EXIF)
+        _tmp = Image.open(io.BytesIO(file_content))
+        _tmp = ImageOps.exif_transpose(_tmp)
+        img_w, img_h = _tmp.size
+        if mode == "manual":
+            src_w = form.get("regions_src_w", None)
+            src_h = form.get("regions_src_h", None)
+            manual_regions = _normalize_regions_to_image(manual_regions, src_w, src_h, img_w, img_h)
+            print(f"Normalized manual regions using src({src_w}x{src_h}) -> dst({img_w}x{img_h})")
+        # ------------------------------------------------------------------------------------
+
         # Try to get actual line count first for more realistic scribe detection
         actual_line_count = None
         if OCR_AVAILABLE:
@@ -774,32 +1428,494 @@ def analyze():
                 print(f"Successfully unpacked: {len(metas)} metas, {len(line_abs_paths)} paths")
                 print(f"OCR line extraction: extracted {len(metas)} lines total")
                 
-                # NEW: Filter lines based on manual regions if provided
+                # NEW: Manual mode uses region-driven analysis (no OCR dependency)
                 if mode == "manual" and manual_regions:
-                    print(f"MANUAL MODE: Filtering {len(metas)} lines by {len(manual_regions)} manual regions")
-                    filtered_metas = []
-                    filtered_paths = []
+                    print("MANUAL MODE: Region-driven analysis (no OCR line dependency)")
+                    # Create run directory for this analysis
+                    run_dir = STATIC_DIR / "runs" / run_id
+                    run_dir.mkdir(parents=True, exist_ok=True)
                     
-                    def overlaps(bbox, region):
-                        # bbox: [x, y, w, h], region: {x, y, w, h}
-                        bx, by, bw, bh = bbox
-                        rx, ry, rw, rh = region["x"], region["y"], region["w"], region["h"]
-                        return not (bx > rx + rw or rx > bx + bw or by > ry + rh or ry > by + bh)
-                    
-                    for i, meta in enumerate(metas):
-                        bbox = meta.get("bbox", [0, 0, 0, 0])
-                        overlaps_any = any(overlaps(bbox, region) for region in manual_regions)
-                        if overlaps_any:
-                            filtered_metas.append(meta)
-                            if i < len(line_abs_paths):
-                                filtered_paths.append(line_abs_paths[i])
-                            print(f"  Line {i+1} bbox {bbox} -> INCLUDED (overlaps manual region)")
+                    # 1) crop exact regions
+                    region_paths, region_metas = _crop_regions_from_page(file_content, manual_regions, run_dir, "A")
+
+                    # STRICT PER-LINE WITH REUSE: treat each region as its own segment; reuse labels for close matches
+                    if strict_per_line and region_paths:
+                        print("MANUAL MODE: strict per-line with label reuse")
+                        imgs_for_samples = []
+                        region_diags = []
+                        try:
+                            diag_proc = ImageProcessor()
+                        except Exception:
+                            diag_proc = None
+                        for pth in region_paths:
+                            img = cv2.imread(pth, cv2.IMREAD_COLOR)
+                            if img is None: continue
+                            imgs_for_samples.append(img)
+                            if diag_proc is not None:
+                                region_diags.append(diag_proc._diagnostics(img))
+                            else:
+                                region_diags.append({})
+
+                        # Build per-line segments
+                        segments_final = [(i, i+1) for i in range(len(region_paths))]
+                        # Stats per segment
+                        final_stats = []
+                        for d in region_diags:
+                            acc = _FeatureAccumulator(d)
+                            final_stats.append(acc.mean_diag())
+                        # Boundary diffs
+                        final_diffs = [None]
+                        for k in range(1, len(final_stats)):
+                            final_diffs.append(_segment_difference(final_stats[k-1], final_stats[k]))
+
+                        # Build changes with reuse
+                        scribe_changes, scribe_samples = _segments_to_manual_changes(segments_final, final_stats, final_diffs, imgs_for_samples, run_id)
+
+                        # Screenshots + line segments for UI
+                        region_shots = []
+                        for idx2, rp in enumerate(region_paths, 1):
+                            try:
+                                with open(rp, 'rb') as fh:
+                                    b = fh.read()
+                                enc = base64.b64encode(b).decode('ascii')
+                                bbox = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
+                                bbox = [int(x) for x in bbox]
+                                region_shots.append({
+                                    'lineNumber': int(idx2),
+                                    'text': '',
+                                    'bbox': bbox,
+                                    'screenshot': f"data:image/png;base64,{enc}",
+                                    'confidence': 1.0
+                                })
+                            except Exception as e:
+                                print(f"Failed to build region screenshot {idx2}: {e}")
+
+                        line_segments = []
+                        for idx3, meta in enumerate(region_metas):
+                            bbox = [int(x) for x in meta.get('bbox', [0,0,0,0])]
+                            img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
+                            line_segments.append({'id': f'line_{int(idx3)}', 'bbox': bbox, 'image': img_data})
+
+                        total_scribes = len({c['scribe'] for c in scribe_changes})
+                        confidences = [c.get('confidence') for c in scribe_changes if c.get('confidence') is not None]
+                        overall_confidence = float(np.mean(confidences)) if confidences else 0.0
+
+                        result = {
+                            "job_id": f"job_{int(time.time())}",
+                            "run_id": run_id,
+                            "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                            "segmentation_overlay": None,
+                            "polygons": [],
+                            "scribe_changes": scribe_changes,
+                            "total_lines": len(region_paths),
+                            "line_screenshots": region_shots,
+                            "ocr_available": OCR_AVAILABLE,
+                            "scribe_samples": scribe_samples,
+                            "line_segments": line_segments,
+                            "statistics": {
+                                "total_scribes": total_scribes,
+                                "overall_confidence": overall_confidence,
+                                "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                            },
+                            "diagnostics": {}
+                        }
+                        print("=== MANUAL REGION ANALYSIS COMPLETE (strict) ===")
+                        return jsonify(result)
+
+                    # Attempt purely heuristic comparison pipeline before falling back
+                    if region_paths and SIMILARITY_AVAILABLE:
+                        try:
+                            diag_proc = ImageProcessor()
+                        except Exception:
+                            diag_proc = None
+
+                        if diag_proc is not None:
+                            imgs_for_samples_temp = []
+                            region_diags = []
+                            for p in region_paths:
+                                img = cv2.imread(p, cv2.IMREAD_COLOR)
+                                if img is None:
+                                    continue
+                                imgs_for_samples_temp.append(img)
+                                region_diags.append(diag_proc._diagnostics(img))
+
+                            if region_diags:
+                                segments, segment_stats, boundary_diffs = _heuristic_segments_from_diags(region_diags)
+                                if segments:
+                                    scribe_changes, scribe_samples = _segments_to_manual_changes(
+                                        segments, segment_stats, boundary_diffs, imgs_for_samples_temp, run_id
+                                    )
+
+                                    region_shots = []
+                                    for idx2, rp in enumerate(region_paths, 1):
+                                        try:
+                                            with open(rp, 'rb') as fh:
+                                                b = fh.read()
+                                            enc = base64.b64encode(b).decode('ascii')
+                                            bbox = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
+                                            bbox = [int(x) for x in bbox]
+                                            region_shots.append({
+                                                'lineNumber': idx2,
+                                                'text': '',
+                                                'bbox': bbox,
+                                                'screenshot': f"data:image/png;base64,{enc}",
+                                                'confidence': 1.0
+                                            })
+                                        except Exception as e:
+                                            print(f"Failed to build region screenshot {idx2}: {e}")
+
+                                    total_scribes = len({c['scribe'] for c in scribe_changes})
+                                    confidences = [c.get('confidence') for c in scribe_changes if c.get('confidence') is not None]
+                                    overall_confidence = float(np.mean(confidences)) if confidences else 0.0
+
+                        # Build line_segments for UI from manual region bboxes and images
+                        line_segments = []
+                        for idx3, meta in enumerate(region_metas):
+                            bbox = meta.get('bbox', [0, 0, 0, 0])
+                            bbox = [int(x) for x in bbox]
+                            img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
+                            line_segments.append({
+                                'id': f'line_{int(idx3)}',
+                                'bbox': bbox,
+                                'image': img_data
+                            })
+
+                        result = {
+                            "job_id": f"job_{int(time.time())}",
+                            "run_id": run_id,
+                            "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                            "segmentation_overlay": None,
+                            "polygons": [],
+                            "scribe_changes": scribe_changes,
+                            "total_lines": len(region_paths),
+                            "line_screenshots": region_shots,
+                            "ocr_available": OCR_AVAILABLE,
+                            "scribe_samples": scribe_samples,
+                            "line_segments": line_segments,
+                            "statistics": {
+                                "total_scribes": total_scribes,
+                                "overall_confidence": overall_confidence,
+                                "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                            },
+                            "diagnostics": {}
+                        }
+                        print("=== MANUAL REGION ANALYSIS (heuristic) - keeping for hybrid, continuing ===")
+                        # Do not return early; continue to embedding path for hybrid decision
+
+                    if not region_paths:
+                        print("MANUAL MODE: No valid manual regions to analyze; falling back to detector with manual segments")
+                        # Fallback: proceed to the general path using manual segments on metas
+                        # Build manual segments and skip the early-return path
+                        segments_from_manual = _segments_from_regions(metas, manual_regions)
+                        # Continue below (outside manual-region early return)
+                    else:
+                        # 2) embed each region (same extractor as lines)
+                        embs = []
+                        imgs_for_samples = []
+                        for p in region_paths:
+                            img = cv2.imread(p, cv2.IMREAD_COLOR)
+                            if img is None: 
+                                continue
+                            imgs_for_samples.append(img)
+                            embs.append(line_embedding(
+                                img,
+                                central_band_frac=0.65,   # slightly tighter band
+                                central_band_pad=2,
+                                resize_height=160,        # a bit larger for stability
+                                use_color=False,          # less color noise for manual
+                                w_lbp=1.1, w_hog=1.2, w_color=0.0
+                            ))
+                        if len(embs) == 0:
+                            print("MANUAL MODE: Failed to compute embeddings for manual regions; falling back to detector with manual segments")
+                            segments_from_manual = _segments_from_regions(metas, manual_regions)
                         else:
-                            print(f"  Line {i+1} bbox {bbox} -> EXCLUDED (no overlap)")
-                    
-                    metas = filtered_metas
-                    line_abs_paths = filtered_paths
-                    print(f"MANUAL MODE: After filtering: {len(metas)} lines selected for analysis")
+                            X = np.vstack(embs).astype(np.float32)
+
+                            # 3) region-level clustering → same/return scribes
+                            labels = _cluster_regions_same_scribe(X, min_sep=0.10)
+                            # assign A,B,C by first occurrence
+                            label_to_key = {}
+                            next_key = 0
+                            def key_to_id(k): return f"Scribe {chr(ord('A') + k)}"
+
+                            # 4) Build scribe blocks in the user's visual order; detect returns
+                            scribe_changes = []
+                            scribe_samples = {}
+                            for i, (lab, meta) in enumerate(zip(labels, region_metas)):
+                                if lab not in label_to_key:
+                                    label_to_key[lab] = next_key
+                                    next_key += 1
+                                k = label_to_key[lab]  # 0->A, 1->B, ...
+                                scribe_id = key_to_id(k)
+                                is_return = sum(1 for j in labels[:i] if j == lab) > 0
+
+                                # confidence from separation to nearest *other* centroid
+                                this = X[i]
+                                c_me = X[np.array(labels) == lab].mean(axis=0)
+                                # pick closest different cluster
+                                others = [X[np.array(labels) == l].mean(axis=0) for l in sorted(set(labels)) if l != lab]
+                                if others:
+                                    dmin = min([1.0 - float(np.dot(c_me, o) / (np.linalg.norm(c_me)+1e-12) / (np.linalg.norm(o)+1e-12)) for o in others])
+                                    # map small distance → low confidence, bigger separation → higher
+                                    conf = 35.0 + max(0.0, min(55.0, (dmin - 0.08) * 600.0))  # ~35–90%
+                                else:
+                                    conf = None  # only one cluster in total
+
+                                # sample image (border-coded by scribe)
+                                samples = scribe_samples.get(scribe_id, [])
+                                try:
+                                    border_colors = {0:(255,100,100),1:(100,255,100),2:(100,100,255)}
+                                    color = border_colors.get(k, (200,200,200))
+                                    img = imgs_for_samples[i]
+                                    bordered = cv2.copyMakeBorder(img, 10,10,10,10, cv2.BORDER_CONSTANT, value=color)
+                                    sp = STATIC_DIR / f"runs/{run_id}/scribe_samples"
+                                    sp.mkdir(parents=True, exist_ok=True)
+                                    fname = f"scribe_{chr(ord('a')+k)}_region_{i+1}.png"
+                                    fpath = sp / fname
+                                    cv2.imwrite(str(fpath), bordered)
+                                    samples.append(f"/static/runs/{run_id}/scribe_samples/{fname}")
+                                    scribe_samples[scribe_id] = samples
+                                except Exception:
+                                    pass
+
+                                # Build explanation
+                                try:
+                                    diag_proc = ImageProcessor()
+                                    a = diag_proc._diagnostics(imgs_for_samples[i-1]) if i > 0 else {}
+                                    b = diag_proc._diagnostics(imgs_for_samples[i])
+                                    if a and b and "lbp" in a and "lbp" in b:
+                                        a["lbp_chi2"] = _chi2(np.asarray(a["lbp"]), np.asarray(b["lbp"]))
+                                    explanation_text = _reason_from_diffs(a, b) if i > 0 else (
+                                        "Initial scribe for selected region; consistent letter proportions, stroke weight, and slant"
+                                    )
+                                except Exception:
+                                    explanation_text = "Different scribal hand detected based on style and stroke differences."
+
+                                change = {
+                                    "line_number": int(i + 1),           # region ordinal
+                                    "start_line": int(i + 1),
+                                    "end_line": int(i + 1),
+                                    "scribe": scribe_id,
+                                    "is_return": is_return,
+                                    "is_initial": (not is_return and k == 0 and i == 0),
+                                    "explanation": explanation_text,
+                                    "features": {
+                                        "letterSpacing": "normal",
+                                        "inkColor": "black",
+                                        "handSize": "medium",
+                                        "style": "formal"
+                                    },
+                                    "samples": samples
+                                }
+                                if not change["is_initial"] and conf is not None:
+                                    change["confidence"] = conf
+                                scribe_changes.append(change)
+
+                            # Inline screenshots for regions
+                            region_shots = []
+                            for idx2, rp in enumerate(region_paths, 1):
+                                try:
+                                    with open(rp, 'rb') as fh:
+                                        b = fh.read()
+                                    enc = base64.b64encode(b).decode('ascii')
+                                    bbox_list = region_metas[idx2-1].get('bbox', [0,0,0,0])
+                                    bbox_list = [int(x) for x in bbox_list]
+                                    region_shots.append({
+                                        'lineNumber': idx2,
+                                        'text': '',
+                                        'bbox': bbox_list,
+                                        'screenshot': f"data:image/png;base64,{enc}",
+                                        'confidence': 1.0
+                                    })
+                                except Exception as e:
+                                    print(f"Failed to build region screenshot {idx2}: {e}")
+
+                            # Build line_segments from manual regions for UI overlay
+                            line_segments = []
+                            for idx3, meta in enumerate(region_metas):
+                                bbox = [int(x) for x in meta.get('bbox', [0, 0, 0, 0])]
+                                img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
+                                line_segments.append({
+                                    'id': f'line_{int(idx3)}',
+                                    'bbox': bbox,
+                                    'image': img_data
+                                })
+
+                            result = {
+                                "job_id": f"job_{int(time.time())}",
+                                "run_id": run_id,
+                                "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                                "segmentation_overlay": None,
+                                "polygons": [],
+                                "scribe_changes": scribe_changes,
+                                "total_lines": len(region_paths),
+                                "line_screenshots": region_shots,
+                                "ocr_available": OCR_AVAILABLE,
+                                "scribe_samples": scribe_samples,
+                                "line_segments": line_segments,
+                                "statistics": {
+                                    "total_scribes": len(set(labels)),
+                                    "overall_confidence": float(np.mean([c.get("confidence", 0.0) for c in scribe_changes if "confidence" in c])) if any("confidence" in c for c in scribe_changes) else 0.0,
+                                    "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                                },
+                                "diagnostics": {}
+                            }
+                            print("=== MANUAL REGION ANALYSIS COMPLETE ===")
+                            return jsonify(result)
+
+                    # 2) embed each region (same extractor as lines)
+                    embs = []
+                    imgs_for_samples = []
+                    for p in region_paths:
+                        img = cv2.imread(p, cv2.IMREAD_COLOR)
+                        if img is None: 
+                            continue
+                        imgs_for_samples.append(img)
+                        embs.append(line_embedding(
+                            img,
+                            central_band_frac=0.65,   # slightly tighter band
+                            central_band_pad=2,
+                            resize_height=160,        # a bit larger for stability
+                            use_color=False,          # less color noise for manual
+                            w_lbp=1.1, w_hog=1.2, w_color=0.0
+                        ))
+                    if len(embs) == 0:
+                        return jsonify({"error": "Failed to compute embeddings for manual regions"}), 500
+                    X = np.vstack(embs).astype(np.float32)
+
+                    # 2b) compute diagnostics for explanations
+                    try:
+                        diag_proc = ImageProcessor()
+                        region_diags = [diag_proc._diagnostics(img) for img in imgs_for_samples]
+                    except Exception:
+                        region_diags = [{} for _ in imgs_for_samples]
+
+                    # 3) region-level clustering → same/return scribes
+                    labels = _cluster_regions_same_scribe(X, min_sep=0.10)
+                    # assign A,B,C by first occurrence
+                    label_to_key = {}
+                    next_key = 0
+                    def key_to_id(k): return f"Scribe {chr(ord('A') + k)}"
+
+                    # 4) Build scribe blocks in the user's visual order; detect returns
+                    scribe_changes = []
+                    scribe_samples = {}
+                    for i, (lab, meta) in enumerate(zip(labels, region_metas)):
+                        if lab not in label_to_key:
+                            label_to_key[lab] = next_key
+                            next_key += 1
+                        k = label_to_key[lab]  # 0->A, 1->B, ...
+                        scribe_id = key_to_id(k)
+                        is_return = sum(1 for j in labels[:i] if j == lab) > 0
+
+                        # confidence from separation to nearest *other* centroid
+                        this = X[i]
+                        c_me = X[np.array(labels) == lab].mean(axis=0)
+                        # pick closest different cluster
+                        others = [X[np.array(labels) == l].mean(axis=0) for l in sorted(set(labels)) if l != lab]
+                        if others:
+                            dmin = min([1.0 - float(np.dot(c_me, o) / (np.linalg.norm(c_me)+1e-12) / (np.linalg.norm(o)+1e-12)) for o in others])
+                            # map small distance → low confidence, bigger separation → higher
+                            conf = 35.0 + max(0.0, min(55.0, (dmin - 0.08) * 600.0))  # ~35–90%
+                        else:
+                            conf = None  # only one cluster in total
+
+                        # sample image (border-coded by scribe)
+                        samples = scribe_samples.get(scribe_id, [])
+                        try:
+                            border_colors = {0:(255,100,100),1:(100,255,100),2:(100,100,255)}
+                            color = border_colors.get(k, (200,200,200))
+                            img = imgs_for_samples[i]
+                            bordered = cv2.copyMakeBorder(img, 10,10,10,10, cv2.BORDER_CONSTANT, value=color)
+                            sp = STATIC_DIR / f"runs/{run_id}/scribe_samples"
+                            sp.mkdir(parents=True, exist_ok=True)
+                            fname = f"scribe_{chr(ord('a')+k)}_region_{i+1}.png"
+                            fpath = sp / fname
+                            cv2.imwrite(str(fpath), bordered)
+                            samples.append(f"/static/runs/{run_id}/scribe_samples/{fname}")
+                            scribe_samples[scribe_id] = samples
+                        except Exception:
+                            pass
+
+                        # Build explanation: returns vs. first occurrence vs. initial
+                        if is_return:
+                            explanation_text = (
+                                "Return of earlier scribe; handwriting matches prior region by stroke texture & slant"
+                            )
+                        elif i == 0:
+                            explanation_text = (
+                                "Initial scribe for selected region; consistent letter proportions, stroke weight, and slant"
+                            )
+                        else:
+                            # compare to previous region to articulate why it's different
+                            try:
+                                a = dict(region_diags[i-1])
+                                b = dict(region_diags[i])
+                                if a and b and "lbp" in a and "lbp" in b:
+                                    a["lbp_chi2"] = _chi2(np.asarray(a["lbp"]), np.asarray(b["lbp"]))
+                                explanation_text = _reason_from_diffs(a, b)
+                            except Exception:
+                                explanation_text = "Different scribal hand detected based on style and stroke differences."
+
+                        change = {
+                            "line_number": int(i + 1),           # in manual: region ordinal
+                            "start_line": int(i + 1),
+                            "end_line": int(i + 1),
+                            "scribe": scribe_id,
+                            "is_initial": (not is_return and k == 0 and i == 0),
+                            "explanation": explanation_text,
+                            "features": {                    # show these for manual too
+                                "handSize": "medium",
+                                "inkColor": "black",
+                                "letterSpacing": "normal",
+                                "style": "formal"
+                            },
+                            "samples": samples
+                        }
+                        if not change["is_initial"] and conf is not None:
+                            change["confidence"] = conf
+                        scribe_changes.append(change)
+
+                    # 5) Build inline screenshots (base64 data URLs) for each region
+                    region_shots = []
+                    for idx2, rp in enumerate(region_paths, 1):
+                        try:
+                            with open(rp, 'rb') as fh:
+                                b = fh.read()
+                            enc = base64.b64encode(b).decode('ascii')
+                            bbox_list = region_metas[idx2-1].get('bbox', [0,0,0,0])
+                            bbox_list = [int(x) for x in bbox_list]
+                            region_shots.append({
+                                'lineNumber': idx2,
+                                'text': '',
+                                'bbox': bbox_list,
+                                'screenshot': f"data:image/png;base64,{enc}",
+                                'confidence': 1.0
+                            })
+                        except Exception as e:
+                            print(f"Failed to build region screenshot {idx2}: {e}")
+
+                    result = {
+                        "job_id": f"job_{int(time.time())}",
+                        "run_id": run_id,
+                        "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                        "segmentation_overlay": None,
+                        "polygons": [],
+                        "scribe_changes": scribe_changes,
+                        "total_lines": len(region_paths),
+                        "line_screenshots": region_shots,
+                        "ocr_available": OCR_AVAILABLE,
+                        "scribe_samples": scribe_samples,
+                        "line_segments": line_segments,
+                        "statistics": {
+                            "total_scribes": len(set(labels)),
+                            "overall_confidence": float(np.mean([c.get("confidence", 0.0) for c in scribe_changes if "confidence" in c])) if any("confidence" in c for c in scribe_changes) else 0.0,
+                            "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                        },
+                        "diagnostics": {}
+                    }
+                    print("=== MANUAL REGION ANALYSIS COMPLETE ===")
+                    return jsonify(result)
                 else:
                     print(f"AUTO MODE: Using all {len(metas)} extracted lines for analysis")
                 
@@ -822,84 +1938,138 @@ def analyze():
         if not line_abs_paths:
             return jsonify({"error": "No lines could be extracted from the image. Check preprocessing parameters."}), 400
         
+        # Safety check for manual mode
+        if mode == "manual" and len(line_abs_paths) < 2:
+            return jsonify({"error": "Not enough lines in the selected regions to analyze."}), 400
+        
         print("Using enhanced scribe detection with ImageProcessor")
         
         # Mode-specific analysis configuration
-        if mode == "auto":
-            print("AUTO MODE: Full manuscript analysis with optimized parameters")
-            # Auto mode: use optimized parameters for full manuscript analysis
-            proc = ImageProcessor(
-                algo=algo, 
-                z_thresh=max(z_thresh, 2.5),  # Ensure minimum threshold for better accuracy
-                min_gap=max(min_gap, 3),      # Ensure minimum gap for stable detection
-                min_run=max(min_run, 3),      # Ensure minimum run length
-                use_color=use_color, 
-                ruptures_pen=rupt_pen,
-                confidence_threshold=0.75,     # Higher confidence threshold
-                min_segment_size=2             # Minimum segment size
-            )
+        det_result = None
+        segments_from_manual = None
+        proc = None  # Initialize to None
+        
+        if mode == "manual" and manual_regions:
+            # Manual mode with regions: build segments and skip detector
+            segments_from_manual = _segments_from_regions(metas, manual_regions)
+            print("MANUAL MODE: Skipping detector, using manual segments directly")
+            # Create a minimal det_result for compatibility
+            det_result = {"changes": [], "segments": segments_from_manual or [], "z": [], "dist": []}
         else:
-            print("MANUAL MODE: Targeted analysis of selected regions")
-            # Manual mode: use more sensitive parameters for targeted analysis
-            proc = ImageProcessor(
-                algo=algo, 
-                z_thresh=max(z_thresh - 0.5, 2.0),  # Lower threshold for more sensitive detection
-                min_gap=max(min_gap - 1, 2),        # Smaller gap for finer detection
-                min_run=max(min_run - 1, 2),        # Smaller run for targeted regions
-                use_color=use_color, 
-                ruptures_pen=rupt_pen,
-                confidence_threshold=0.65,           # Lower confidence threshold
-                min_segment_size=1                   # Allow smaller segments
-            )
-        det_result = proc.detect_with_reasons(line_abs_paths)
+            # AUTO mode or manual without regions: run detector
+            if mode == "auto":
+                print("AUTO MODE: Full manuscript analysis with optimized parameters")
+                proc = ImageProcessor(
+                    algo=algo, 
+                    z_thresh=max(z_thresh, 2.5),  # Ensure minimum threshold for better accuracy
+                    min_gap=max(min_gap, 3),      # Ensure minimum gap for stable detection
+                    min_run=max(min_run, 3),      # Ensure minimum run length
+                    use_color=use_color, 
+                    ruptures_pen=rupt_pen,
+                    confidence_threshold=0.75,     # Higher confidence threshold
+                    min_segment_size=2             # Minimum segment size
+                )
+            else:
+                # Manual mode without explicit regions → sensitive detector
+                print("MANUAL MODE: Sensitive analysis for user-guided detection")
+                proc = ImageProcessor(
+                    algo=algo,
+                    z_thresh=max((z_thresh or 2.5) - 0.5, 2.0),
+                    min_gap=max(min_gap - 1, 2),
+                    min_run=max(min_run - 1, 2),
+                    use_color=use_color,
+                    ruptures_pen=rupt_pen,
+                    confidence_threshold=0.65,
+                    min_segment_size=1
+                )
+            
+            det_result = proc.detect_with_reasons(line_abs_paths)
         
         n = len(line_abs_paths)
         print(f"{mode.upper()} MODE DETECTION RESULTS:")
         print(f"  - Analyzed {n} lines")
-        print(f"  - Detected {len(det_result.get('changes', []))} potential changes")
-        print(f"  - Parameters: z_thresh={proc.z_thresh}, min_gap={proc.min_gap}, min_run={proc.min_run}")
+        
+        if det_result is not None:
+            print(f"  - Detected {len(det_result.get('changes', []))} potential changes")
+            if proc is not None:
+                print(f"  - Parameters: z_thresh={proc.z_thresh}, min_gap={proc.min_gap}, min_run={proc.min_run}")
+        else:
+            print("  - Detector skipped (manual segments)")
         
         # Prefer segments from the detector (may come from clustering fallback)
-        segments = det_result.get("segments")
-        if not segments:
+        segments = det_result.get("segments") if det_result else []
+        if not segments and det_result:
             change_idxs = [c["index"] for c in det_result.get("changes", [])]
             segments = indices_to_segments(n, change_idxs)
+        
+        # Use manual segments if available
+        if segments_from_manual:
+            segments = segments_from_manual
+            print(f"MANUAL MODE: Using {len(segments_from_manual)} manual segments: {segments_from_manual}")
         
         print(f"  - Final segments: {len(segments)} total")
 
         # Build scribe structures from actual segments
         scribe_changes, scribe_samples, _ = _build_segments_and_samples(run_id, line_abs_paths, segments)
 
-        # Attach boundary confidences/explanations where we have them
-        boundary_by_idx = {c["index"]: c for c in det_result.get("changes", [])}
-        for i, seg in enumerate(scribe_changes):
-            # NEVER assign confidence to the initial scribe (first segment)
-            if i == 0:
-                # Initial scribe gets no confidence score at all
-                if "confidence" in seg:
-                    del seg["confidence"]  # Remove any existing confidence
-                seg["is_initial"] = True
-                print(f"Initial scribe {seg['scribe']} - NO confidence assigned")
-            else:
-                # Find the boundary that starts this segment (boundary index is 0-based line index)
-                boundary_idx = seg["start_line"] - 1  # Convert to 0-based
-                if boundary_idx in boundary_by_idx:
-                    b = boundary_by_idx[boundary_idx]
-                    # Convert confidence to percentage and ensure realistic range
-                    raw_conf = float(b.get("confidence", 0.0))
-                    # Map sigmoid output (0-1) to more realistic confidence range (30-95%)
-                    realistic_conf = 30.0 + (raw_conf * 65.0)
-                    seg["confidence"] = realistic_conf
-                    seg["is_initial"] = False
-                    seg["explanation"] = b.get("reason", seg.get("explanation", ""))
-                    print(f"Transition scribe {seg['scribe']} - confidence: {realistic_conf:.1f}%")
+        # Manual mode: give reasonable confidences based on segment characteristics
+        if det_result is None:
+            print("MANUAL MODE: Applying heuristic confidences for non-initial scribes")
+            for i, seg in enumerate(scribe_changes):
+                if i == 0:
+                    seg.pop("confidence", None)
+                    seg["is_initial"] = True
+                    print(f"Manual initial scribe {seg['scribe']} - NO confidence assigned")
                 else:
-                    # Default confidence for segments without clear boundaries
-                    seg["confidence"] = 75.0
+                    length = max(1, seg.get("end_line", seg["start_line"]) - seg["start_line"] + 1)
+                    # Map 1..10 lines roughly to 60..85%
+                    conf = 60.0 + min(25.0, (length - 1) * 3.0)
+                    seg["confidence"] = float(conf)
                     seg["is_initial"] = False
-                    print(f"Transition scribe {seg['scribe']} - default confidence: 75.0%")
+                    print(f"Manual transition scribe {seg['scribe']} - heuristic confidence: {seg['confidence']:.1f}% (length: {length} lines)")
 
-        total_scribes = max(1, len(segments))
+        # Attach boundary confidences/explanations where we have them
+        boundary_by_idx = {}
+        if det_result is not None:
+            boundary_by_idx = {c["index"]: c for c in det_result.get("changes", [])}
+        
+        # Only process detector confidences if we have det_result
+        if det_result is not None:
+            for i, seg in enumerate(scribe_changes):
+                if i == 0:
+                    seg.pop("confidence", None)
+                    seg["is_initial"] = True
+                    print(f"Initial scribe {seg['scribe']} - NO confidence assigned")
+                else:
+                    boundary_idx = seg["start_line"] - 1  # Convert to 0-based
+                    if boundary_idx in boundary_by_idx:
+                        b = boundary_by_idx[boundary_idx]
+                        raw_conf = float(b.get("confidence", 0.65))  # already 0.50–0.95 from calibration
+                        pct = max(50.0, min(95.0, raw_conf * 100.0))
+                        # penalize very tiny segments (single-line runs look suspicious)
+                        if (seg.get("end_line", seg["start_line"]) - seg["start_line"]) <= 1:
+                            pct = max(50.0, pct - 6.0)
+                        seg["confidence"] = float(pct)
+                        seg["is_initial"] = False
+                        seg["explanation"] = b.get("reason", seg.get("explanation", ""))
+                        print(f"Transition scribe {seg['scribe']} - confidence: {seg['confidence']:.1f}%")
+                    else:
+                        # Missing boundary in detector results
+                        seg["confidence"] = 65.0
+                        seg["is_initial"] = False
+                        print(f"Transition scribe {seg['scribe']} - default confidence: 65.0%")
+
+        # Ensure consistent feature cards for auto mode
+        for seg in scribe_changes:
+            seg.setdefault("features", {
+                "handSize": "medium",
+                "inkColor": "black",
+                "letterSpacing": "normal",
+                "style": "formal"
+            })
+
+        unique_scribes = {seg.get('scribe') for seg in scribe_changes}
+        total_scribes = max(1, len(unique_scribes))
         # Calculate overall confidence from the realistic confidence scores (excluding initial scribe)
         confidence_scores = [c.get("confidence") for c in scribe_changes if c.get("confidence") is not None]
         overall_conf = (float(np.mean(confidence_scores)) if confidence_scores else 0.0)
@@ -911,6 +2081,8 @@ def analyze():
             
         # Convert image to base64 for OCR processing
         buffer = io.BytesIO()
+        image = Image.open(io.BytesIO(file_content))
+        image = ImageOps.exif_transpose(image)
         image.save(buffer, format='PNG')
         image_base64 = base64.b64encode(buffer.getvalue()).decode()
         
@@ -923,15 +2095,35 @@ def analyze():
         
         total_lines = len(line_screenshots)
         
-        # Build line_segments for UI from actual metadata
+        # Build base64 screenshots from actual line crops for UI previews
+        line_screenshots = []
+        for idx, path in enumerate(line_abs_paths, 1):
+            try:
+                with open(path, 'rb') as fh:
+                    raw = fh.read()
+                enc = base64.b64encode(raw).decode('ascii')
+                bbox = metas[idx-1].get('bbox', [0, 0, 500, 20]) if idx-1 < len(metas) else [0, 0, 500, 20]
+                bbox = [int(x) for x in bbox]
+                line_screenshots.append({
+                    'lineNumber': int(idx),
+                    'text': metas[idx-1].get('text', '') if idx-1 < len(metas) else '',
+                    'bbox': bbox,
+                    'screenshot': f"data:image/png;base64,{enc}",
+                    'confidence': 1.0
+                })
+            except Exception as e:
+                print(f"Failed to encode line screenshot for {path}: {e}")
+
+        # Build line_segments for UI from actual metadata (reuse screenshots)
         line_segments = []
-        for m in metas:
+        for idx, m in enumerate(metas):
+            img_data = line_screenshots[idx]['screenshot'] if idx < len(line_screenshots) else ''
             line_segments.append({
-                "id": f"line_{len(line_segments)}",
-                "bbox": m.get("bbox", [0, 0, 500, 20]),
-                "image": m.get("screenshot", "")
+                "id": f"line_{int(idx)}",
+                "bbox": [int(x) for x in m.get("bbox", [0, 0, 500, 20])],
+                "image": img_data
             })
-        
+
         # Require actual line segments
         if not line_segments:
             raise RuntimeError("No line segments could be generated from the preprocessing results")
@@ -958,6 +2150,7 @@ def analyze():
                 "dist": locals().get('det_result', {}).get("dist", [])
             }
         }
+
         
         print(f"\n=== ANALYSIS COMPLETE ===")
         print(f"Mode: {mode}")
