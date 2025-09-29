@@ -1,9 +1,21 @@
-Flask
-flask-cors
-opencv-python
-numpy
-Pillow
-scikit-image
-scipy
-scikit-learn
-ruptures
+# --- Web server ---
+Flask==3.0.3
+flask-cors==4.0.0
+gunicorn==21.2.0
+
+# --- Image/array stack ---
+numpy==1.26.4
+opencv-python-headless==4.9.0.80   # server-safe (no GUI)
+Pillow==10.3.0
+
+# --- Scientific / ML (used by similarity & detectors) ---
+scipy==1.11.4
+scikit-learn==1.4.2
+scikit-image==0.23.2
+ruptures==1.1.9
+
+# --- OCR wrapper (binary required at OS level if you use OCR paths) ---
+pytesseract==0.3.10
+
+# --- PDF export ---
+reportlab==4.1.0

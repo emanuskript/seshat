@@ -4,7 +4,7 @@ import os
 import shutil
 import cv2
 import json
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, url_for
 from flask_cors import CORS
 import time
 import random
@@ -52,17 +52,20 @@ except ImportError as e:
     print(f"Feature extraction not available: {e}")
     FEATURE_EXTRACTION_AVAILABLE = False
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for Vue.js frontend
+app = Flask(__name__, static_folder="static", static_url_path="/static")
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)  # Enable CORS for Vue.js frontend
+
+# Limit request size to 10 MB
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
+
+# Enable logging
+import logging
+logging.basicConfig(level=logging.INFO)
 
 # Create static directory for serving scribe samples
 STATIC_DIR = Path(__file__).parent / "static"
 RUNS_DIR = STATIC_DIR / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
-
-@app.route("/static/<path:filename>")
-def serve_static(filename):
-    return send_from_directory(STATIC_DIR, filename)
 
 # -------- Param + input helpers (avoid 400s when frontend posts query/JSON) ------
 def _get_param(key: str, default=None):
@@ -1311,6 +1314,11 @@ def health():
         "ocr_available": OCR_AVAILABLE
     })
 
+# Add a root route for health checks
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"ok": True, "ocr_available": OCR_AVAILABLE})
+
 # Removed get_consistent_scribe_results function - now using real detection only
 
 @app.route("/extract-lines", methods=["POST"])
@@ -1341,43 +1349,65 @@ def extract_lines():
 
 @app.route("/prepare", methods=["POST"])
 def prepare():
+    file = None
+    raw_bytes = None
+
+    # (A) multipart/form-data
+    if "image" in request.files and getattr(request.files["image"], "filename", ""):
+        file = request.files["image"]
+
+    # (B) raw body (fetch(...).blob())
+    if file is None:
+        raw_bytes = request.get_data() or None
+
+    if file is None and not raw_bytes:
+        return jsonify({"error": "No image provided"}), 400
+
+    run_id = str(uuid.uuid4())
+    run_dir = RUNS_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    page_rel = f"runs/{run_id}/manuscript_page.jpg"
+    page_abs = STATIC_DIR / page_rel
+
     try:
-        if 'image' not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
-        file = request.files['image']
-        if not file or not file.filename:
-            return jsonify({"error": "No file selected"}), 400
-        run_id = str(uuid.uuid4())
-        run_dir = RUNS_DIR / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        page_rel = f"runs/{run_id}/manuscript_page.jpg"
-        page_abs = STATIC_DIR / page_rel
-        # Save canonical page image as-is
-        try:
+        if file is not None:
             image = Image.open(file.stream)
-            image = ImageOps.exif_transpose(image).convert('RGB')
-            image.save(page_abs, 'JPEG')
-        except Exception:
-            # Fallback: write raw bytes
+        else:
+            image = Image.open(io.BytesIO(raw_bytes))
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.save(page_abs, "JPEG")
+    except Exception:
+        if file is not None:
             file.stream.seek(0)
-            with open(page_abs, 'wb') as f:
+            with open(page_abs, "wb") as f:
                 f.write(file.stream.read())
-        return jsonify({
-            'job_id': run_id,
-            'page_image': page_rel,
-            'page_image_static': f"/static/{page_rel}"
-        })
-    except Exception as e:
-        return jsonify({"error": f"Prepare failed: {str(e)}"}), 500
+        elif raw_bytes:
+            with open(page_abs, "wb") as f:
+                f.write(raw_bytes)
+
+    page_abs_url = url_for('static', filename=page_rel, _external=True)
+
+    return jsonify({
+        "ok": True,
+        "job_id": run_id,
+        "page_image": page_rel,
+        "page_image_static": page_abs_url
+    })
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
+    # Handle empty preflight-like POSTs gracefully
+    if request.method == "POST" and not (request.files or request.form or request.get_data()):
+        return jsonify({"error": "Empty request body"}), 400
+
     try:
         # ==== Robust input resolution (file / base64 / prepared job / page URL / latest prepared) ====
         form = request.form or {}
         args = request.args or {}
         run_id = str(uuid.uuid4())
 
+        # Pull mode from any source
+        mode = _get_param("mode", "auto")
         # Pull mode from any source
         mode = _get_param("mode", "auto")
 
@@ -1551,362 +1581,212 @@ def analyze():
                     # Create run directory for this analysis
                     run_dir = STATIC_DIR / "runs" / run_id
                     run_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    # 1) crop exact regions
-                    region_paths, region_metas = _crop_regions_from_page(file_content, manual_regions, run_dir, "A")
+        except Exception as e:
+            print(f"Error during segmentation and cropping: {e}")
 
-                    # STRICT PER-LINE WITH REUSE: treat each region as its own segment; reuse labels for close matches
-                    if region_paths:
-                        print("MANUAL MODE: strict per-line with label reuse")
-                        imgs_for_samples = []
-                        region_diags = []
-                        try:
-                            diag_proc = ImageProcessor()
-                        except Exception:
-                            diag_proc = None
-                        for pth in region_paths:
-                            img = cv2.imread(pth, cv2.IMREAD_COLOR)
-                            if img is None: continue
-                            imgs_for_samples.append(img)
-                            if diag_proc is not None:
-                                region_diags.append(diag_proc._diagnostics(img))
-                            else:
-                                region_diags.append({})
+        # NEW: Manual mode uses region-driven analysis (no OCR dependency)
+        if mode == "manual" and manual_regions:
+            print("MANUAL MODE: Region-driven analysis (no OCR line dependency)")
+            # Create run directory for this analysis
+            run_dir = STATIC_DIR / "runs" / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 1) crop exact regions
+            region_paths, region_metas = _crop_regions_from_page(file_content, manual_regions, run_dir, "A")
 
-                        # Build per-line segments
-                        segments_final = [(i, i+1) for i in range(len(region_paths))]
-                        # Stats per segment
-                        final_stats = []
-                        for d in region_diags:
-                            acc = _FeatureAccumulator(d)
-                            final_stats.append(acc.mean_diag())
-                        # Boundary diffs
-                        final_diffs = [None]
-                        for k in range(1, len(final_stats)):
-                            final_diffs.append(_segment_difference(final_stats[k-1], final_stats[k]))
-
-                        # Build changes with reuse
-                        scribe_changes, scribe_samples = _segments_to_manual_changes(segments_final, final_stats, final_diffs, imgs_for_samples, run_id)
-
-                        # Screenshots + line segments for UI
-                        region_shots = []
-                        for idx2, rp in enumerate(region_paths, 1):
-                            try:
-                                with open(rp, 'rb') as fh:
-                                    b = fh.read()
-                                enc = base64.b64encode(b).decode('ascii')
-                                bbox = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
-                                bbox = [int(x) for x in bbox]
-                                region_shots.append({
-                                    'lineNumber': int(idx2),
-                                    'text': '',
-                                    'bbox': bbox,
-                                    'screenshot': f"data:image/png;base64,{enc}",
-                                    'confidence': 1.0
-                                })
-                            except Exception as e:
-                                print(f"Failed to build region screenshot {idx2}: {e}")
-
-                        line_segments = []
-                        for idx3, meta in enumerate(region_metas):
-                            bbox = [int(x) for x in meta.get('bbox', [0,0,0,0])]
-                            img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
-                            line_segments.append({'id': f'line_{int(idx3)}', 'bbox': bbox, 'image': img_data})
-
-                        total_scribes = len({c['scribe'] for c in scribe_changes})
-                        confidences = [c.get('confidence') for c in scribe_changes if c.get('confidence') is not None]
-                        overall_confidence = float(np.mean(confidences)) if confidences else 0.0
-
-                        result = {
-                            "job_id": f"job_{int(time.time())}",
-                            "run_id": run_id,
-                            "page_image": f"runs/{run_id}/manuscript_page.jpg",
-                            "page_image_static": f"/static/runs/{run_id}/manuscript_page.jpg",
-                            "page_image_static": f"/static/runs/{run_id}/manuscript_page.jpg",
-                            "segmentation_overlay": None,
-                            "polygons": [],
-                            "scribe_changes": scribe_changes,
-                            "total_lines": len(region_paths),
-                            "line_screenshots": region_shots,
-                            "ocr_available": OCR_AVAILABLE,
-                            "scribe_samples": scribe_samples,
-                            "line_segments": line_segments,
-                            "statistics": {
-                                "total_scribes": total_scribes,
-                                "overall_confidence": overall_confidence,
-                                "analysis_time": int((time.time() - analysis_start_time) * 1000),
-                            },
-                            "diagnostics": {}
-                        }
-                        print("=== MANUAL REGION ANALYSIS COMPLETE (strict) ===")
-                        return jsonify(result)
-
-                    # Attempt purely heuristic comparison pipeline before falling back
-                    if region_paths and SIMILARITY_AVAILABLE:
-                        try:
-                            diag_proc = ImageProcessor()
-                        except Exception:
-                            diag_proc = None
-
-                        if diag_proc is not None:
-                            imgs_for_samples_temp = []
-                            region_diags = []
-                            for p in region_paths:
-                                img = cv2.imread(p, cv2.IMREAD_COLOR)
-                                if img is None:
-                                    continue
-                                imgs_for_samples_temp.append(img)
-                                region_diags.append(diag_proc._diagnostics(img))
-
-                            if region_diags:
-                                segments, segment_stats, boundary_diffs = _heuristic_segments_from_diags(region_diags)
-                                if segments:
-                                    scribe_changes, scribe_samples = _segments_to_manual_changes(
-                                        segments, segment_stats, boundary_diffs, imgs_for_samples_temp, run_id
-                                    )
-
-                                    region_shots = []
-                                    for idx2, rp in enumerate(region_paths, 1):
-                                        try:
-                                            with open(rp, 'rb') as fh:
-                                                b = fh.read()
-                                            enc = base64.b64encode(b).decode('ascii')
-                                            bbox = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
-                                            bbox = [int(x) for x in bbox]
-                                            region_shots.append({
-                                                'lineNumber': idx2,
-                                                'text': '',
-                                                'bbox': bbox,
-                                                'screenshot': f"data:image/png;base64,{enc}",
-                                                'confidence': 1.0
-                                            })
-                                        except Exception as e:
-                                            print(f"Failed to build region screenshot {idx2}: {e}")
-
-                                    total_scribes = len({c['scribe'] for c in scribe_changes})
-                                    confidences = [c.get('confidence') for c in scribe_changes if c.get('confidence') is not None]
-                                    overall_confidence = float(np.mean(confidences)) if confidences else 0.0
-
-                        # Build line_segments for UI from manual region bboxes and images
-                        line_segments = []
-                        for idx3, meta in enumerate(region_metas):
-                            bbox = meta.get('bbox', [0, 0, 0, 0])
-                            bbox = [int(x) for x in bbox]
-                            img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
-                            line_segments.append({
-                                'id': f'line_{int(idx3)}',
-                                'bbox': bbox,
-                                'image': img_data
-                            })
-
-                        result = {
-                            "job_id": f"job_{int(time.time())}",
-                            "run_id": run_id,
-                            "page_image": f"runs/{run_id}/manuscript_page.jpg",
-                            "segmentation_overlay": None,
-                            "polygons": [],
-                            "scribe_changes": scribe_changes,
-                            "total_lines": len(region_paths),
-                            "line_screenshots": region_shots,
-                            "ocr_available": OCR_AVAILABLE,
-                            "scribe_samples": scribe_samples,
-                            "line_segments": line_segments,
-                            "statistics": {
-                                "total_scribes": total_scribes,
-                                "overall_confidence": overall_confidence,
-                                "analysis_time": int((time.time() - analysis_start_time) * 1000),
-                            },
-                            "diagnostics": {}
-                        }
-                        print("=== MANUAL REGION ANALYSIS (heuristic) - keeping for hybrid, continuing ===")
-                        # Do not return early; continue to embedding path for hybrid decision
-
-                    if not region_paths:
-                        print("MANUAL MODE: No valid manual regions to analyze; falling back to detector with manual segments")
-                        # Fallback: proceed to the general path using manual segments on metas
-                        # Build manual segments and skip the early-return path
-                        segments_from_manual = _segments_from_regions(metas, manual_regions)
-                        # Continue below (outside manual-region early return)
+            # STRICT PER-LINE WITH REUSE: treat each region as its own segment; reuse labels for close matches
+            if region_paths:
+                print("MANUAL MODE: strict per-line with label reuse")
+                imgs_for_samples = []
+                region_diags = []
+                try:
+                    diag_proc = ImageProcessor()
+                except Exception:
+                    diag_proc = None
+                for pth in region_paths:
+                    img = cv2.imread(pth, cv2.IMREAD_COLOR)
+                    if img is None: continue
+                    imgs_for_samples.append(img)
+                    if diag_proc is not None:
+                        region_diags.append(diag_proc._diagnostics(img))
                     else:
-                        # 2) embed each region (same extractor as lines)
-                        embs = []
-                        imgs_for_samples = []
-                        for p in region_paths:
-                            img = cv2.imread(p, cv2.IMREAD_COLOR)
-                            if img is None: 
-                                continue
-                            imgs_for_samples.append(img)
-                            # call with narrowed band but default weight args
-                            embs.append(line_embedding(
-                                img,
-                                central_band_frac=0.65,
-                                central_band_pad=2,
-                                resize_height=160,
-                                use_color=False
-                            ))
-                        if len(embs) == 0:
-                            print("MANUAL MODE: Failed to compute embeddings for manual regions; falling back to detector with manual segments")
-                            segments_from_manual = _segments_from_regions(metas, manual_regions)
-                        else:
-                            X = np.vstack(embs).astype(np.float32)
+                        region_diags.append({})
 
-                            # 3) region-level clustering → same/return scribes
-                            labels = _cluster_regions_same_scribe(X, min_sep=0.10)
-                            # assign A,B,C by first occurrence
-                            label_to_key = {}
-                            next_key = 0
-                            def key_to_id(k): return f"Scribe {chr(ord('A') + k)}"
+                # Build per-line segments
+                segments_final = [(i, i+1) for i in range(len(region_paths))]
+                # Stats per segment
+                final_stats = []
+                for d in region_diags:
+                    acc = _FeatureAccumulator(d)
+                    final_stats.append(acc.mean_diag())
+                final_diffs = []  # Initialize final_diffs as an empty list
+                # Boundary diffs = [None]
+                for k in range(1, len(final_stats)):
+                    final_diffs.append(_segment_difference(final_stats[k-1], final_stats[k]))
 
-                            # 4) Build scribe blocks in the user's visual order; detect returns
-                            scribe_changes = []
-                            scribe_samples = {}
-                            for i, (lab, meta) in enumerate(zip(labels, region_metas)):
-                                if lab not in label_to_key:
-                                    label_to_key[lab] = next_key
-                                    next_key += 1
-                                k = label_to_key[lab]  # 0->A, 1->B, ...
-                                scribe_id = key_to_id(k)
-                                is_return = sum(1 for j in labels[:i] if j == lab) > 0
+                # Build changes with reuse
+                scribe_changes, scribe_samples = _segments_to_manual_changes(segments_final, final_stats, final_diffs, imgs_for_samples, run_id)
 
-                                # confidence from separation to nearest *other* centroid
-                                this = X[i]
-                                c_me = X[np.array(labels) == lab].mean(axis=0)
-                                # pick closest different cluster
-                                others = [X[np.array(labels) == l].mean(axis=0) for l in sorted(set(labels)) if l != lab]
-                                if others:
-                                    dmin = min([1.0 - float(np.dot(c_me, o) / (np.linalg.norm(c_me)+1e-12) / (np.linalg.norm(o)+1e-12)) for o in others])
-                                    # map small distance → low confidence, bigger separation → higher
-                                    conf = 35.0 + max(0.0, min(55.0, (dmin - 0.08) * 600.0))  # ~35–90%
-                                else:
-                                    conf = None  # only one cluster in total
+                # Screenshots + line segments for UI
+                region_shots = []
+                for idx2, rp in enumerate(region_paths, 1):
+                    try:
+                        with open(rp, 'rb') as fh:
+                            b = fh.read()
+                        enc = base64.b64encode(b).decode('ascii')
+                        bbox = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
+                        bbox = [int(x) for x in bbox]
+                        region_shots.append({
+                            'lineNumber': int(idx2),
+                            'text': '',
+                            'bbox': bbox,
+                            'screenshot': f"data:image/png;base64,{enc}",
+                            'confidence': 1.0
+                        })
+                    except Exception as e:
+                        print(f"Failed to build region screenshot {idx2}: {e}")
 
-                                # sample image (border-coded by scribe)
-                                samples = scribe_samples.get(scribe_id, [])
-                                try:
-                                    border_colors = {0:(255,100,100),1:(100,255,100),2:(100,100,255)}
-                                    color = border_colors.get(k, (200,200,200))
-                                    img = imgs_for_samples[i]
-                                    bordered = cv2.copyMakeBorder(img, 10,10,10,10, cv2.BORDER_CONSTANT, value=color)
-                                    sp = STATIC_DIR / f"runs/{run_id}/scribe_samples"
-                                    sp.mkdir(parents=True, exist_ok=True)
-                                    fname = f"scribe_{chr(ord('a')+k)}_region_{i+1}.png"
-                                    fpath = sp / fname
-                                    cv2.imwrite(str(fpath), bordered)
-                                    samples.append(f"/static/runs/{run_id}/scribe_samples/{fname}")
-                                    scribe_samples[scribe_id] = samples
-                                except Exception:
-                                    pass
+                line_segments = []
+                for idx3, meta in enumerate(region_metas):
+                    bbox = [int(x) for x in meta.get('bbox', [0,0,0,0])]
+                    img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
+                    line_segments.append({'id': f'line_{int(idx3)}', 'bbox': bbox, 'image': img_data})
 
-                                # Build explanation
-                                try:
-                                    diag_proc = ImageProcessor()
-                                    a = diag_proc._diagnostics(imgs_for_samples[i-1]) if i > 0 else {}
-                                    b = diag_proc._diagnostics(imgs_for_samples[i])
-                                    if a and b and "lbp" in a and "lbp" in b:
-                                        a["lbp_chi2"] = _chi2(np.asarray(a["lbp"]), np.asarray(b["lbp"]))
-                                    explanation_text = _reason_from_diffs(a, b) if i > 0 else (
-                                        "Initial scribe for selected region; consistent letter proportions, stroke weight, and slant"
-                                    )
-                                except Exception:
-                                    explanation_text = "Different scribal hand detected based on style and stroke differences."
+                total_scribes = len({c['scribe'] for c in scribe_changes})
+                confidences = [c.get('confidence') for c in scribe_changes if c.get('confidence') is not None]
+                overall_confidence = float(np.mean(confidences)) if confidences else 0.0
 
-                                change = {
-                                    "line_number": int(i + 1),           # region ordinal
-                                    "start_line": int(i + 1),
-                                    "end_line": int(i + 1),
-                                    "scribe": scribe_id,
-                                    "is_return": is_return,
-                                    "is_initial": (not is_return and k == 0 and i == 0),
-                                    "explanation": explanation_text,
-                                    "features": {
-                                        "letterSpacing": "normal",
-                                        "inkColor": "black",
-                                        "handSize": "medium",
-                                        "style": "formal"
-                                    },
-                                    "samples": samples
-                                }
-                                if not change["is_initial"] and conf is not None:
-                                    change["confidence"] = conf
-                                scribe_changes.append(change)
+                result = {
+                    "job_id": f"job_{int(time.time())}",
+                    "run_id": run_id,
+                    "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                    "page_image_static": f"/static/runs/{run_id}/manuscript_page.jpg",
+                    "segmentation_overlay": None,
+                    "polygons": [],
+                    "scribe_changes": scribe_changes,
+                    "total_lines": len(region_paths),
+                    "line_screenshots": region_shots,
+                    "ocr_available": OCR_AVAILABLE,
+                    "scribe_samples": scribe_samples,
+                    "line_segments": line_segments,
+                    "statistics": {
+                        "total_scribes": total_scribes,
+                        "overall_confidence": overall_confidence,
+                        "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                    },
+                    "diagnostics": {}
+                }
+                print("=== MANUAL REGION ANALYSIS COMPLETE (strict) ===")
+                return jsonify(result)
 
-                            # Inline screenshots for regions
+            # Attempt purely heuristic comparison pipeline before falling back
+            if region_paths and SIMILARITY_AVAILABLE:
+                try:
+                    diag_proc = ImageProcessor()
+                except Exception:
+                    diag_proc = None
+
+                if diag_proc is not None:
+                    imgs_for_samples_temp = []
+                    region_diags = []
+                    for p in region_paths:
+                        img = cv2.imread(p, cv2.IMREAD_COLOR)
+                        if img is None:
+                            continue
+                        imgs_for_samples_temp.append(img)
+                        region_diags.append(diag_proc._diagnostics(img))
+
+                    if region_diags:
+                        segments, segment_stats, boundary_diffs = _heuristic_segments_from_diags(region_diags)
+                        if segments:
+                            scribe_changes, scribe_samples = _segments_to_manual_changes(
+                                segments, segment_stats, boundary_diffs, imgs_for_samples_temp, run_id
+                            )
+
                             region_shots = []
                             for idx2, rp in enumerate(region_paths, 1):
                                 try:
                                     with open(rp, 'rb') as fh:
                                         b = fh.read()
                                     enc = base64.b64encode(b).decode('ascii')
-                                    bbox_list = region_metas[idx2-1].get('bbox', [0,0,0,0])
-                                    bbox_list = [int(x) for x in bbox_list]
+                                    bbox = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
+                                    bbox = [int(x) for x in bbox]
                                     region_shots.append({
                                         'lineNumber': idx2,
                                         'text': '',
-                                        'bbox': bbox_list,
+                                        'bbox': bbox,
                                         'screenshot': f"data:image/png;base64,{enc}",
                                         'confidence': 1.0
                                     })
                                 except Exception as e:
                                     print(f"Failed to build region screenshot {idx2}: {e}")
 
-                            # Build line_segments from manual regions for UI overlay
-                            line_segments = []
-                            for idx3, meta in enumerate(region_metas):
-                                bbox = [int(x) for x in meta.get('bbox', [0, 0, 0, 0])]
-                                img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
-                                line_segments.append({
-                                    'id': f'line_{int(idx3)}',
-                                    'bbox': bbox,
-                                    'image': img_data
-                                })
+                            total_scribes = len({c['scribe'] for c in scribe_changes})
+                            confidences = [c.get('confidence') for c in scribe_changes if c.get('confidence') is not None]
+                            overall_confidence = float(np.mean(confidences)) if confidences else 0.0
 
-                            result = {
-                                "job_id": f"job_{int(time.time())}",
-                                "run_id": run_id,
-                                "page_image": f"runs/{run_id}/manuscript_page.jpg",
-                                "segmentation_overlay": None,
-                                "polygons": [],
-                                "scribe_changes": scribe_changes,
-                                "total_lines": len(region_paths),
-                                "line_screenshots": region_shots,
-                                "ocr_available": OCR_AVAILABLE,
-                                "scribe_samples": scribe_samples,
-                                "line_segments": line_segments,
-                                "statistics": {
-                                    "total_scribes": len(set(labels)),
-                                    "overall_confidence": float(np.mean([c.get("confidence", 0.0) for c in scribe_changes if "confidence" in c])) if any("confidence" in c for c in scribe_changes) else 0.0,
-                                    "analysis_time": int((time.time() - analysis_start_time) * 1000),
-                                },
-                                "diagnostics": {}
-                            }
-                            print("=== MANUAL REGION ANALYSIS COMPLETE ===")
-                            return jsonify(result)
+                # Build line_segments for UI from manual region bboxes and images
+                line_segments = []
+                for idx3, meta in enumerate(region_metas):
+                    bbox = meta.get('bbox', [0, 0, 0, 0])
+                    bbox = [int(x) for x in bbox]
+                    img_data = region_shots[idx3]['screenshot'] if idx3 < len(region_shots) else ''
+                    line_segments.append({
+                        'id': f'line_{int(idx3)}',
+                        'bbox': bbox,
+                        'image': img_data
+                    })
 
-                    # 2) embed each region (same extractor as lines)
-                    embs = []
-                    imgs_for_samples = []
-                    for p in region_paths:
-                        img = cv2.imread(p, cv2.IMREAD_COLOR)
-                        if img is None: 
-                            continue
-                        imgs_for_samples.append(img)
-                        embs.append(line_embedding(
-                            img,
-                            central_band_frac=0.65,   # slightly tighter band
-                            central_band_pad=2,
-                            resize_height=160,        # a bit larger for stability
-                            use_color=False           # less color noise for manual
-                        ))
-                    if len(embs) == 0:
-                        return jsonify({"error": "Failed to compute embeddings for manual regions"}), 500
+                result = {
+                    "job_id": f"job_{int(time.time())}",
+                    "run_id": run_id,
+                    "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                    "segmentation_overlay": None,
+                    "polygons": [],
+                    "scribe_changes": scribe_changes,
+                    "total_lines": len(region_paths),
+                    "line_screenshots": region_shots,
+                    "ocr_available": OCR_AVAILABLE,
+                    "scribe_samples": scribe_samples,
+                    "line_segments": line_segments,
+                    "statistics": {
+                        "total_scribes": total_scribes,
+                        "overall_confidence": overall_confidence,
+                        "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                    },
+                    "diagnostics": {}
+                }
+                print("=== MANUAL REGION ANALYSIS (heuristic) - keeping for hybrid, continuing ===")
+                # Do not return early; continue to embedding path for hybrid decision
+
+            if not region_paths:
+                print("MANUAL MODE: No valid manual regions to analyze; falling back to detector with manual segments")
+                # Fallback: proceed to the general path using manual segments on metas
+                # Build manual segments and skip the early-return path
+                segments_from_manual = _segments_from_regions(metas, manual_regions)
+                # Continue below (outside manual-region early return)
+            else:
+                # 2) embed each region (same extractor as lines)
+                embs = []
+                imgs_for_samples = []
+                for p in region_paths:
+                    img = cv2.imread(p, cv2.IMREAD_COLOR)
+                    if img is None: 
+                        continue
+                    imgs_for_samples.append(img)
+                    # call with narrowed band but default weight args
+                    embs.append(line_embedding(
+                        img,
+                        central_band_frac=0.65,
+                        central_band_pad=2,
+                        resize_height=160,
+                        use_color=False
+                    ))
+                if len(embs) == 0:
+                    print("MANUAL MODE: Failed to compute embeddings for manual regions; falling back to detector with manual segments")
+                    segments_from_manual = _segments_from_regions(metas, manual_regions)
+                else:
                     X = np.vstack(embs).astype(np.float32)
-
-                    # 2b) compute diagnostics for explanations
-                    try:
-                        diag_proc = ImageProcessor()
-                        region_diags = [diag_proc._diagnostics(img) for img in imgs_for_samples]
-                    except Exception:
-                        region_diags = [{} for _ in imgs_for_samples]
 
                     # 3) region-level clustering → same/return scribes
                     labels = _cluster_regions_same_scribe(X, min_sep=0.10)
@@ -1955,37 +1835,31 @@ def analyze():
                         except Exception:
                             pass
 
-                        # Build explanation: returns vs. first occurrence vs. initial
-                        if is_return:
-                            explanation_text = (
-                                "Return of earlier scribe; handwriting matches prior region by stroke texture & slant"
-                            )
-                        elif i == 0:
-                            explanation_text = (
+                        # Build explanation
+                        try:
+                            diag_proc = ImageProcessor()
+                            a = diag_proc._diagnostics(imgs_for_samples[i-1]) if i > 0 else {}
+                            b = diag_proc._diagnostics(imgs_for_samples[i])
+                            if a and b and "lbp" in a and "lbp" in b:
+                                a["lbp_chi2"] = _chi2(np.asarray(a["lbp"]), np.asarray(b["lbp"]))
+                            explanation_text = _reason_from_diffs(a, b) if i > 0 else (
                                 "Initial scribe for selected region; consistent letter proportions, stroke weight, and slant"
                             )
-                        else:
-                            # compare to previous region to articulate why it's different
-                            try:
-                                a = dict(region_diags[i-1])
-                                b = dict(region_diags[i])
-                                if a and b and "lbp" in a and "lbp" in b:
-                                    a["lbp_chi2"] = _chi2(np.asarray(a["lbp"]), np.asarray(b["lbp"]))
-                                explanation_text = _reason_from_diffs(a, b)
-                            except Exception:
-                                explanation_text = "Different scribal hand detected based on style and stroke differences."
+                        except Exception:
+                            explanation_text = "Different scribal hand detected based on style and stroke differences."
 
                         change = {
-                            "line_number": int(i + 1),           # in manual: region ordinal
+                            "line_number": int(i + 1),           # region ordinal
                             "start_line": int(i + 1),
                             "end_line": int(i + 1),
                             "scribe": scribe_id,
+                            "is_return": is_return,
                             "is_initial": (not is_return and k == 0 and i == 0),
                             "explanation": explanation_text,
-                            "features": {                    # show these for manual too
-                                "handSize": "medium",
-                                "inkColor": "black",
+                            "features": {
                                 "letterSpacing": "normal",
+                                "inkColor": "black",
+                                "handSize": "medium",
                                 "style": "formal"
                             },
                             "samples": samples
@@ -1994,14 +1868,14 @@ def analyze():
                             change["confidence"] = conf
                         scribe_changes.append(change)
 
-                    # 5) Build inline screenshots (base64 data URLs) for each region
+                    # Inline screenshots for regions
                     region_shots = []
                     for idx2, rp in enumerate(region_paths, 1):
                         try:
                             with open(rp, 'rb') as fh:
                                 b = fh.read()
                             enc = base64.b64encode(b).decode('ascii')
-                            bbox_list = region_metas[idx2-1].get('bbox', [0,0,0,0])
+                            bbox_list = region_metas[idx2-1].get('bbox', [0,0,0,0]) if idx2-1 < len(region_metas) else [0,0,0,0]
                             bbox_list = [int(x) for x in bbox_list]
                             region_shots.append({
                                 'lineNumber': idx2,
@@ -2013,288 +1887,301 @@ def analyze():
                         except Exception as e:
                             print(f"Failed to build region screenshot {idx2}: {e}")
 
-                    result = {
-                        "job_id": f"job_{int(time.time())}",
-                        "run_id": run_id,
-                        "page_image": f"runs/{run_id}/manuscript_page.jpg",
-                        "segmentation_overlay": None,
-                        "polygons": [],
-                        "scribe_changes": scribe_changes,
-                        "total_lines": len(region_paths),
-                        "line_screenshots": region_shots,
-                        "ocr_available": OCR_AVAILABLE,
-                        "scribe_samples": scribe_samples,
-                        "line_segments": line_segments,
-                        "statistics": {
-                            "total_scribes": len(set(labels)),
-                            "overall_confidence": float(np.mean([c.get("confidence", 0.0) for c in scribe_changes if "confidence" in c])) if any("confidence" in c for c in scribe_changes) else 0.0,
-                            "analysis_time": int((time.time() - analysis_start_time) * 1000),
-                        },
-                        "diagnostics": {}
-                    }
-                    print("=== MANUAL REGION ANALYSIS COMPLETE ===")
-                    return jsonify(result)
-                else:
-                    print(f"AUTO MODE: Using all {len(metas)} extracted lines for analysis")
-                
-                # build blue-box overlay
-                overlay_url = _save_segmentation_overlay(STATIC_DIR / page_rel, metas, run_id)
-            else:
-                raise RuntimeError(f"_segment_and_crop returned unexpected format: {type(segment_result)}, expected tuple of 3 elements")
-        except Exception as e:
-            print(f"Exception in _segment_and_crop: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-        
-        print(f"Analysis parameters received: algo={algo}, z_thresh={z_thresh}, min_gap={min_gap}, min_run={min_run}")
-        print(f"SIMILARITY_AVAILABLE: {SIMILARITY_AVAILABLE}, line_abs_paths count: {len(line_abs_paths)}")
-        
-        if not SIMILARITY_AVAILABLE:
-            return jsonify({"error": "Similarity analysis module not available"}), 500
-            
-        if not line_abs_paths:
-            return jsonify({"error": "No lines could be extracted from the image. Check preprocessing parameters."}), 400
-        
-        # Safety check for manual mode
-        if mode == "manual" and len(line_abs_paths) < 2:
-            return jsonify({"error": "Not enough lines in the selected regions to analyze."}), 400
-        
-        print("Using enhanced scribe detection with ImageProcessor")
-        
-        # Mode-specific analysis configuration
-        det_result = None
-        segments_from_manual = None
-        proc = None  # Initialize to None
-        
-        if mode == "manual" and manual_regions:
-            # Manual mode with regions: build segments and skip detector
-            segments_from_manual = _segments_from_regions(metas, manual_regions)
-            print("MANUAL MODE: Skipping detector, using manual segments directly")
-            # Create a minimal det_result for compatibility
-            det_result = {"changes": [], "segments": segments_from_manual or [], "z": [], "dist": []}
-        else:
-            # AUTO mode or manual without regions: run detector
-            if mode == "auto":
-                print("AUTO MODE: Full manuscript analysis with optimized parameters")
-                proc = ImageProcessor(
-                    algo=algo, 
-                    z_thresh=max(z_thresh, 2.5) if z_thresh is not None else 2.5,  # Ensure minimum threshold
-                    min_gap=max(min_gap, 3),      # Ensure minimum gap for stable detection
-                    min_run=max(min_run, 3),      # Ensure minimum run length
-                    use_color=use_color, 
-                    ruptures_pen=rupt_pen,
-                    confidence_threshold=0.75,     # Higher confidence threshold
-                    min_segment_size=2             # Minimum segment size
-                )
-            else:
-                # Manual mode without explicit regions → sensitive detector
-                print("MANUAL MODE: Sensitive analysis for user-guided detection")
-                proc = ImageProcessor(
-                    algo=algo,
-                    z_thresh=max((z_thresh or 2.5) - 0.5, 2.0),
-                    min_gap=max(min_gap - 1, 2),
-                    min_run=max(min_run - 1, 2),
-                    use_color=use_color,
-                    ruptures_pen=rupt_pen,
-                    confidence_threshold=0.65,
-                    min_segment_size=1
-                )
-            
-            det_result = proc.detect_with_reasons(line_abs_paths)
-        
-        n = len(line_abs_paths)
-        print(f"{mode.upper()} MODE DETECTION RESULTS:")
-        print(f"  - Analyzed {n} lines")
-        
-        if det_result is not None:
-            print(f"  - Detected {len(det_result.get('changes', []))} potential changes")
-            if proc is not None:
-                print(f"  - Parameters: z_thresh={proc.z_thresh}, min_gap={proc.min_gap}, min_run={proc.min_run}")
-        else:
-            print("  - Detector skipped (manual segments)")
-        
-        # Prefer segments from the detector (may come from clustering fallback)
-        segments = det_result.get("segments") if det_result else []
-        if not segments and det_result:
-            change_idxs = [c["index"] for c in det_result.get("changes", [])]
-            segments = indices_to_segments(n, change_idxs)
-        
-        # Use manual segments if available
-        if segments_from_manual:
-            segments = segments_from_manual
-            print(f"MANUAL MODE: Using {len(segments_from_manual)} manual segments: {segments_from_manual}")
-        
-        print(f"  - Final segments: {len(segments)} total")
-
-        # Build scribe structures from actual segments
-        scribe_changes, scribe_samples, _ = _build_segments_and_samples(run_id, line_abs_paths, segments)
-
-        # Manual mode: give reasonable confidences based on segment characteristics
-        if det_result is None:
-            print("MANUAL MODE: Applying heuristic confidences for non-initial scribes")
-            for i, seg in enumerate(scribe_changes):
-                if i == 0:
-                    seg.pop("confidence", None)
-                    seg["is_initial"] = True
-                    print(f"Manual initial scribe {seg['scribe']} - NO confidence assigned")
-                else:
-                    length = max(1, seg.get("end_line", seg["start_line"]) - seg["start_line"] + 1)
-                    # Map 1..10 lines roughly to 60..85%
-                    conf = 60.0 + min(25.0, (length - 1) * 3.0)
-                    seg["confidence"] = float(conf)
-                    seg["is_initial"] = False
-                    print(f"Manual transition scribe {seg['scribe']} - heuristic confidence: {seg['confidence']:.1f}% (length: {length} lines)")
-
-        # Attach boundary confidences/explanations where we have them
-        boundary_by_idx = {}
-        if det_result is not None:
-            boundary_by_idx = {c["index"]: c for c in det_result.get("changes", [])}
-        
-        # Only process detector confidences if we have det_result
-        if det_result is not None:
-            for i, seg in enumerate(scribe_changes):
-                if i == 0:
-                    seg.pop("confidence", None)
-                    seg["is_initial"] = True
-                    print(f"Initial scribe {seg['scribe']} - NO confidence assigned")
-                else:
-                    boundary_idx = seg["start_line"] - 1  # Convert to 0-based
-                    if boundary_idx in boundary_by_idx:
-                        b = boundary_by_idx[boundary_idx]
-                        raw_conf = float(b.get("confidence", 0.65))  # already 0.50–0.95 from calibration
-                        pct = max(50.0, min(95.0, raw_conf * 100.0))
-                        # penalize very tiny segments (single-line runs look suspicious)
-                        if (seg.get("end_line", seg["start_line"]) - seg["start_line"]) <= 1:
-                            pct = max(50.0, pct - 6.0)
-                        seg["confidence"] = float(pct)
-                        seg["is_initial"] = False
-                        seg["explanation"] = b.get("reason", seg.get("explanation", ""))
-                        print(f"Transition scribe {seg['scribe']} - confidence: {seg['confidence']:.1f}%")
-                    else:
-                        # Missing boundary in detector results
-                        seg["confidence"] = 65.0
-                        seg["is_initial"] = False
-                        print(f"Transition scribe {seg['scribe']} - default confidence: 65.0%")
-
-        # Ensure consistent feature cards for auto mode
-        for seg in scribe_changes:
-            seg.setdefault("features", {
-                "handSize": "medium",
-                "inkColor": "black",
-                "letterSpacing": "normal",
-                "style": "formal"
-            })
-
-        unique_scribes = {seg.get('scribe') for seg in scribe_changes}
-        total_scribes = max(1, len(unique_scribes))
-        # Calculate overall confidence from the realistic confidence scores (excluding initial scribe)
-        confidence_scores = [c.get("confidence") for c in scribe_changes if c.get("confidence") is not None]
-        overall_conf = (float(np.mean(confidence_scores)) if confidence_scores else 0.0)
-        
-        # Extract real line screenshots using OCR  (if OCR is available)
-        line_screenshots = []
-        if not OCR_AVAILABLE:
-            print("OCR unavailable; building screenshots from actual crops instead.")
-        else:
-            try:
-                # Convert image to base64 for OCR processing
-                buffer = io.BytesIO()
-                image = Image.open(io.BytesIO(file_content))
-                image = ImageOps.exif_transpose(image)
-                image.save(buffer, format='PNG')
-                image_base64 = base64.b64encode(buffer.getvalue()).decode()
-                
-                # Extract line screenshots using OCR
-                line_screenshots = extract_line_screenshots(f"data:image/png;base64,{image_base64}")
-                print(f"OCR extracted {len(line_screenshots)} line screenshots")
-            except Exception as e:
-                print(f"Error in OCR line extraction: {e}")
-                line_screenshots = []
-
-        # If OCR screenshots are empty, build base64 screenshots from the cropped line files
-        if not line_screenshots:
-            for idx, path in enumerate(line_abs_paths, 1):
-                try:
-                    with open(path, 'rb') as fh:
-                        raw = fh.read()
-                    enc = base64.b64encode(raw).decode('ascii')
-                    bbox = metas[idx-1].get('bbox', [0, 0, 500, 20]) if idx-1 < len(metas) else [0, 0, 500, 20]
+                # Build line_segments for UI from manual region bboxes and images
+                line_segments = []
+                for idx3, meta in enumerate(region_metas):
+                    bbox = meta.get('bbox', [0, 0, 0, 0])
                     bbox = [int(x) for x in bbox]
-                    line_screenshots.append({
-                        'lineNumber': int(idx),
-                        'text': metas[idx-1].get('text', '') if idx-1 < len(metas) else '',
+                    img_data = region_shots[idx3]['screenshot' ] if idx3 < len(region_shots) else ''
+                    line_segments.append({
+                        'id': f'line_{int(idx3)}',
                         'bbox': bbox,
-                        'screenshot': f"data:image/png;base64,{enc}",
-                        'confidence': 1.0
+                        'image': img_data
                     })
-                except Exception as e:
-                    print(f"Failed to encode line screenshot for {path}: {e}")
 
-        total_lines = len(line_screenshots) if line_screenshots else len(line_abs_paths)
+                result = {
+                    "job_id": f"job_{int(time.time())}",
+                    "run_id": run_id,
+                    "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                    "segmentation_overlay": None,
+                    "polygons": [],
+                    "scribe_changes": scribe_changes,
+                    "total_lines": total_lines,
+                    "line_screenshots": region_shots,
+                    "ocr_available": OCR_AVAILABLE,
+                    "scribe_samples": scribe_samples,
+                    "line_segments": line_segments,
+                    "statistics": {
+                        "total_scribes": total_scribes,
+                        "overall_confidence": overall_confidence,
+                        "analysis_time": int((time.time() - analysis_start_time) * 1000),
+                    },
+                    "diagnostics": {}
+                }
+                print("=== MANUAL REGION ANALYSIS COMPLETE ===")
+                return jsonify(result)
         
-        # Build line_segments for UI from actual metadata (reuse screenshots)
-        line_segments = []
-        for idx, m in enumerate(metas):
-            img_data = line_screenshots[idx]['screenshot'] if idx < len(line_screenshots) else ''
-            line_segments.append({
-                "id": f"line_{int(idx)}",
-                "bbox": [int(x) for x in m.get("bbox", [0, 0, 500, 20])],
-                "image": img_data
-            })
+        print(f"AUTO MODE: Using all {len(metas)} extracted lines for analysis")
+        
+        # build blue-box overlay
+        overlay_url = _save_segmentation_overlay(STATIC_DIR / page_rel, metas, run_id)
+    except Exception as e:
+        print(f"Exception in _segment_and_crop: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    
+    print(f"Analysis parameters received: algo={algo}, z_thresh={z_thresh}, min_gap={min_gap}, min_run={min_run}")
+    print(f"SIMILARITY_AVAILABLE: {SIMILARITY_AVAILABLE}, line_abs_paths count: {len(line_abs_paths)}")
+    
+    if not SIMILARITY_AVAILABLE:
+        return jsonify({"error": "Similarity analysis module not available"}), 500
+        
+    if not line_abs_paths:
+        return jsonify({"error": "No lines could be extracted from the image. Check preprocessing parameters."}), 400
+    
+    # Safety check for manual mode
+    if mode == "manual" and len(line_abs_paths) < 2:
+        return jsonify({"error": "Not enough lines in the selected regions to analyze."}), 400
+    
+    print("Using enhanced scribe detection with ImageProcessor")
+    
+    # Mode-specific analysis configuration
+    det_result = None
+    segments_from_manual = None
+    proc = None  # Initialize to None
+    
+    if mode == "manual" and manual_regions:
+        # Manual mode with regions: build segments and skip detector
+        segments_from_manual = _segments_from_regions(metas, manual_regions)
+        print("MANUAL MODE: Skipping detector, using manual segments directly")
+        # Create a minimal det_result for compatibility
+        det_result = {"changes": [], "segments": segments_from_manual or [], "z": [], "dist": []}
+    else:
+        # AUTO mode or manual without regions: run detector
+        if mode == "auto":
+            print("AUTO MODE: Full manuscript analysis with optimized parameters")
+            proc = ImageProcessor(
+                algo=algo, 
+                z_thresh=max(z_thresh, 2.5) if z_thresh is not None else 2.5,  # Ensure minimum threshold
+                min_gap=max(min_gap, 3),      # Ensure minimum gap for stable detection
+                min_run=max(min_run, 3),      # Ensure minimum run length
+                use_color=use_color, 
+                ruptures_pen=rupt_pen,
+                confidence_threshold=0.75,     # Higher confidence threshold
+                min_segment_size=2             # Minimum segment size
+            )
+        else:
+            # Manual mode without explicit regions → sensitive detector
+            print("MANUAL MODE: Sensitive analysis for user-guided detection")
+            proc = ImageProcessor(
+                algo=algo,
+                z_thresh=max((z_thresh or 2.5) - 0.5, 2.0),
+                min_gap=max(min_gap - 1, 2),
+                min_run=max(min_run - 1, 2),
+                use_color=use_color,
+                ruptures_pen=rupt_pen,
+                confidence_threshold=0.65,
+                min_segment_size=1
+            )
+        
+        det_result = proc.detect_with_reasons(line_abs_paths)
+    
+    n = len(line_abs_paths)
+    print(f"{mode.upper()} MODE DETECTION RESULTS:")
+    print(f"  - Analyzed {n} lines")
+    
+    if det_result is not None:
+        print(f"  - Detected {len(det_result.get('changes', []))} potential changes")
+        if proc is not None:
+            print(f"  - Parameters: z_thresh={proc.z_thresh}, min_gap={proc.min_gap}, min_run={proc.min_run}")
+    else:
+        print("  - Detector skipped (manual segments)")
+    
+    # Prefer segments from the detector (may come from clustering fallback)
+    segments = det_result.get("segments") if det_result else []
+    if not segments and det_result:
+        change_idxs = [c["index"] for c in det_result.get("changes", [])]
+        segments = indices_to_segments(n, change_idxs)
+    
+    # Use manual segments if available
+    if segments_from_manual:
+        segments = segments_from_manual
+        print(f"MANUAL MODE: Using {len(segments_from_manual)} manual segments: {segments_from_manual}")
+    
+    print(f"  - Final segments: {len(segments)} total")
 
-        # Require actual line segments
-        if not line_segments:
-            raise RuntimeError("No line segments could be generated from the preprocessing results")
+    # Build scribe structures from actual segments
+    scribe_changes, scribe_samples, _ = _build_segments_and_samples(run_id, line_abs_paths, segments)
 
-        result = {
-            "job_id": f"job_{int(time.time())}",
-            "run_id": run_id,
-            "page_image": page_rel if 'page_rel' in locals() else "manuscript_page.jpg",
-            "segmentation_overlay": overlay_url if 'overlay_url' in locals() else None,  # blue-box image
-            "polygons": [],
-            "scribe_changes": scribe_changes,
-            "total_lines": total_lines,
-            "line_screenshots": line_screenshots,  # base64 screenshots of actual crops or OCR
-            "ocr_available": OCR_AVAILABLE,
-            "scribe_samples": scribe_samples,    # Actual scribe sample images
-            "line_segments": line_segments,
-            "statistics": {
-                "total_scribes": total_scribes,
-                "overall_confidence": overall_conf,
-                "analysis_time": int((time.time() - analysis_start_time) * 1000),
-            },
-            "diagnostics": {
-                "z": locals().get('det_result', {}).get("z", []),
-                "dist": locals().get('det_result', {}).get("dist", [])
-            }
+    # Manual mode: give reasonable confidences based on segment characteristics
+    if det_result is None:
+        print("MANUAL MODE: Applying heuristic confidences for non-initial scribes")
+        for i, seg in enumerate(scribe_changes):
+            if i == 0:
+                seg.pop("confidence", None)
+                seg["is_initial"] = True
+                print(f"Manual initial scribe {seg['scribe']} - NO confidence assigned")
+            else:
+                length = max(1, seg.get("end_line", seg["start_line"]) - seg["start_line"] + 1)
+                # Map 1..10 lines roughly to 60..85%
+                conf = 60.0 + min(25.0, (length - 1) * 3.0)
+                seg["confidence"] = float(conf)
+                seg["is_initial"] = False
+                print(f"Manual transition scribe {seg['scribe']} - heuristic confidence: {seg['confidence']:.1f}% (length: {length} lines)")
+
+    # Attach boundary confidences/explanations where we have them
+    boundary_by_idx = {}
+    if det_result is not None:
+        boundary_by_idx = {c["index"]: c for c in det_result.get("changes", [])}
+    
+    # Only process detector confidences if we have det_result
+    if det_result is not None:
+        for i, seg in enumerate(scribe_changes):
+            if i == 0:
+                seg.pop("confidence", None)
+                seg["is_initial"] = True
+                print(f"Initial scribe {seg['scribe']} - NO confidence assigned")
+            else:
+                boundary_idx = seg["start_line"] - 1  # Convert to 0-based
+                if boundary_idx in boundary_by_idx:
+                    b = boundary_by_idx[boundary_idx]
+                    raw_conf = float(b.get("confidence", 0.65))  # already 0.50–0.95 from calibration
+                    pct = max(50.0, min(95.0, raw_conf * 100.0))
+                    # penalize very tiny segments (single-line runs look suspicious)
+                    if (seg.get("end_line", seg["start_line"]) - seg["start_line"]) <= 1:
+                        pct = max(50.0, pct - 6.0)
+                    seg["confidence"] = float(pct)
+                    seg["is_initial"] = False
+                    seg["explanation"] = b.get("reason", seg.get("explanation", ""))
+                    print(f"Transition scribe {seg['scribe']} - confidence: {seg['confidence']:.1f}%")
+                else:
+                    # Missing boundary in detector results
+                    seg["confidence"] = 65.0
+                    seg["is_initial"] = False
+                    print(f"Transition scribe {seg['scribe']} - default confidence: 65.0%")
+
+    # Ensure consistent feature cards for auto mode
+    for seg in scribe_changes:
+        seg.setdefault("features", {
+            "handSize": "medium",
+            "inkColor": "black",
+            "letterSpacing": "normal",
+            "style": "formal"
+        })
+
+    unique_scribes = {seg.get('scribe') for seg in scribe_changes}
+    total_scribes = max(1, len(unique_scribes))
+    # Calculate overall confidence from the realistic confidence scores (excluding initial scribe)
+    confidence_scores = [c.get("confidence") for c in scribe_changes if c.get("confidence") is not None]
+    overall_conf = (float(np.mean(confidence_scores)) if confidence_scores else 0.0)
+    
+    # Extract real line screenshots using OCR  (if OCR is available)
+    line_screenshots = []
+    if not OCR_AVAILABLE:
+        print("OCR unavailable; building screenshots from actual crops instead.")
+    else:
+        try:
+            # Convert image to base64 for OCR processing
+            buffer = io.BytesIO()
+            image = Image.open(io.BytesIO(file_content))
+            image = ImageOps.exif_transpose(image)
+            image.save(buffer, format='PNG')
+            image_base64 = base64.b64encode(buffer.getvalue()).decode()
+            
+            # Extract line screenshots using OCR
+            line_screenshots = extract_line_screenshots(f"data:image/png;base64,{image_base64}")
+            print(f"OCR extracted {len(line_screenshots)} line screenshots")
+        except Exception as e:
+            print(f"Error in OCR line extraction: {e}")
+            line_screenshots = []
+
+    # If OCR screenshots are empty, build base64 screenshots from the cropped line files
+    if not line_screenshots:
+        for idx, path in enumerate(line_abs_paths, 1):
+            try:
+                with open(path, 'rb') as fh:
+                    raw = fh.read()
+                enc = base64.b64encode(raw).decode('ascii')
+                bbox = metas[idx-1].get('bbox', [0, 0, 500, 20]) if idx-1 < len(metas) else [0, 0, 500, 20]
+                bbox = [int(x) for x in bbox]
+                line_screenshots.append({
+                    'lineNumber': int(idx),
+                    'text': metas[idx-1].get('text', '') if idx-1 < len(metas) else '',
+                    'bbox': bbox,
+                    'screenshot': f"data:image/png;base64,{enc}",
+                    'confidence': 1.0
+                })
+            except Exception as e:
+                print(f"Failed to encode line screenshot for {path}: {e}")
+
+    total_lines = len(line_screenshots) if line_screenshots else len(line_abs_paths)
+    
+    # Build line_segments for UI from actual metadata (reuse screenshots)
+    line_segments = []
+    for idx, m in enumerate(metas):
+        img_data = line_screenshots[idx]['screenshot' ] if idx < len(line_screenshots) else ''
+        line_segments.append({
+            "id": f"line_{int(idx)}",
+            "bbox": [int(x) for x in m.get("bbox", [0, 0, 500, 20])],
+            "image": img_data
+        })
+
+    # Require actual line segments
+    if not line_segments:
+        raise RuntimeError("No line segments could be generated from the preprocessing results")
+
+    result = {
+        "job_id": f"job_{int(time.time())}",
+        "run_id": run_id,
+        "page_image": page_rel if 'page_rel' in locals() else "manuscript_page.jpg",
+        "segmentation_overlay": overlay_url if 'overlay_url' in locals() else None,  # blue-box image
+        "polygons": [],
+        "scribe_changes": scribe_changes,
+        "total_lines": total_lines,
+        "line_screenshots": line_screenshots,  # base64 screenshots of actual crops or OCR
+        "ocr_available": OCR_AVAILABLE,
+        "scribe_samples": scribe_samples,    # Actual scribe sample images
+        "line_segments": line_segments,
+        "statistics": {
+            "total_scribes": total_scribes,
+            "overall_confidence": overall_conf,
+            "analysis_time": int((time.time() - analysis_start_time) * 1000),
+        },
+        "diagnostics": {
+            "z": locals().get('det_result', {}).get("z", []),
+            "dist": locals().get('det_result', {}).get("dist", [])
         }
+    }
 
-        
-        print(f"\n=== ANALYSIS COMPLETE ===")
-        print(f"Mode: {mode}")
-        print(f"Run ID: {run_id}")
-        print(f"Scribe changes detected: {len(scribe_changes)}")
-        for i, change in enumerate(scribe_changes):
-            conf_str = f"{change.get('confidence', 'N/A')}%" if change.get('confidence') else "None"
-            print(f"  Scribe {i+1}: {change.get('scribe')} (confidence: {conf_str})")
-        print(f"Total lines analyzed: {total_lines}")
-        print(f"Scribe sample images: {sum(len(samples) for samples in scribe_samples.values())}")
-        print(f"Line screenshots: {len(line_screenshots) if line_screenshots else 0}")
-        print(f"Analysis time: {int((time.time() - analysis_start_time) * 1000)}ms")
-        print(f"========================\n")
-        
+    
+    print(f"\n=== ANALYSIS COMPLETE ===")
+    print(f"Mode: {mode}")
+    print(f"Run ID: {run_id}")
+    print(f"Scribe changes detected: {len(scribe_changes)}")
+    for i, change in enumerate(scribe_changes):
+        conf_str = f"{change.get('confidence', 'N/A')}%" if change.get('confidence') else "None"
+        print(f"  Scribe {i+1}: {change.get('scribe')} (confidence: {conf_str})")
+    print(f"Total lines analyzed: {total_lines}")
+    print(f"Scribe sample images: {sum(len(samples) for samples in scribe_samples.values())}")
+    print(f"Line screenshots: {len(line_screenshots) if line_screenshots else 0}")
+    print(f"Analysis time: {int((time.time() - analysis_start_time) * 1000)}ms")
+    print(f"========================\n")
+    
+    try:
         return jsonify(result)
-        
     except Exception as e:
         print(f"Analysis error: {e}")
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
 
+@app.route("/prepare", methods=["OPTIONS"])
+@app.route("/analyze", methods=["OPTIONS"])
+def _preflight():
+    return ("", 204)
+
+# Ensure the Flask server starts
 if __name__ == "__main__":
     print("Starting OCR-based scribe detection backend...")
-    print("Backend will be available at: http://localhost:5001")
-    print("Health check: http://localhost:5001/health")
-    print("Analysis endpoint: http://localhost:5001/analyze")
-    print("Line extraction endpoint: http://localhost:5001/extract-lines")
-    print(f"OCR functionality: {'Available' if OCR_AVAILABLE else 'Not Available'}")
-    app.run(debug=True, port=5001, host='0.0.0.0')
+    print("Backend: http://localhost:5001")
+    print("Health:  http://localhost:5001/health")
+    app.run(debug=True, port=5001, host="0.0.0.0")

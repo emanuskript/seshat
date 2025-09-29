@@ -58,7 +58,7 @@
 
           <!-- The same image you show in the viewer popup; use a fitted container -->
           <div class="draw-stage" ref="drawStage">
-            <img v-if="drawImageSrc" :src="drawImageSrc" alt="Manuscript page"
+            <img v-if="drawImageSrc" :src="drawImageSrc" :key="drawImageSrc" alt="Manuscript page"
                  class="draw-img" draggable="false"
                  @load="onDrawImgLoad"
                  @mousedown="onImgDown"
@@ -130,7 +130,7 @@
                 </div>
                 <div class="analyzed-card-body">
                   <div class="page-stage">
-                    <img :src="analyzedImageSrc"
+                    <img :src="analyzedImageSrc" :key="analyzedImageSrc"
                        alt="Analyzed page"
                        class="pdf-page-image"
                        ref="manuscriptImage"
@@ -159,7 +159,7 @@
                         (Returns)
                       </span>
                     </div>
-                <p class="scribe-explanation">{{ change.explanation }}</p>
+                <p class="scribe-explanation">{{ explain(change, index) }}</p>
 
                 <!-- Scribe Previews (prefer OCR screenshots; fallback to page crop) -->
                 <div class="scribe-samples">
@@ -179,7 +179,7 @@
                       <h6 class="samples-title">Sample Handwriting:</h6>
                       <div class="samples-gallery">
                         <div v-for="(sample, sampleIndex) in change.samples" :key="sampleIndex" class="sample-image-container">
-                          <img :src="`http://localhost:5001${sample}`" 
+                          <img :src="backendBase + sample" 
                                :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
                                class="sample-image"
                                crossorigin="anonymous"
@@ -193,7 +193,7 @@
                       <h6 class="samples-title">Sample Handwriting:</h6>
                       <div class="samples-gallery">
                         <div v-for="(sample, sampleIndex) in results.scribe_samples[change.scribe]" :key="sampleIndex" class="sample-image-container">
-                          <img :src="`http://localhost:5001${sample}`" 
+                          <img :src="backendBase + sample" 
                                :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
                                class="sample-image"
                                crossorigin="anonymous"
@@ -220,13 +220,6 @@
         <!-- Tuning Controls (when not analyzing and no results) -->
         <div v-else class="tuning-section">
           <div class="params-container">
-            <div v-if="mode==='manual'" class="param-group" style="margin-bottom:8px;">
-              <label class="param-label" style="display:flex;align-items:center;gap:8px;">
-                <input type="checkbox" v-model="strictPerLine" />
-                Strict per-line (no merging)
-              </label>
-              <p class="hint">Each drawn region is a separate segment; labels may be reused if they match strongly.</p>
-            </div>
             <h4 class="params-title">Analysis Parameters</h4>
             <div class="params-grid">
               <div class="param-group">
@@ -399,20 +392,45 @@ export default {
         }
       },
       immediate: true
-    }
+    },
+    currentPage() {
+      this._resetPreparedAndDrawing();
+    },
+    currentPageImage() {
+      this._resetPreparedAndDrawing();
+      if (this.isVisible && this.mode === 'manual' && this.currentPageImage) {
+        this.$nextTick(() => this.preparePageIfNeeded());
+      }
+    },
   },
   computed: {
     hasResults() {
       return this.results && (this.results.primary_scribe || (this.results.scribe_changes && this.results.scribe_changes.length > 0))
     },
-    backendBase() {
-      return 'http://localhost:5001'
-    },
+backendBase() {
+  const vite = (typeof import.meta !== 'undefined' && import.meta.env)
+    ? import.meta.env.VITE_PHAROSIGHT_API_BASE
+    : undefined
+  const cli = (typeof process !== 'undefined' && process.env)
+    ? process.env.VUE_APP_PHAROSIGHT_API_BASE
+    : undefined
+  const base = vite || cli || 'http://localhost:5001'
+  return String(base).replace(/\/+$/, '')
+},
+
     drawImageSrc() {
-      return (this.mode === 'manual' && this.preparedPageUrl) ? this.preparedPageUrl : this.currentPageImage
+      return (this.mode === 'manual' && this.preparedPageUrl)
+        ? this.preparedPageUrl
+        : this.currentPageImage
+    },
+    drawImageKey() {
+      return `${this.drawImageSrc || ''}::p=${this.currentPage}::j=${this.preparedJobId || 'none'}`;
     },
     analyzedImageSrc() {
       return this.drawImageSrc
+    },
+    analyzedImageKey() {
+      return this.drawImageKey;
     },
     runButtonDisabled() {
       const disabled = this.isAnalyzing || this.isPreparingPage || (this.mode === 'manual' && this.regions.length === 0)
@@ -476,8 +494,7 @@ export default {
     selectMode(modeType) {
       this.mode = modeType
       if (modeType === 'manual') {
-        this.canDraw = false
-        this.drawActive = false
+        this._resetPreparedAndDrawing();
         this.$nextTick(async () => {
           await this.preparePageIfNeeded()
           this.$nextTick(() => {
@@ -724,8 +741,6 @@ export default {
         formData.append('sauvola_window', String(this.params.sauvola_window))
         formData.append('algo', this.params.algo)
         if (this.preparedJobId) formData.append('prepared_job', this.preparedJobId)
-        formData.append('strict_per_line', this.strictPerLine ? '1' : '0')
-
         console.log('FormData prepared with:', {
           mode: 'manual',
           regions: JSON.stringify(regions),
@@ -738,8 +753,8 @@ export default {
         this.loadingDetail = 'Measuring stroke width, spacing, and slant'
         
         console.log('Calling backend at http://localhost:5001/analyze...')
-        const timestamp = Date.now() + Math.random()
-        const response = await fetch(`http://localhost:5001/analyze?t=${timestamp}&mode=manual`, {
+  const timestamp = Date.now() + Math.random()
+  const response = await fetch(`${this.backendBase}/analyze?t=${timestamp}&mode=manual`, {
           method: 'POST',
           body: formData,
           cache: 'no-cache',
@@ -895,543 +910,52 @@ export default {
       }
     },
     
-    isScribeReturn(scribeName, currentIndex) {
-      if (!this.results?.scribe_changes || currentIndex === 0) return false
-      
-      for (let i = 0; i < currentIndex; i++) {
-        if (this.results.scribe_changes[i].scribe === scribeName) {
-          return true
+    formatLineRange(start, end) {
+      const s = Number(start ?? 1);
+      const e = Number(end ?? s);
+      return (e && e !== s) ? `lines ${s}–${e}` : `line ${s}`;
+    },
+
+    lastRangeForScribe(name, uptoIndex) {
+      if (!this.results?.scribe_changes) return null;
+      for (let i = uptoIndex - 1; i >= 0; i--) {
+        const c = this.results.scribe_changes[i];
+        if (c && c.scribe === name) {
+          const s = c.start_line ?? c.line_number ?? 1;
+          const e = c.end_line ?? s;
+          return this.formatLineRange(s, e);
         }
       }
-      return false
+      return null;
     },
-    
-    handleImageLoad(event) {
-      console.log('Scribe sample image loaded successfully:', event.target.src)
-    },
-    
-    displayOcrLineScreenshots(results) {
-      console.log('Displaying OCR line screenshots')
-      console.log('Available screenshots:', results.line_screenshots?.length || 0)
-      
-      if (!results.line_screenshots || results.line_screenshots.length === 0) {
-        console.log('No OCR screenshots available, using canvas fallback')
-        return
+
+    explain(change, index) {
+      const s = change.start_line ?? change.line_number ?? 1;
+      const e = change.end_line ?? s;
+      const rangeText = this.formatLineRange(s, e);
+      const hasConf = (index > 0) && typeof change.confidence === 'number';
+      const confText = hasConf ? ` ${Math.round(change.confidence)}% confidence.` : '';
+
+      if (index === 0 || change.is_initial === true) {
+        return `Initial hand: ${change.scribe}. Writes ${rangeText}.`;
       }
-      
-      results.scribe_changes.forEach((change, index) => {
-        this.$nextTick(() => {
-          const canvas = this.$refs[`lineCanvas${index}`]
-          if (!canvas || !canvas[0]) {
-            console.warn(`Canvas ref not found for index ${index}`)
-            return
-          }
-          
-          const relatedScreenshots = results.line_screenshots.filter(lineData => 
-            lineData.lineNumber >= change.start_line && lineData.lineNumber <= change.end_line
-          )
-          
-          console.log(`Scribe change ${change.scribe}: found ${relatedScreenshots.length} related screenshots`)
-          
-          if (relatedScreenshots.length > 0) {
-            const lineData = relatedScreenshots[0]
-            const ctx = canvas[0].getContext('2d')
-            
-            const img = new Image()
-            img.onload = () => {
-              ctx.clearRect(0, 0, canvas[0].width, canvas[0].height)
-              ctx.drawImage(img, 0, 0, canvas[0].width, canvas[0].height)
-              console.log(`Successfully displayed screenshot for line ${lineData.lineNumber}`)
-            }
-            
-            img.onerror = () => {
-              console.error(`Failed to load screenshot for line ${lineData.lineNumber}`)
-              ctx.fillStyle = '#ff0000'
-              ctx.fillRect(0, 0, canvas[0].width, canvas[0].height)
-              ctx.fillStyle = '#ffffff'
-              ctx.font = '12px Arial'
-              ctx.fillText('Image Load Error', 10, 30)
-            }
-            
-            img.src = lineData.screenshot
-          }
-        })
-      })
-      
-      console.log('OCR line screenshots display complete')
-    },
 
-    drawPageOverlay() {
-      try {
-        const imgEl = this.$refs.manuscriptImage
-        const canvas = this.$refs.pageOverlay
-        if (!imgEl || !canvas) return
-
-        const parent = imgEl.parentElement
-        const parentRect = parent.getBoundingClientRect()
-        const imgRect = imgEl.getBoundingClientRect()
-        const cs = getComputedStyle(imgEl)
-
-        const bl = parseFloat(cs.borderLeftWidth)  || 0
-        const br = parseFloat(cs.borderRightWidth) || 0
-        const bt = parseFloat(cs.borderTopWidth)   || 0
-        const bb = parseFloat(cs.borderBottomWidth)|| 0
-
-        const left = (imgRect.left - parentRect.left) + bl
-        const top  = (imgRect.top  - parentRect.top)  + bt
-        const cssW = imgRect.width  - bl - br
-        const cssH = imgRect.height - bt - bb
-
-        const dpr = window.devicePixelRatio || 1
-        canvas.style.left = left + 'px'
-        canvas.style.top  = top  + 'px'
-        canvas.style.width  = cssW + 'px'
-        canvas.style.height = cssH + 'px'
-        canvas.width  = Math.max(1, Math.round(cssW * dpr))
-        canvas.height = Math.max(1, Math.round(cssH * dpr))
-
-        const ctx = canvas.getContext('2d')
-        ctx.setTransform(1,0,0,1,0,0)
-        ctx.clearRect(0,0,canvas.width,canvas.height)
-        ctx.scale(dpr, dpr)
-
-        const naturalW = imgEl.naturalWidth
-        const naturalH = imgEl.naturalHeight
-        if (!naturalW || !naturalH || cssW <= 0 || cssH <= 0) return
-
-        const scaleX = cssW / naturalW
-        const scaleY = cssH / naturalH
-
-        const segments = (this.results && this.results.line_segments) ? this.results.line_segments : []
-        if (!segments || segments.length === 0) return
-
-        ctx.lineWidth = 2
-        ctx.strokeStyle = 'rgba(255, 193, 7, 0.9)'
-        ctx.fillStyle   = 'rgba(255, 193, 7, 0.15)'
-
-        for (const seg of segments) {
-          const b = seg.bbox || [0,0,0,0]
-          const x = b[0] * scaleX
-          const y = b[1] * scaleY
-          const w = b[2] * scaleX
-          const h = b[3] * scaleY
-          if (w > 2 && h > 2) {
-            ctx.beginPath()
-            ctx.rect(x, y, w, h)
-            ctx.stroke()
-            ctx.fill()
-          }
-        }
-
-        if (this.debugOverlayEnabled && this.lastPayloadRegions && this.lastPayloadRegions.length) {
-          ctx.save()
-          ctx.setLineDash([6, 4])
-          ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)'
-          ctx.fillStyle = 'rgba(0, 255, 255, 0.10)'
-          this.lastPayloadRegions.forEach((r) => {
-            const x = (r.x || 0) * scaleX
-            const y = (r.y || 0) * scaleY
-            const w = (r.w || 0) * scaleX
-            const h = (r.h || 0) * scaleY
-            if (w > 2 && h > 2) {
-              ctx.beginPath()
-              ctx.rect(x, y, w, h)
-              ctx.stroke()
-              ctx.fill()
-            }
-          })
-          ctx.restore()
-        }
-
-        if (this.debugOverlayEnabled) {
-          ctx.save()
-          ctx.setTransform(1,0,0,1,0,0)
-          ctx.scale(dpr, dpr)
-          ctx.fillStyle = 'rgba(0,0,0,0.65)'
-          ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-          ctx.font = '12px monospace'
-          const lines = [
-            `natural: ${naturalW}x${naturalH}`,
-            `display: ${cssW}x${cssH} dpr:${dpr}`,
-            `segments: ${segments.length} payload:${this.lastPayloadRegions?.length || 0}`,
-            `prepared: ${!!this.preparedJobId}`
-          ]
-          let y0 = 8
-          lines.forEach(t => {
-            const wtext = ctx.measureText(t).width
-            ctx.fillRect(8, y0, wtext + 6, 14)
-            ctx.fillStyle = '#fff'
-            ctx.fillText(t, 11, y0 + 10)
-            ctx.fillStyle = 'rgba(0,0,0,0.65)'
-            y0 += 18
-          })
-          ctx.restore()
-        }
-      } catch (e) {
-        console.warn('Failed to draw overlay', e)
+      const prevRange = this.lastRangeForScribe(change.scribe, index);
+      if (prevRange) {
+        return `Scribe ${change.scribe} returns — previously ${prevRange}. Now ${rangeText}.${confText}`;
       }
+
+      return `Change to ${change.scribe}: ${rangeText}.${confText}`;
     },
 
-    lineSegmentImagesFor(change) {
-      try {
-        const segs = (this.results && this.results.line_segments) ? this.results.line_segments : []
-        if (!segs || segs.length === 0) return []
-        const start = Math.max(0, (change.start_line || 1) - 1)
-        const end = Math.max(start, (change.end_line || (start + 1)) - 1)
-        const imgs = []
-        for (let i = start; i <= end && i < segs.length; i++) {
-          const img = segs[i]?.image
-          if (img) imgs.push(img)
-        }
-        return imgs
-      } catch (_) { return [] }
-    },
-    
-    captureLineScreenshot(change, index) {
-      setTimeout(() => {
-        this.$nextTick(() => {
-          const canvas = this.$refs[`lineCanvas${index}`]
-          if (!canvas || !canvas[0]) {
-            console.warn(`Canvas ref not found for index ${index}`)
-            return
-          }
-          
-          const ctx = canvas[0].getContext('2d')
-          const manuscriptImg = this.$refs.manuscriptImage
-          
-          if (!manuscriptImg) {
-            console.warn('Manuscript image ref not found')
-            return
-          }
-          
-          if (!manuscriptImg.complete || manuscriptImg.naturalWidth === 0) {
-            console.log('Image not ready, retrying in 500ms...')
-            setTimeout(() => this.captureLineScreenshot(change, index), 500)
-            return
-          }
-          
-          const imgNaturalWidth = manuscriptImg.naturalWidth
-          const imgNaturalHeight = manuscriptImg.naturalHeight
-          
-          console.log(`Image dimensions: ${imgNaturalWidth}x${imgNaturalHeight}`)
-          console.log(`Capturing lines ${change.start_line}-${change.end_line} for ${change.scribe}`)
-          
-          if (imgNaturalWidth === 0 || imgNaturalHeight === 0) {
-            console.warn('Image dimensions not available, retrying...')
-            setTimeout(() => this.captureLineScreenshot(change, index), 500)
-            return
-          }
-          
-          const totalLines = this.results?.statistics?.total_lines || 30
-          console.log(`Total lines in document: ${totalLines}`)
-          
-          const topMargin = 0.08
-          const bottomMargin = 0.12
-          const textAreaHeight = 1 - topMargin - bottomMargin
-          const lineSpacing = textAreaHeight / totalLines
-          
-          const startLineIndex = Math.max(0, change.start_line - 1)
-          const endLineIndex = Math.min(totalLines - 1, change.end_line - 1)
-          
-          const paddingLines = 1.0
-          const startY = topMargin + ((startLineIndex - paddingLines) * lineSpacing)
-          const endY = topMargin + ((endLineIndex + paddingLines + 1) * lineSpacing)
-          
-          const cropX = 0.02
-          const cropWidth = 0.96
-          const cropY = Math.max(0, startY)
-          const cropHeight = Math.min(1 - cropY, endY - startY)
-          
-          console.log(`Crop percentages - x:${cropX}, y:${cropY}, w:${cropWidth}, h:${cropHeight}`)
-          
-          const sourceX = Math.round(cropX * imgNaturalWidth)
-          const sourceY = Math.round(cropY * imgNaturalHeight)
-          const sourceWidth = Math.round(cropWidth * imgNaturalWidth)
-          const sourceHeight = Math.round(cropHeight * imgNaturalHeight)
-          
-          console.log(`Source pixels: x=${sourceX}, y=${sourceY}, w=${sourceWidth}, h=${sourceHeight}`)
-          
-          if (sourceWidth <= 0 || sourceHeight <= 0) {
-            console.error('Invalid crop dimensions calculated')
-            return
-          }
-          
-          const canvasWidth = 400
-          const aspectRatio = sourceWidth / sourceHeight
-          const canvasHeight = Math.max(60, Math.round(canvasWidth / aspectRatio))
-          
-          canvas[0].width = canvasWidth
-          canvas[0].height = canvasHeight
-          
-          ctx.clearRect(0, 0, canvasWidth, canvasHeight)
-          
-          try {
-            ctx.drawImage(
-              manuscriptImg,
-              sourceX, sourceY, sourceWidth, sourceHeight,
-              0, 0, canvasWidth, canvasHeight
-            )
-            
-            ctx.strokeStyle = 'rgba(220, 20, 60, 0.8)'
-            ctx.lineWidth = 2
-            ctx.strokeRect(1, 1, canvasWidth - 2, canvasHeight - 2)
-            
-            ctx.strokeStyle = 'rgba(255, 0, 0, 0.4)'
-            ctx.lineWidth = 1
-            
-            for (let i = startLineIndex; i <= endLineIndex; i++) {
-              const relativeY = ((topMargin + (i * lineSpacing)) - cropY) / cropHeight
-              const lineY = relativeY * canvasHeight
-              
-              if (lineY >= 0 && lineY <= canvasHeight) {
-                ctx.beginPath()
-                ctx.moveTo(10, lineY)
-                ctx.lineTo(canvasWidth - 10, lineY)
-                ctx.stroke()
-                
-                ctx.fillStyle = 'rgba(255, 0, 0, 0.8)'
-                ctx.font = '10px Arial'
-                ctx.fillText(`${i + 1}`, 5, lineY - 2)
-              }
-            }
-            
-            console.log(`Successfully captured screenshot for lines ${change.start_line}-${change.end_line}`)
-            
-          } catch (error) {
-            console.error('Failed to capture line screenshot:', error)
-            ctx.fillStyle = '#f8f9fa'
-            ctx.fillRect(0, 0, canvasWidth, canvasHeight)
-            
-            ctx.fillStyle = '#dc3545'
-            ctx.font = 'bold 14px Arial'
-            ctx.textAlign = 'center'
-            ctx.fillText('Capture Failed', canvasWidth / 2, canvasHeight / 2 - 20)
-            
-            ctx.fillStyle = '#6c757d'
-            ctx.font = '12px Arial'
-            ctx.fillText(`Lines ${change.start_line}-${change.end_line}`, canvasWidth / 2, canvasHeight / 2)
-            ctx.fillText(change.scribe, canvasWidth / 2, canvasHeight / 2 + 20)
-          }
-        })
-      }, 200)
-    },
-    
-    showLineGrid() {
-      const manuscriptImg = this.$refs.manuscriptImage
-      if (!manuscriptImg || !manuscriptImg.complete) return
-      
-      const overlay = document.createElement('canvas')
-      const ctx = overlay.getContext('2d')
-      
-      overlay.style.position = 'absolute'
-      overlay.style.top = '0'
-      overlay.style.left = '0'
-      overlay.style.width = '100%'
-      overlay.style.height = '100%'
-      overlay.style.pointerEvents = 'none'
-      overlay.style.zIndex = '1000'
-      
-      manuscriptImg.parentElement.appendChild(overlay)
-      
-      const rect = manuscriptImg.getBoundingClientRect()
-      overlay.width = rect.width
-      overlay.height = rect.height
-      
-      const totalLines = 30
-      const topMargin = 0.10
-      const bottomMargin = 0.15
-      const textAreaHeight = 1 - topMargin - bottomMargin
-      const lineSpacing = textAreaHeight / totalLines
-      
-      ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)'
-      ctx.lineWidth = 1
-      
-      for (let i = 0; i < totalLines; i++) {
-        const y = (topMargin + (i * lineSpacing)) * overlay.height
-        ctx.beginPath()
-        ctx.moveTo(0, y)
-        ctx.lineTo(overlay.width, y)
-        ctx.stroke()
-        
-        ctx.fillStyle = 'red'
-        ctx.font = '12px Arial'
-        ctx.fillText(`Line ${i + 1}`, 5, y - 2)
-      }
-      
-      setTimeout(() => {
-        overlay.remove()
-      }, 5000)
-    },
-    
-    async analyzeScribes() {
-      if (this.isAnalyzing) return
-      
-      console.log('=== AUTO MODE ANALYSIS START ===')
-      console.log('Mode: AUTO (PharoSight)')
-      console.log('Parameters:', this.params)
-      console.log('Timestamp:', new Date().toISOString())
-      
-      this.isAnalyzing = true
-      this.analysisCompleted = false
-      this.results = null
-      this.segmentationOverlay = null
-      this.loadingMessage = 'Preparing manuscript image...'
-      this.loadingDetail = 'Decoding and pre-processing for analysis'
-      
-      try {
-        console.log('Starting scribe analysis...')
-
-        if (!this.currentPageImage) {
-          throw new Error('No page image available for analysis')
-        }
-        
-        this.loadingMessage = 'Loading page image...'
-        this.loadingDetail = 'Converting image for processing'
-        
-        const imageResponse = await fetch(this.currentPageImage)
-        if (!imageResponse.ok) {
-          throw new Error('Failed to fetch page image')
-        }
-        const imageBlob = await imageResponse.blob()
-        
-        this.loadingMessage = 'Configuring analysis parameters...'
-        this.loadingDetail = 'Selecting algorithms and thresholds'
-        
-        const formData = new FormData()
-        if (!this.preparedJobId) {
-          formData.append('image', imageBlob, 'manuscript_page.jpg')
-        }
-        formData.append('mode', 'auto')
-        if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
-        formData.append('min_gap', String(this.params.min_gap))
-        formData.append('min_run', String(this.params.min_run))
-        formData.append('illum_frac', String(this.params.illum_frac))
-        formData.append('sauvola_window', String(this.params.sauvola_window))
-        formData.append('algo', this.params.algo)
-        
-        this.loadingMessage = 'Extracting line features...'
-        this.loadingDetail = 'Measuring stroke width, spacing, and slant'
-        
-        const timestamp = Date.now() + Math.random()
-        const response = await fetch(`http://localhost:5001/analyze?t=${timestamp}&mode=auto`, {
-          method: 'POST',
-          body: formData,
-          cache: 'no-cache',
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-          }
-        })
-        
-        if (!response.ok) {
-          throw new Error(`Analysis failed: ${response.statusText}`)
-        }
-        
-        this.loadingMessage = 'Clustering styles and scoring...'
-        this.loadingDetail = 'Detecting scribe transitions and confidence'
-        
-        const data = await response.json()
-        console.log('Raw backend response:', {
-          scribe_changes: data.scribe_changes?.length || 0,
-          line_screenshots: data.line_screenshots?.length || 0,
-          scribe_samples: Object.keys(data.scribe_samples || {}).length,
-          ocr_available: data.ocr_available,
-          total_lines: data.total_lines
-        })
-        
-        this.results = this.transformBackendResults(data)
-        this.$nextTick(() => this.drawPageOverlay())
-        console.log('Analysis results transformed:', this.results)
-        
-      } catch (error) {
-        console.error('Analysis failed:', error)
-        alert(`Scribe analysis failed: ${error.message}`)
-        
-      } finally {
-        this.isAnalyzing = false
-        this.analysisCompleted = true
-      }
-    },
-    
-    transformBackendResults(data) {
-      const scribeChanges = data.scribe_changes || []
-      const totalLines = data.total_lines || 30
-      
-      if (data.segmentation_overlay) {
-        this.segmentationOverlay = `http://localhost:5001${data.segmentation_overlay}`
-        console.log('Segmentation overlay available:', this.segmentationOverlay)
-      }
-      
-      const transformedChanges = scribeChanges.map((change, idx) => ({
-        scribe: change.scribe || `Scribe at line ${change.line_number}`,
-        confidence: (change.confidence !== undefined && change.confidence !== null)
-          ? change.confidence
-          : undefined,
-        start_line: change.start_line ?? change.line_number,
-        end_line: change.end_line ?? (change.line_number + 1),
-        explanation: change.explanation || "Handwriting change detected through analysis.",
-        samples: change.samples || [],
+    transformBackendResults(results) {
+      return results.map((change, idx) => ({
+        explanation: change.explanation ?? null,
+        samples: Array.isArray(change.samples) ? change.samples : [],
         is_initial: change.is_initial === true || idx === 0,
         is_return: change.is_return === true,
-        features: change.features || {
-          handSize: 'medium',
-          inkColor: 'black',
-          letterSpacing: 'normal',
-          style: 'formal'
-        }
-      }))
-      
-      const uniqScribes = Array.from(new Set(transformedChanges.map(c => c.scribe)))
-      let finalChanges = transformedChanges
-      if (uniqScribes.length <= 1 && transformedChanges.length > 0) {
-        const s = transformedChanges.reduce((acc, c) => ({
-          start: Math.min(acc.start, c.start_line),
-          end: Math.max(acc.end, c.end_line)
-        }), { start: transformedChanges[0].start_line, end: transformedChanges[0].end_line })
-        finalChanges = [{
-          scribe: transformedChanges[0].scribe,
-          confidence: undefined,
-          start_line: s.start,
-          end_line: s.end,
-          explanation: 'No scribe changes detected across the analyzed selection; handwriting appears consistent.',
-          samples: transformedChanges.flatMap(c => c.samples || []).slice(0, 3),
-          is_initial: true,
-          is_return: false,
-          features: transformedChanges[0].features || {}
-        }]
-      }
-
-      const confs = finalChanges
-        .slice(1)
-        .map(s => s.confidence)
-        .filter(v => typeof v === 'number')
-
-      const avgConfidence = confs.length
-        ? confs.reduce((a, b) => a + b, 0) / confs.length
-        : undefined
-
-      const totalScribes = finalChanges.length
-      
-      console.log('Transformed results:', {
-        scribe_changes: transformedChanges,
-        total_scribes: totalScribes,
-        line_screenshots: data.line_screenshots?.length || 0
-      })
-
-      return {
-        scribe_changes: finalChanges,
-        line_screenshots: data.line_screenshots || [],
-        ocr_available: data.ocr_available,
-        page_image: data.page_image || null,
-        line_segments: data.line_segments || [],
-        statistics: {
-          total_scribes: totalScribes,
-          overall_confidence: avgConfidence,
-          analysis_time: 1500,
-          total_lines: totalLines
-        }
-      }
+        features: (change.features && typeof change.features === 'object') ? change.features : null,
+      }));
     },
 
     async exportPDF() {
@@ -1477,7 +1001,19 @@ export default {
         console.error(e)
         alert('Failed to export PDF')
       }
-    }
+    },
+    _resetPreparedAndDrawing() {
+      this.preparedJobId = null;
+      this.preparedPageUrl = null;
+      this.regions = [];
+      this.liveBox = null;
+      this.lastPayloadRegions = [];
+      this.canDraw = false;
+      this.drawActive = false;
+      this.results = null;
+      this.analysisCompleted = false;
+      this.$nextTick(() => this.drawPageOverlay());
+    },
   }
 }
 </script>
@@ -1777,7 +1313,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   border-bottom: 2px solid #ffd700;
-  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.2);
+  box-shadow:  0 2px 8px rgba(255, 215, 0, 0.2);
 }
 
 .header-content {
