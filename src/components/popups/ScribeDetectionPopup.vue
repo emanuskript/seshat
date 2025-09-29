@@ -27,7 +27,7 @@
                   :class="{selected: mode==='auto'}"
                   @click="selectMode('auto')">
             <div class="method-title">PharoSight Auto</div>
-            <div class="method-sub">Recommended • Detect lines automatically</div>
+            <div class="method-sub">Detect lines automatically</div>
           </button>
 
           <!-- Option 2 -->
@@ -35,7 +35,7 @@
                   :class="{selected: mode==='manual'}"
                   @click="selectMode('manual')">
             <div class="method-title">Manual Line Pick</div>
-            <div class="method-sub">Draw boxes on the lines you want</div>
+            <div class="method-sub">Recommended • Draw boxes on the specific lines</div>
           </button>
 
           <!-- Option 3 (disabled) -->

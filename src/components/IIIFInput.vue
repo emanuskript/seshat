@@ -58,6 +58,7 @@
 </template>
 
 <script>
+import { PDFDocument } from "pdf-lib";
 export default {
   name: "SeshatInput",
   data() {
@@ -68,12 +69,31 @@ export default {
     };
   },
   methods: {
-    handleFileUpload(e) {
+    async handleFileUpload(e) {
       const file = e.target.files?.[0];
       if (!file) return;
       this.fileName = file.name;
-      this.imageSrc = URL.createObjectURL(file);
       this.iiifLink = "";
+
+      // Detect PDF
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        // Read PDF as ArrayBuffer
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer);
+        const numPages = pdfDoc.getPageCount();
+        const pageImages = [];
+        for (let i = 0; i < numPages; i++) {
+          // pdf-lib does not render; you need PDF.js for real rendering
+          // For now, just store page index for navigation
+          pageImages.push({ type: 'pdf', pageIndex: i, numPages });
+        }
+        // Pass PDF info to viewer (as a special source)
+        this.$router.push({ name: "IIIFViewer", params: { source: { type: 'pdf', fileName: file.name, pageImages } } });
+        return;
+      }
+
+      // Otherwise, treat as image
+      this.imageSrc = URL.createObjectURL(file);
     },
     isValidIIIFLink(link) {
       return !!link && link.startsWith("http");

@@ -64,6 +64,73 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
 
+# -------- Param + input helpers (avoid 400s when frontend posts query/JSON) ------
+def _get_param(key: str, default=None):
+    """Fetch param from form, querystring, or JSON body (in that order)."""
+    val = (request.form or {}).get(key)
+    if val in (None, "", "null"):
+        val = (request.args or {}).get(key)
+    if val in (None, "", "null") and request.is_json:
+        try:
+            body = request.get_json(silent=True) or {}
+            val = body.get(key)
+        except Exception:
+            val = None
+    return default if val in (None, "", "null") else val
+
+def _read_base64_image(s: str):
+    """Decode data URL or raw base64 to bytes; returns None on failure."""
+    try:
+        if not isinstance(s, str) or not s:
+            return None
+        if "," in s:  # data:image/png;base64,XXXX
+            s = s.split(",", 1)[1]
+        return base64.b64decode(s)
+    except Exception:
+        return None
+
+def _prepared_path_from_page_image(page_image_like: str):
+    """
+    Accept '/static/runs/<id>/manuscript_page.jpg' or 'runs/<id>/manuscript_page.jpg'
+    and return absolute Path to the saved image if it exists.
+    """
+    if not page_image_like:
+        return None
+    s = str(page_image_like).replace("\\", "/")
+    # collapse accidental '/static/static/...'
+    while s.startswith("/static/static/"):
+        s = s[len("/static/"):]
+    if s.startswith("/static/"):
+        s = s[len("/static/"):]
+    parts = [p for p in s.split("/") if p]
+    try:
+        i = parts.index("runs")
+        run_id = parts[i + 1]
+    except Exception:
+        return None
+    p = RUNS_DIR / run_id / "manuscript_page.jpg"
+    return p if p.exists() else None
+
+def _find_latest_prepared_page(max_age_sec: int = 6 * 3600):
+    """Return Path to the most recently modified runs/*/manuscript_page.jpg within max_age_sec."""
+    try:
+        now = time.time()
+        cand = []
+        for d in RUNS_DIR.glob("*/manuscript_page.jpg"):
+            try:
+                m = d.stat().st_mtime
+                if now - m <= max_age_sec:
+                    cand.append((m, d))
+            except Exception:
+                continue
+        if not cand:
+            return None
+        _, path = max(cand, key=lambda x: x[0])
+        return path
+    except Exception:
+        return None
+# ---------------------------------------------------------------------------------
+
 # ----------------------------- NEW: coordinate helper -----------------------------
 def _normalize_regions_to_image(regions, src_w, src_h, dst_w, dst_h):
     """
@@ -716,7 +783,7 @@ def _assign_scribe_identities(segments, line_abs_paths, sim_thresh=0.92):
                     if img is None: 
                         continue
                     from feature_extractor import line_embedding
-                    embs.append(line_embedding(img))
+                    embs.append(line_embedding(img))  # call with defaults only
                 except Exception as e:
                     print(f"Warning: Could not compute embedding for {line_abs_paths[i]}: {e}")
                     continue
@@ -770,7 +837,7 @@ def _segment_and_crop(run_id, file_bytes, illum_frac=0.035, sauvola_window=31, s
     
     # Use preprocessing parameters with improved line segmentation
     print(f"Running improved line segmentation with parameters: illum_frac={illum_frac}, sauvola_window={sauvola_window}, sauvola_k={sauvola_k}, do_deskew={do_deskew}")
-    print(f"Detected {len(pages)} page(s) in image")
+    print(f"Detected 1 page(s) in image")
     
     # Try multiple segmentation approaches in order of preference
     methods_tried = []
@@ -1297,7 +1364,8 @@ def prepare():
                 f.write(file.stream.read())
         return jsonify({
             'job_id': run_id,
-            'page_image': page_rel
+            'page_image': page_rel,
+            'page_image_static': f"/static/{page_rel}"
         })
     except Exception as e:
         return jsonify({"error": f"Prepare failed: {str(e)}"}), 500
@@ -1305,66 +1373,115 @@ def prepare():
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
-        # Optional prepared job (use server-saved page image)
+        # ==== Robust input resolution (file / base64 / prepared job / page URL / latest prepared) ====
         form = request.form or {}
-        prepared_job = form.get('prepared_job')
-        prepared_path = None
-        if prepared_job:
-            p = RUNS_DIR / prepared_job / 'manuscript_page.jpg'
-            if p.exists():
-                prepared_path = p
+        args = request.args or {}
+        run_id = str(uuid.uuid4())
 
-        # Accept either uploaded image or prepared job
-        if 'image' in request.files and request.files['image'].filename:
+        # Pull mode from any source
+        mode = _get_param("mode", "auto")
+
+        # Resolve content source: file upload, base64, prepared_job, or page_image/url
+        file = None
+        file_content = None
+        prepared_path = None
+
+        # 1) Direct file upload (multipart/form-data)
+        if 'image' in request.files and getattr(request.files['image'], 'filename', ''):
             file = request.files['image']
             file_content = file.read()
-            file.seek(0)
-        elif prepared_path is not None:
-            with open(prepared_path, 'rb') as f:
-                file_content = f.read()
-            # create a dummy File-like name for logging
-            class _F: filename = str(prepared_path.name)
-            file = _F()
-        else:
-            return jsonify({"error": "No file uploaded or prepared_job invalid"}), 400
-        
-        # Read optional tuning params
-        # form already defined
-        def _getf(k, typ, default):
+
+        # 2) Inline base64 (JSON or form)
+        if file_content is None:
+            img_b64 = (_get_param("image") or _get_param("imageBase64") or
+                       _get_param("image_base64") or _get_param("dataUrl") or _get_param("data_url"))
+            if img_b64:
+                raw = _read_base64_image(img_b64)
+                if raw:
+                    file_content = raw
+                    class _F: pass
+                    file = _F()
+                    file.filename = "inline-base64.png"
+
+        # 3) Prepared job (accept several aliases)
+        if file_content is None:
+            prepared_job = (_get_param("prepared_job") or _get_param("job_id") or _get_param("jobId") or _get_param("run_id"))
+            if prepared_job:
+                cand = RUNS_DIR / prepared_job / "manuscript_page.jpg"
+                if cand.exists():
+                    prepared_path = cand
+                    file_content = cand.read_bytes()
+                    class _F: pass
+                    file = _F(); file.filename = str(cand.name)
+
+        # 4) Derive from page image URL/path (accept several aliases)
+        if file_content is None:
+            page_image_like = (_get_param("page_image") or _get_param("page_image_url") or
+                               _get_param("image_url") or _get_param("url") or _get_param("image_path"))
+            cand = _prepared_path_from_page_image(page_image_like) if page_image_like else None
+            if cand:
+                prepared_path = cand
+                file_content = cand.read_bytes()
+                class _F: pass
+                file = _F(); file.filename = str(cand.name)
+
+        # 5) Last-resort fallback: use the latest prepared page on disk
+        if file_content is None:
+            latest = _find_latest_prepared_page()
+            if latest is not None:
+                prepared_path = latest
+                file_content = latest.read_bytes()
+                class _F: pass
+                file = _F(); file.filename = str(latest.name)
+                print(f"[WARN] /analyze: no image provided; using latest prepared page: {latest}")
+
+        # If still nothing, bail with a precise message
+        if file_content is None:
+            return jsonify({
+                "error": "No image provided",
+                "hint": "Send one of: multipart 'image' file, JSON 'image' (data URL/base64), "
+                        "'prepared_job' (or 'job_id') id, or 'page_image'/'page_image_url' that points to /static/runs/<id>/manuscript_page.jpg. "
+                        "Alternatively, call /prepare first and then call /analyze?prepared_job=<job_id>."
+            }), 400
+
+        # Read optional tuning params (from form/query/JSON)
+        def _getf_any(k, typ, default):
+            v = _get_param(k, default)
             try:
-                return typ(form.get(k, default))
+                return typ(v)
             except Exception:
                 return default
 
-        illum_frac     = _getf("illum_frac", float, 0.035)
-        sauvola_window = _getf("sauvola_window", int, 31)
-        sauvola_k      = _getf("sauvola_k", float, 0.2)
-        do_deskew      = _getf("do_deskew", int, 1) == 1
+        illum_frac     = _getf_any("illum_frac", float, 0.035)
+        sauvola_window = _getf_any("sauvola_window", int, 31)
+        sauvola_k      = _getf_any("sauvola_k", float, 0.2)
+        do_deskew      = (_getf_any("do_deskew", int, 1) == 1)
 
-        algo           = form.get("algo", "auto")  # "auto" | "peaks" | "ruptures"
-        z_thresh       = form.get("z_thresh", None)
-        z_thresh       = float(z_thresh) if z_thresh not in (None, "", "null") else None
-        min_gap        = _getf("min_gap", int, 2)
-        min_run        = _getf("min_run", int, 2)
-        use_color      = _getf("use_color", int, 1) == 1
-        rupt_pen       = form.get("ruptures_pen", None)
-        rupt_pen       = float(rupt_pen) if rupt_pen not in (None, "", "null") else None
+        algo           = _get_param("algo", "auto")  # "auto" | "peaks" | "ruptures"
+        z_thresh_raw   = _get_param("z_thresh", None)
+        z_thresh       = float(z_thresh_raw) if z_thresh_raw not in (None, "", "null") else None
+        min_gap        = _getf_any("min_gap", int, 2)
+        min_run        = _getf_any("min_run", int, 2)
+        use_color      = (_getf_any("use_color", int, 1) == 1)
+        rupt_pen_raw   = _get_param("ruptures_pen", None)
+        rupt_pen       = float(rupt_pen_raw) if rupt_pen_raw not in (None, "", "null") else None
 
         # Parse mode and manual regions
-        mode = form.get("mode", "auto")  # "auto" | "manual"
-        strict_per_line = str(form.get("strict_per_line", "0")).lower() in ("1", "true", "yes", "on")
+        strict_per_line = True  # Always use strict per-line logic
         manual_regions = []
         if mode == "manual":
             try:
-                regions_str = form.get("regions", "[]")
-                manual_regions = json.loads(regions_str) if regions_str else []
+                regions_raw = _get_param("regions", "[]")
+                if isinstance(regions_raw, str):
+                    manual_regions = json.loads(regions_raw) if regions_raw else []
+                elif isinstance(regions_raw, list):
+                    manual_regions = regions_raw
+                else:
+                    manual_regions = []
                 print(f"Manual mode detected with {len(manual_regions)} regions: {manual_regions}")
             except Exception as e:
                 print(f"Error parsing manual regions: {e}")
                 manual_regions = []
-        
-        # Generate unique run ID and hash
-        run_id = str(uuid.uuid4())
         timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S')
         
         print(f"\n=== NEW ANALYSIS REQUEST ===")
@@ -1389,8 +1506,8 @@ def analyze():
         _tmp = ImageOps.exif_transpose(_tmp)
         img_w, img_h = _tmp.size
         if mode == "manual":
-            src_w = form.get("regions_src_w", None)
-            src_h = form.get("regions_src_h", None)
+            src_w = _get_param("regions_src_w", None)
+            src_h = _get_param("regions_src_h", None)
             manual_regions = _normalize_regions_to_image(manual_regions, src_w, src_h, img_w, img_h)
             print(f"Normalized manual regions using src({src_w}x{src_h}) -> dst({img_w}x{img_h})")
         # ------------------------------------------------------------------------------------
@@ -1439,7 +1556,7 @@ def analyze():
                     region_paths, region_metas = _crop_regions_from_page(file_content, manual_regions, run_dir, "A")
 
                     # STRICT PER-LINE WITH REUSE: treat each region as its own segment; reuse labels for close matches
-                    if strict_per_line and region_paths:
+                    if region_paths:
                         print("MANUAL MODE: strict per-line with label reuse")
                         imgs_for_samples = []
                         region_diags = []
@@ -1504,6 +1621,8 @@ def analyze():
                             "job_id": f"job_{int(time.time())}",
                             "run_id": run_id,
                             "page_image": f"runs/{run_id}/manuscript_page.jpg",
+                            "page_image_static": f"/static/runs/{run_id}/manuscript_page.jpg",
+                            "page_image_static": f"/static/runs/{run_id}/manuscript_page.jpg",
                             "segmentation_overlay": None,
                             "polygons": [],
                             "scribe_changes": scribe_changes,
@@ -1617,13 +1736,13 @@ def analyze():
                             if img is None: 
                                 continue
                             imgs_for_samples.append(img)
+                            # call with narrowed band but default weight args
                             embs.append(line_embedding(
                                 img,
-                                central_band_frac=0.65,   # slightly tighter band
+                                central_band_frac=0.65,
                                 central_band_pad=2,
-                                resize_height=160,        # a bit larger for stability
-                                use_color=False,          # less color noise for manual
-                                w_lbp=1.1, w_hog=1.2, w_color=0.0
+                                resize_height=160,
+                                use_color=False
                             ))
                         if len(embs) == 0:
                             print("MANUAL MODE: Failed to compute embeddings for manual regions; falling back to detector with manual segments")
@@ -1776,8 +1895,7 @@ def analyze():
                             central_band_frac=0.65,   # slightly tighter band
                             central_band_pad=2,
                             resize_height=160,        # a bit larger for stability
-                            use_color=False,          # less color noise for manual
-                            w_lbp=1.1, w_hog=1.2, w_color=0.0
+                            use_color=False           # less color noise for manual
                         ))
                     if len(embs) == 0:
                         return jsonify({"error": "Failed to compute embeddings for manual regions"}), 500
@@ -1961,7 +2079,7 @@ def analyze():
                 print("AUTO MODE: Full manuscript analysis with optimized parameters")
                 proc = ImageProcessor(
                     algo=algo, 
-                    z_thresh=max(z_thresh, 2.5),  # Ensure minimum threshold for better accuracy
+                    z_thresh=max(z_thresh, 2.5) if z_thresh is not None else 2.5,  # Ensure minimum threshold
                     min_gap=max(min_gap, 3),      # Ensure minimum gap for stable detection
                     min_run=max(min_run, 3),      # Ensure minimum run length
                     use_color=use_color, 
@@ -2074,46 +2192,47 @@ def analyze():
         confidence_scores = [c.get("confidence") for c in scribe_changes if c.get("confidence") is not None]
         overall_conf = (float(np.mean(confidence_scores)) if confidence_scores else 0.0)
         
-        # Extract real line screenshots using OCR  
+        # Extract real line screenshots using OCR  (if OCR is available)
         line_screenshots = []
         if not OCR_AVAILABLE:
-            raise RuntimeError("OCR functionality required for line screenshot extraction")
-            
-        # Convert image to base64 for OCR processing
-        buffer = io.BytesIO()
-        image = Image.open(io.BytesIO(file_content))
-        image = ImageOps.exif_transpose(image)
-        image.save(buffer, format='PNG')
-        image_base64 = base64.b64encode(buffer.getvalue()).decode()
-        
-        # Extract line screenshots using OCR
-        line_screenshots = extract_line_screenshots(f"data:image/png;base64,{image_base64}")
-        print(f"OCR extracted {len(line_screenshots)} line screenshots")
-        
-        if not line_screenshots:
-            raise RuntimeError("OCR failed to extract any line screenshots from the image")
-        
-        total_lines = len(line_screenshots)
-        
-        # Build base64 screenshots from actual line crops for UI previews
-        line_screenshots = []
-        for idx, path in enumerate(line_abs_paths, 1):
+            print("OCR unavailable; building screenshots from actual crops instead.")
+        else:
             try:
-                with open(path, 'rb') as fh:
-                    raw = fh.read()
-                enc = base64.b64encode(raw).decode('ascii')
-                bbox = metas[idx-1].get('bbox', [0, 0, 500, 20]) if idx-1 < len(metas) else [0, 0, 500, 20]
-                bbox = [int(x) for x in bbox]
-                line_screenshots.append({
-                    'lineNumber': int(idx),
-                    'text': metas[idx-1].get('text', '') if idx-1 < len(metas) else '',
-                    'bbox': bbox,
-                    'screenshot': f"data:image/png;base64,{enc}",
-                    'confidence': 1.0
-                })
+                # Convert image to base64 for OCR processing
+                buffer = io.BytesIO()
+                image = Image.open(io.BytesIO(file_content))
+                image = ImageOps.exif_transpose(image)
+                image.save(buffer, format='PNG')
+                image_base64 = base64.b64encode(buffer.getvalue()).decode()
+                
+                # Extract line screenshots using OCR
+                line_screenshots = extract_line_screenshots(f"data:image/png;base64,{image_base64}")
+                print(f"OCR extracted {len(line_screenshots)} line screenshots")
             except Exception as e:
-                print(f"Failed to encode line screenshot for {path}: {e}")
+                print(f"Error in OCR line extraction: {e}")
+                line_screenshots = []
 
+        # If OCR screenshots are empty, build base64 screenshots from the cropped line files
+        if not line_screenshots:
+            for idx, path in enumerate(line_abs_paths, 1):
+                try:
+                    with open(path, 'rb') as fh:
+                        raw = fh.read()
+                    enc = base64.b64encode(raw).decode('ascii')
+                    bbox = metas[idx-1].get('bbox', [0, 0, 500, 20]) if idx-1 < len(metas) else [0, 0, 500, 20]
+                    bbox = [int(x) for x in bbox]
+                    line_screenshots.append({
+                        'lineNumber': int(idx),
+                        'text': metas[idx-1].get('text', '') if idx-1 < len(metas) else '',
+                        'bbox': bbox,
+                        'screenshot': f"data:image/png;base64,{enc}",
+                        'confidence': 1.0
+                    })
+                except Exception as e:
+                    print(f"Failed to encode line screenshot for {path}: {e}")
+
+        total_lines = len(line_screenshots) if line_screenshots else len(line_abs_paths)
+        
         # Build line_segments for UI from actual metadata (reuse screenshots)
         line_segments = []
         for idx, m in enumerate(metas):
@@ -2136,7 +2255,7 @@ def analyze():
             "polygons": [],
             "scribe_changes": scribe_changes,
             "total_lines": total_lines,
-            "line_screenshots": line_screenshots,  # base64 screenshots of actual crops
+            "line_screenshots": line_screenshots,  # base64 screenshots of actual crops or OCR
             "ocr_available": OCR_AVAILABLE,
             "scribe_samples": scribe_samples,    # Actual scribe sample images
             "line_segments": line_segments,

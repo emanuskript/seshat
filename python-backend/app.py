@@ -146,7 +146,6 @@ def _column_or_page_regions(binary: np.ndarray) -> List[Tuple[int,int]]:
     if in_blk and (len(smooth) - s) >= 40:
         blocks.append((s, len(smooth)))
     return blocks if blocks else [(0, binary.shape[1])]
-    return blocks if blocks else [(0, binary.shape[1])]
 
 def segment_lines(img_path: Path) -> List[Dict]:
     img = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
@@ -296,7 +295,7 @@ def generate_pdf_report_advanced(job_id: str, scribe_changes: List[Dict], page_i
     story.append(Spacer(1, 0.3*inch))
     
     # Original page image
-    page_abs_path = str(STATIC_DIR / page_image)
+    page_abs_path = str(STATIC_DIR / page_image) if not page_image.startswith("/static/") else str(STATIC_DIR / page_image.replace("/static/", ""))
     if Path(page_abs_path).exists():
         story.append(Paragraph("<b>Original Manuscript Page:</b>", styles['Heading2']))
         page_img = RLImage(page_abs_path, width=5*inch, height=6*inch)
@@ -311,8 +310,8 @@ def generate_pdf_report_advanced(job_id: str, scribe_changes: List[Dict], page_i
         for i, change in enumerate(scribe_changes):
             change_text = f"""
             <b>Change #{i+1} - Line {change['line_number']}</b><br/>
-            Confidence: {change['confidence']:.1%}<br/>
-            Explanation: {change['explanation']}<br/>
+            Confidence: {change.get('confidence', 0.0):.1f}%<br/>
+            Explanation: {change.get('explanation','')}<br/>
             Statistical Distance: {change.get('distance', 0):.3f}<br/>
             Z-Score: {change.get('z_score', 0):.2f}<br/>
             """
@@ -357,7 +356,9 @@ def generate_pdf_report_advanced(job_id: str, scribe_changes: List[Dict], page_i
     doc.build(story)
     log.info(f"Advanced PDF report generated: {pdf_path}")
     
-    return str(pdf_path.relative_to(STATIC_DIR)).replace("", "/")
+    # Return a static URL path for the generated PDF
+    rel = str(pdf_path.relative_to(STATIC_DIR)).replace("\\", "/")
+    return f"/static/{rel}"
 
 def generate_pdf_report(job_id: str, cards: List[Dict], page_image: str) -> str:
     """Generate PDF report for scribe detection results"""
@@ -387,7 +388,7 @@ def generate_pdf_report(job_id: str, cards: List[Dict], page_image: str) -> str:
     story.append(Spacer(1, 12))
     
     # Add page image if available
-    page_img_path = STATIC_DIR / page_image
+    page_img_path = STATIC_DIR / (page_image.replace("/static/","") if page_image.startswith("/static/") else page_image)
     if page_img_path.exists():
         try:
             img_width = 6 * inch
@@ -450,7 +451,8 @@ def generate_pdf_report(job_id: str, cards: List[Dict], page_image: str) -> str:
     # Build PDF
     doc.build(story)
     
-    return str(pdf_path.relative_to(STATIC_DIR))
+    rel = str(pdf_path.relative_to(STATIC_DIR)).replace("\\", "/")
+    return f"/static/{rel}"
 
 # ------------------ Routes ------------------
 @app.errorhandler(413)
@@ -487,6 +489,7 @@ def analyze():
     page_copy = paths["root"] / f"page{ext}"
     shutil.copy(str(up_path), str(page_copy))
     page_rel = str(page_copy.relative_to(STATIC_DIR)).replace("\\", "/")
+    page_url = f"/static/{page_rel}"
 
     # run line segmentation + crop
     try:
@@ -497,6 +500,7 @@ def analyze():
         overlay_path = paths["root"] / "overlay.jpg"
         draw_segmentation_overlay(up_path, lines, overlay_path)
         overlay_rel = str(overlay_path.relative_to(STATIC_DIR)).replace("\\", "/")
+        overlay_url = f"/static/{overlay_rel}"
     except Exception as e:
         log.error(f"Segmentation failed: {e}")
         return jsonify({"error": f"Segmentation failed: {str(e)}"}), 500
@@ -539,7 +543,7 @@ def analyze():
         result = processor.detect_with_reasons(line_abs_paths)
         scribe_changes = [
             {
-                "line_number": ch["index"] + 2,  # 1-indexed + next line
+                "line_number": ch["index"] + 2,  # boundary after line i → change at i+1
                 "confidence": ch["confidence"],
                 "explanation": ch["reason"],
                 "distance": ch.get("distance", 0.0),
@@ -552,15 +556,15 @@ def analyze():
 
     # Generate PDF report with new format
     try:
-        pdf_path = generate_pdf_report_advanced(job_id, scribe_changes, page_rel, line_rel_paths)
+        pdf_url = generate_pdf_report_advanced(job_id, scribe_changes, page_rel, line_rel_paths)
     except Exception as e:
         log.error(f"PDF generation failed: {e}")
-        pdf_path = None
+        pdf_url = None
 
     return jsonify({
         "job_id": job_id,
-        "page_image": page_rel,
-        "segmentation_overlay": overlay_rel,
+        "page_image": page_url,
+        "segmentation_overlay": overlay_url,
         "polygons": polygons,
         "scribe_changes": scribe_changes,
         "total_lines": len(line_rel_paths),
@@ -572,7 +576,7 @@ def analyze():
             }
             for i in range(len(line_rel_paths))
         ],
-        "pdf_report": pdf_path
+        "pdf_report": pdf_url
     })
 
 @app.route("/download_pdf/<job_id>")
