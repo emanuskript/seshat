@@ -38,10 +38,12 @@
             <div class="method-sub">Recommended • Draw boxes on the specific lines</div>
           </button>
 
-          <!-- Option 3 (disabled) -->
-          <button class="method-card disabled" disabled>
-            <div class="method-title">Import from Segmentation</div>
-            <div class="method-sub">Coming soon <span class="hourglass">⏳</span></div>
+          <!-- Option 3: JSON Upload -->
+          <button class="method-card"
+                  :class="{selected: mode==='json'}"
+                  @click="selectMode('json')">
+            <div class="method-title">Import JSON Annotations</div>
+            <div class="method-sub">Upload COCO-format line detections</div>
           </button>
         </div>
 
@@ -78,10 +80,75 @@
           </p>
         </div>
 
+        <!-- JSON Upload interface -->
+        <div v-if="mode==='json'" class="json-upload-wrap">
+          <p class="helper">Upload the manuscript image and its annotation JSON file</p>
+          
+          <!-- Image Upload -->
+          <div class="upload-section">
+            <label class="upload-label">1. Manuscript Image</label>
+            <div class="upload-area" :class="{dragover: isDraggingImage}">
+              <input type="file" ref="imageFileInput" accept="image/*"
+                     @change="handleImageSelect" style="display: none;" />
+              <div class="upload-content">
+                <span class="upload-icon">🖼️</span>
+                <p class="upload-text">
+                  <strong v-if="!uploadedImageFile">Drop image file here or click to browse</strong>
+                  <strong v-else class="file-selected">✓ {{ uploadedImageFile.name }}</strong>
+                </p>
+                <button class="pill" @click="$refs.imageFileInput.click()">
+                  {{ uploadedImageFile ? 'Change Image' : 'Select Image' }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- JSON Upload -->
+          <div class="upload-section">
+            <label class="upload-label">2. Annotation JSON</label>
+            <div class="upload-area" :class="{dragover: isDraggingFile}">
+              <input type="file" ref="jsonFileInput" accept=".json,application/json"
+                     @change="handleFileSelect" style="display: none;" />
+              <div class="upload-content">
+                <span class="upload-icon">📄</span>
+                <p class="upload-text">
+                  <strong v-if="!uploadedJsonFile">Drop JSON file here or click to browse</strong>
+                  <strong v-else class="file-selected">✓ {{ uploadedJsonFile.name }}</strong>
+                </p>
+                <button class="pill" @click="$refs.jsonFileInput.click()">
+                  {{ uploadedJsonFile ? 'Change File' : 'Select File' }}
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <div v-if="jsonParseError" class="error-message">
+            <strong>⚠ Error:</strong> {{ jsonParseError }}
+          </div>
+          
+          <div v-if="uploadedJsonFile && !jsonParseError && uploadedImageFile" class="json-info">
+            <p><strong>Image:</strong> {{ uploadedImageFile.name }}</p>
+            <p><strong>JSON:</strong> {{ uploadedJsonFile.name }}</p>
+            <p><strong>Lines detected:</strong> {{ regions.length }}</p>
+          </div>
+
+          <!-- Show preview of page with detected regions -->
+          <div v-if="uploadedJsonFile && !jsonParseError && jsonImagePreview" class="json-preview-wrap">
+            <p class="preview-label">Preview: Detected line regions</p>
+            <div class="draw-stage">
+              <img :src="jsonImagePreview" alt="Manuscript page"
+                   class="draw-img" draggable="false" ref="jsonPreviewImg" />
+              <!-- Show regions from JSON -->
+              <div v-for="(r, i) in regions" :key="i" class="box json-box"
+                   :style="getJsonBoxStyle(r)"></div>
+            </div>
+          </div>
+        </div>
+
         <footer class="actions">
           <button class="ghost" @click="closePopup">Cancel</button>
           <button class="primary"
-                  :disabled="mode===null"
+                  :disabled="mode===null || (mode==='json' && (!uploadedJsonFile || !uploadedImageFile))"
                   @click="goStep(2)">
             Next: Tune & Run →
           </button>
@@ -346,6 +413,15 @@ export default {
       regions: [],
       lastPayloadRegions: [],
       drawActive: false,
+      // JSON upload
+      uploadedJsonFile: null,
+      uploadedImageFile: null,
+      jsonImagePreview: null,
+      jsonParseError: null,
+      isDraggingFile: false,
+      isDraggingImage: false,
+      jsonSourceWidth: null,
+      jsonSourceHeight: null,
       liveBox: null,
       drawImgNaturalW: 0,
       drawImgNaturalH: 0,
@@ -410,6 +486,14 @@ export default {
       )
     },
     backendBase() {
+      // FORCE localhost:5001 for development
+      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      
+      if (isDev) {
+        console.log('🔗 Backend URL: http://localhost:5001 (DEVELOPMENT MODE)')
+        return 'http://localhost:5001'
+      }
+
       const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}
       const fromEnv = env?.VITE_PHAROSIGHT_API_BASE || env?.VUE_APP_PHAROSIGHT_API_BASE
       const fromWindow = (typeof window !== 'undefined' && window.__PHAROSIGHT_API_BASE__) ? window.__PHAROSIGHT_API_BASE__ : null
@@ -427,6 +511,8 @@ export default {
         console.warn('Unexpected backend base URL, defaulting to Hugging Face endpoint.', normalized)
         return prodDefault
       }
+      
+      console.log('🔗 Backend URL:', normalized)
       return normalized
     },
     drawImageSrc() {
@@ -436,9 +522,16 @@ export default {
       return `${this.drawImageSrc || ''}::p=${this.currentPage}::j=${this.preparedJobId || 'none'}`
     },
     analyzedImageSrc() {
+      // For JSON mode, show the uploaded image
+      if (this.mode === 'json' && this.jsonImagePreview) {
+        return this.jsonImagePreview
+      }
       return this.drawImageSrc
     },
     analyzedImageKey() {
+      if (this.mode === 'json' && this.jsonImagePreview) {
+        return `json::${this.uploadedImageFile?.name || 'uploaded'}`
+      }
       return this.drawImageKey
     },
     runButtonDisabled() {
@@ -482,12 +575,163 @@ export default {
     selectMode(modeType) {
       this.mode = modeType
       this._resetPreparedAndDrawing()
+      // Clear JSON upload state when switching modes
+      if (modeType !== 'json') {
+        this.uploadedJsonFile = null
+        this.uploadedImageFile = null
+        this.jsonImagePreview = null
+        this.jsonParseError = null
+      }
       this.$nextTick(async () => {
         // Only pre-prepare for manual. Auto can run without a prepared job.
         if (this.currentPageImage && modeType === 'manual') {
           await this.preparePageIfNeeded()
         }
       })
+    },
+
+    handleImageSelect(event) {
+      const file = event.target.files[0]
+      if (file) {
+        this.processImageFile(file)
+      }
+    },
+
+    handleFileSelect(event) {
+      const file = event.target.files[0]
+      if (file) {
+        this.processJsonFile(file)
+      }
+    },
+
+    processImageFile(file) {
+      this.uploadedImageFile = file
+      // Create preview URL
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        this.jsonImagePreview = e.target.result
+      }
+      reader.readAsDataURL(file)
+    },
+
+    handleFileDrop(event) {
+      this.isDraggingFile = false
+      const file = event.dataTransfer.files[0]
+      if (file && file.type === 'application/json') {
+        this.processJsonFile(file)
+      } else {
+        this.jsonParseError = 'Please drop a valid JSON file'
+      }
+    },
+
+    async processJsonFile(file) {
+      this.jsonParseError = null
+      this.uploadedJsonFile = file
+
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+
+        // Parse COCO format JSON
+        const lines = this.parseCocoAnnotations(data)
+        
+        if (lines.length === 0) {
+          this.jsonParseError = 'No line detections found in JSON file'
+          return
+        }
+
+        // Get image dimensions from JSON
+        const image = data.images && data.images[0]
+        if (!image) {
+          this.jsonParseError = 'No image metadata found in JSON'
+          return
+        }
+
+        // Store the regions with metadata
+        this.regions = lines.map(line => ({
+          x: line.bbox[0],
+          y: line.bbox[1],
+          w: line.bbox[2],
+          h: line.bbox[3],
+          score: line.score,
+          id: line.id
+        }))
+
+        // Store source dimensions for backend processing
+        this.jsonSourceWidth = image.width
+        this.jsonSourceHeight = image.height
+
+        console.log(`Parsed ${this.regions.length} line detections from JSON`)
+      } catch (error) {
+        console.error('Error parsing JSON:', error)
+        this.jsonParseError = `Failed to parse JSON: ${error.message}`
+        this.regions = []
+      }
+    },
+
+    parseCocoAnnotations(data) {
+      // Extract line detections from COCO format
+      // Category ID 1 is typically "Line Detection_object"
+      const lineCategories = (data.categories || []).filter(cat => 
+        cat.name && cat.name.toLowerCase().includes('line')
+      ).map(cat => cat.id)
+
+      if (lineCategories.length === 0) {
+        console.warn('No line categories found, using category_id: 1 as fallback')
+        lineCategories.push(1)
+      }
+
+      const lines = (data.annotations || []).filter(ann => 
+        lineCategories.includes(ann.category_id) && ann.bbox
+      )
+
+      // Sort by y-position (top to bottom) for proper reading order
+      lines.sort((a, b) => a.bbox[1] - b.bbox[1])
+
+      return lines
+    },
+
+    getJsonBoxStyle(r) {
+      // Scale the bounding box to fit the preview image display size
+      const img = this.$refs.jsonPreviewImg
+      if (!img || !this.jsonSourceWidth || !this.jsonSourceHeight) {
+        return {
+          left: `${r.x}px`,
+          top: `${r.y}px`,
+          width: `${r.w}px`,
+          height: `${r.h}px`
+        }
+      }
+      
+      // Calculate the actual displayed size (considering object-fit: contain)
+      const imgAspect = this.jsonSourceWidth / this.jsonSourceHeight
+      const containerAspect = img.clientWidth / img.clientHeight
+      
+      let displayWidth, displayHeight, offsetX, offsetY
+      
+      if (imgAspect > containerAspect) {
+        // Image is wider - fits to width
+        displayWidth = img.clientWidth
+        displayHeight = img.clientWidth / imgAspect
+        offsetX = 0
+        offsetY = (img.clientHeight - displayHeight) / 2
+      } else {
+        // Image is taller - fits to height
+        displayHeight = img.clientHeight
+        displayWidth = img.clientHeight * imgAspect
+        offsetX = (img.clientWidth - displayWidth) / 2
+        offsetY = 0
+      }
+      
+      const scaleX = displayWidth / this.jsonSourceWidth
+      const scaleY = displayHeight / this.jsonSourceHeight
+      
+      return {
+        left: `${offsetX + (r.x * scaleX)}px`,
+        top: `${offsetY + (r.y * scaleY)}px`,
+        width: `${r.w * scaleX}px`,
+        height: `${r.h * scaleY}px`
+      }
     },
 
     // ---------- Prepare page (server-side cache) ----------
@@ -643,7 +887,18 @@ export default {
       try {
         if (this.mode === 'auto') {
           await this.analyzeScribes()
+        } else if (this.mode === 'json') {
+          // JSON mode: use regions from uploaded JSON file + uploaded image
+          const payloadRegions = this.regions.map(r => ({
+            x: Math.round(r.x),
+            y: Math.round(r.y),
+            w: Math.round(r.w),
+            h: Math.round(r.h)
+          }))
+          this.lastPayloadRegions = payloadRegions
+          await this.analyzeScribesWithJsonImage(payloadRegions, this.jsonSourceWidth, this.jsonSourceHeight)
         } else {
+          // Manual mode: use drawn regions
           const payloadRegions = this.regions.map(r => ({
             x: Math.round(r.nx), y: Math.round(r.ny),
             w: Math.round(r.nw), h: Math.round(r.nh)
@@ -708,6 +963,69 @@ export default {
         this.$nextTick(() => this.drawPageOverlay())
       } catch (err) {
         console.error('Auto analysis error:', err)
+        this.loadingMessage = 'Analysis failed'
+        this.loadingDetail = err.message || 'Unknown error'
+      } finally {
+        this.isAnalyzing = false
+      }
+    },
+
+    async analyzeScribesWithJsonImage(regions, srcW, srcH) {
+      if (this.isAnalyzing) return
+      this.isAnalyzing = true
+      this.analysisCompleted = false
+      this.results = null
+      this.segmentationOverlay = null
+      this.loadingMessage = 'Analyzing manuscript with JSON annotations...'
+      this.loadingDetail = 'Processing uploaded image and regions'
+
+      try {
+        if (!this.uploadedImageFile) throw new Error('No image file uploaded')
+
+        console.log('📤 JSON Analysis Request:', {
+          backend: this.backendBase,
+          regions: regions.length,
+          imageSize: `${srcW}x${srcH}`,
+          imageFile: this.uploadedImageFile.name
+        })
+
+        const formData = new FormData()
+        formData.append('mode', 'json')
+        formData.append('image', this.uploadedImageFile)
+        formData.append('regions', JSON.stringify(regions))
+        formData.append('regions_src_w', String(srcW || 0))
+        formData.append('regions_src_h', String(srcH || 0))
+
+        if (this.params.z_thresh) formData.append('z_thresh', String(this.params.z_thresh))
+        formData.append('min_gap', String(this.params.min_gap))
+        formData.append('min_run', String(this.params.min_run))
+        formData.append('illum_frac', String(this.params.illum_frac))
+        formData.append('sauvola_window', String(this.params.sauvola_window))
+        formData.append('algo', this.params.algo)
+
+        const ts = Date.now() + Math.random()
+        const url = `${this.backendBase}/analyze?t=${ts}&mode=json`
+        console.log('🚀 Sending request to:', url)
+        
+        const response = await fetch(url, {
+          method: 'POST',
+          body: formData,
+          cache: 'no-cache'
+        })
+        
+        console.log('📥 Response status:', response.status, response.statusText)
+
+        if (!response.ok) throw new Error(await response.text())
+        const data = await response.json()
+
+        this.results = this.transformBackendResults(data)
+        if (data.segmentation_overlay) {
+          this.segmentationOverlay = `${this.backendBase}${data.segmentation_overlay}`
+        }
+        this.analysisCompleted = true
+        this.$nextTick(() => this.drawPageOverlay())
+      } catch (err) {
+        console.error('JSON analysis error:', err)
         this.loadingMessage = 'Analysis failed'
         this.loadingDetail = err.message || 'Unknown error'
       } finally {
@@ -1494,6 +1812,131 @@ export default {
 .hourglass{ opacity:.85; }
 
 .draw-wrap{ margin-top: 12px; }
+.json-upload-wrap{ margin-top: 12px; }
+
+.upload-section {
+  margin-bottom: 16px;
+}
+
+.upload-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.upload-area {
+  border: 2px dashed #cbd5e0;
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  background: #f8fafc;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.upload-area:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.upload-area.dragover {
+  border-color: #3b82f6;
+  background: #dbeafe;
+  transform: scale(1.02);
+}
+
+.upload-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.upload-icon {
+  font-size: 48px;
+  opacity: 0.7;
+}
+
+.upload-text {
+  color: #475569;
+  font-size: 14px;
+  margin: 0;
+}
+
+.file-selected {
+  color: #22c55e;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-message {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 8px;
+  color: #c00;
+  font-size: 13px;
+}
+
+.json-info {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #166534;
+}
+
+.json-info p {
+  margin: 4px 0;
+}
+
+.json-info strong {
+  font-weight: 600;
+  color: #15803d;
+}
+
+.warning-message {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #9a3412;
+}
+
+.warning-message strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #c2410c;
+}
+
+.warning-message p {
+  margin: 0;
+}
+
+.json-preview-wrap {
+  margin-top: 16px;
+}
+
+.preview-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.json-box {
+  border-color: #3b82f6 !important;
+  background: rgba(59, 130, 246, 0.15) !important;
+}
+
 .draw-toolbar{
  
   display:flex; align-items:center; gap:10px; margin-bottom:8px;
