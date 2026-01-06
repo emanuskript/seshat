@@ -82,9 +82,9 @@ export default {
 .title { font-size: 28px; text-align: center; margin: 0 0 16px; }
 .section-title { margin: 14px 4px 8px; font-weight: 600; color: #222; }
 .options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; margin-bottom: 10px; }
-.type-button { display: grid; justify-items: center; gap: 8px; padding: 10px; border: 1px solid #d3d3d3; border-radius: 10px; background: #fafafa; cursor: pointer; }
-.type-button:hover { border-color: #9ec9ff; background: #f6fbff; }
-.type-button.selected { border-color: #007bff; box-shadow: 0 0 0 3px rgba(0,123,255,.2); background: #f4f9ff; }
+.type-button { display: grid; justify-items: center; gap: 8px; padding: 10px; border: 2px solid #d3d3d3; border-radius: 10px; background: #fafafa; cursor: pointer; transition: all 0.2s ease; }
+.type-button:hover { border-color: #9ec9ff; background: #f0f8ff; }
+.type-button.selected { border-color: #00ff87; border-width: 3px; box-shadow: 0 0 0 3px #00ff87, 0 0 12px rgba(0,255,135,.5); background: #f4f9ff; }
 .swatch { width: 40px; height: 40px; border-radius: 8px; background: #e9ecef; border: 2px solid rgba(0,0,0,.08); }
 .label { font-size: 14px; color: #222; text-align: center; }
 .new-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 8px 0 4px; }

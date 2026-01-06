@@ -558,8 +558,8 @@
         <h4>Statistics</h4>
 
         <div class="panel-actions">
-          <button class="grid-btn" @click="calculateCurrentPage">Lengths: Current Page</button>
-          <button class="grid-btn" @click="calculateEntireDocument">Lengths: Entire Document</button>
+          <button class="grid-btn" @click="calculateCurrentPage">Bands: Current Page</button>
+          <button class="grid-btn" @click="calculateEntireDocument">Bands: Entire Document</button>
           <button class="grid-btn" @click="openAnglesFilterFromStats">Angle Measurements…</button>
           <button class="grid-btn" @click="showStatsPanel=false">Close</button>
         </div>
@@ -634,6 +634,7 @@
     <div v-if="showAngleStatistics" class="statistics-popup" @click.self="showAngleStatistics = false">
       <div class="statistics-popup-content">
         <h3>Angle Statistics ({{ angleStatistics.count }} angles)</h3>
+        <p v-if="angleStatisticsContext" class="angle-stats-context">{{ angleStatisticsContext }}</p>
         <table>
           <thead>
             <tr>
@@ -646,11 +647,11 @@
           </thead>
           <tbody>
             <tr>
-              <td>{{ angleStatistics.mean }}°</td>
-              <td>{{ angleStatistics.median }}°</td>
-              <td>{{ angleStatistics.stdDev }}°</td>
-              <td>{{ angleStatistics.min }}°</td>
-              <td>{{ angleStatistics.max }}°</td>
+              <td>{{ formatStat(angleStatistics.mean) }}°</td>
+              <td>{{ formatStat(angleStatistics.median) }}°</td>
+              <td>{{ formatStat(angleStatistics.stdDev) }}°</td>
+              <td>{{ formatStat(angleStatistics.min) }}°</td>
+              <td>{{ formatStat(angleStatistics.max) }}°</td>
             </tr>
           </tbody>
         </table>
@@ -1027,7 +1028,8 @@ export default {
       showAngleFilterPopup: false,
       angleScope: "page",        // 'page' | 'doc'
       angleFilterLabel: "__ALL__", // "__ALL__" or a label
-      angleStatistics: { count: 0, mean: 0, median: 0, stdDev: 0, min: 0, max: 0, angles: [] },
+      angleStatistics: { count: 0, mean: 0, median: 0, stdDev: 0, min: 0, max: 0, mode: "No mode", angles: [] },
+      angleStatisticsContext: "",
       showAngleStatistics: false,
 
       // Bands
@@ -1658,8 +1660,10 @@ export default {
       const dot = v1.x * v2.x + v1.y * v2.y;
       const mag1 = Math.hypot(v1.x, v1.y);
       const mag2 = Math.hypot(v2.x, v2.y);
+      if (!mag1 || !mag2) return 0;
       const angleRad = Math.acos(Math.max(-1, Math.min(1, dot / (mag1 * mag2))));
-      return ((angleRad * 180) / Math.PI).toFixed(2);
+      const deg = (angleRad * 180) / Math.PI;
+      return Number.isFinite(deg) ? parseFloat(deg.toFixed(2)) : 0;
     },
     isHorizontalLabel(label) {
       return ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"].includes(label);
@@ -1925,24 +1929,27 @@ cancelPenSelection() {
     },
 
     runAngleStatistics() {
-      // collect angles by label + scope
-      const gather = [];
-      const pages = this.angleScope === "page" ? [this.currentPage] : Array.from({length:this.totalPages}, (_,i)=>i);
-      pages.forEach(p => {
-        (this.annotationsByPage[p] || []).forEach(a => {
-          if (a.type !== "measure") return;
-          if (this.angleFilterLabel !== "__ALL__" && a.label !== this.angleFilterLabel) return;
-          if (typeof a.angle === "number" || typeof a.angle === "string") {
-            gather.push(parseFloat(a.angle));
-          }
-        });
-      });
+      const pageCount = this.totalPages || this.annotationsByPage.length || 0;
+      const pages = (this.angleScope === "page" || pageCount === 0)
+        ? [this.currentPage]
+        : Array.from({ length: pageCount }, (_, i) => i);
 
-      this.angleStatistics = {
-        average: this.calculateAverage(gather),
-        standardDeviation: this.calculateStandardDeviation(gather),
-        mode: this.calculateMode(gather),
-      };
+      const labelFilter = this.angleFilterLabel === "__ALL__" ? null : this.angleFilterLabel;
+      const angleValues = pages.flatMap((p) =>
+        this.collectAngleValuesFromAnnotations(this.annotationsByPage[p] || [], labelFilter)
+      );
+
+      const stats = this.buildAngleStatistics(angleValues);
+      if (stats.count === 0) {
+        this.showToolMessage("No angles found for the selected scope/label.");
+        this.showAngleFilterPopup = false;
+        return;
+      }
+
+      const scopeText = this.angleScope === "page" ? "Current page" : "Entire document";
+      const labelText = labelFilter ? `Label: ${labelFilter}` : "All labels";
+      this.angleStatistics = stats;
+      this.angleStatisticsContext = `${scopeText} • ${labelText}`;
       this.showAngleFilterPopup = false;
       this.showAngleStatistics = true;
     },
@@ -2721,59 +2728,15 @@ cancelPenSelection() {
       URL.revokeObjectURL(link.href);
     },
     calculateCroppedAngleStatistics() {
-      // Get only angles from cropped annotations
-      const croppedAngles = this.croppedAnnotations.filter(annotation => annotation.type === 'measure');
-      
-      if (croppedAngles.length === 0) {
-        alert('No angles found in the cropped image.');
+      const angleValues = this.collectAngleValuesFromAnnotations(this.croppedAnnotations);
+      const stats = this.buildAngleStatistics(angleValues);
+      if (stats.count === 0) {
+        this.showToolMessage("No angles found in the cropped image.");
         return;
       }
-      
-      // Calculate statistics for cropped angles only
-      const angleDegrees = croppedAngles.map(annotation => {
-        // Use the points array for calculation
-        if (annotation.points && annotation.points.length >= 3) {
-          const point1 = annotation.points[0];
-          const vertex = annotation.points[1]; 
-          const point2 = annotation.points[2];
-          
-          const vector1 = { x: point1.x - vertex.x, y: point1.y - vertex.y };
-          const vector2 = { x: point2.x - vertex.x, y: point2.y - vertex.y };
-          
-          const dot = vector1.x * vector2.x + vector1.y * vector2.y;
-          const mag1 = Math.sqrt(vector1.x * vector1.x + vector1.y * vector1.y);
-          const mag2 = Math.sqrt(vector2.x * vector2.x + vector2.y * vector2.y);
-          
-          const cosAngle = dot / (mag1 * mag2);
-          const clampedCos = Math.max(-1, Math.min(1, cosAngle));
-          return Math.acos(clampedCos) * (180 / Math.PI);
-        }
-        // Fallback to stored angle value if calculation fails
-        return annotation.angle || 0;
-      });
-      
-      // Calculate statistics
-      const sum = angleDegrees.reduce((a, b) => a + b, 0);
-      const mean = sum / angleDegrees.length;
-      const sortedAngles = [...angleDegrees].sort((a, b) => a - b);
-      const median = sortedAngles.length % 2 === 0
-        ? (sortedAngles[sortedAngles.length / 2 - 1] + sortedAngles[sortedAngles.length / 2]) / 2
-        : sortedAngles[Math.floor(sortedAngles.length / 2)];
-      
-      const variance = angleDegrees.reduce((acc, angle) => acc + Math.pow(angle - mean, 2), 0) / angleDegrees.length;
-      const stdDev = Math.sqrt(variance);
-      
-      // Set results and show popup
-      this.angleStatistics = {
-        count: croppedAngles.length,
-        mean: mean.toFixed(2),
-        median: median.toFixed(2),
-        stdDev: stdDev.toFixed(2),
-        min: Math.min(...angleDegrees).toFixed(2),
-        max: Math.max(...angleDegrees).toFixed(2),
-        angles: angleDegrees.map(a => a.toFixed(2))
-      };
-      
+
+      this.angleStatistics = stats;
+      this.angleStatisticsContext = "Cropped image";
       this.showAngleStatistics = true;
     },
     closeCroppedPopup() {
@@ -3288,38 +3251,107 @@ cancelPenSelection() {
       // In our rectangles: for horizontal labels we report height; for vertical we report width
       return measurements.map((m) => (isVertical ? m.width : m.height));
     },
-    calculateAverage(values) {
-      if (!values || values.length === 0) return 0;
-      const nums = values.map(Number).filter(v => !isNaN(v));
-      if (!nums.length) return 0;
-      return nums.reduce((a,b)=>a+b,0) / nums.length;
-    },
-    calculateStandardDeviation(values) {
-      if (!values || values.length === 0) return 0;
-      const nums = values.map(Number).filter(v => !isNaN(v));
-      if (!nums.length) return 0;
-      const avg = this.calculateAverage(nums);
-      const variance = nums.reduce((acc,v)=>acc + (v-avg)*(v-avg), 0) / nums.length;
-      return Math.sqrt(variance);
-    },
-    calculateMode(values) {
-      if (!values || values.length === 0) return "No mode";
-      const nums = values.map(Number).filter(v => !isNaN(v));
-      if (!nums.length) return "No mode";
+    summarizeNumbers(values = []) {
+      const nums = (values || []).map(Number).filter((v) => Number.isFinite(v));
+      if (!nums.length) {
+        return { count: 0, mean: 0, median: 0, stdDev: 0, min: 0, max: 0, mode: "No mode" };
+      }
+
+      const sorted = [...nums].sort((a, b) => a - b);
+      const count = sorted.length;
+      const sum = sorted.reduce((a, b) => a + b, 0);
+      const mean = sum / count;
+      const median = count % 2 === 0
+        ? (sorted[count / 2 - 1] + sorted[count / 2]) / 2
+        : sorted[Math.floor(count / 2)];
+      const variance = sorted.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / count;
+
       const freq = {};
-      nums.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
-      const maxF = Math.max(...Object.values(freq));
-      if (maxF === 1) return "No mode";
-      const modes = Object.keys(freq).filter(k => freq[k] === maxF).map(Number);
-      return Math.min(...modes);
+      sorted.forEach((v) => { freq[v] = (freq[v] || 0) + 1; });
+      const maxFreq = Math.max(...Object.values(freq));
+      const mode = maxFreq > 1
+        ? Math.min(...Object.keys(freq).filter((k) => freq[k] === maxFreq).map(Number))
+        : "No mode";
+
+      const round = (n) => (Number.isFinite(n) ? Number(n.toFixed(2)) : 0);
+      return {
+        count,
+        mean: round(mean),
+        median: round(median),
+        stdDev: round(Math.sqrt(variance)),
+        min: round(sorted[0]),
+        max: round(sorted[sorted.length - 1]),
+        mode: typeof mode === "number" ? round(mode) : mode,
+      };
     },
+    formatStat(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : "0.00";
+    },
+    getAngleValueFromAnnotation(annotation) {
+      if (!annotation || annotation.type !== "measure") return null;
+      if (annotation.points && annotation.points.length === 3) {
+        const val = this.calculateAngle(annotation.points[0], annotation.points[1], annotation.points[2]);
+        return Number.isFinite(val) ? val : null;
+      }
+      const val = typeof annotation.angle === "number" ? annotation.angle : parseFloat(annotation.angle);
+      return Number.isFinite(val) ? val : null;
+    },
+    collectAngleValuesFromAnnotations(annotations = [], labelFilter = null) {
+      if (!Array.isArray(annotations)) return [];
+      const values = [];
+      annotations.forEach((a) => {
+        if (!a || a.type !== "measure") return;
+        if (labelFilter && a.label !== labelFilter) return;
+        const val = this.getAngleValueFromAnnotation(a);
+        if (Number.isFinite(val)) values.push(val);
+      });
+      return values;
+    },
+    buildAngleStatistics(values = []) {
+      const summary = this.summarizeNumbers(values);
+      return {
+        ...summary,
+        angles: (values || []).map((v) => (Number.isFinite(v) ? Number(v.toFixed(2)) : v)),
+      };
+    },
+    buildLengthStatisticsForPages(pages = []) {
+      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"];
+      const vertical = ["internalMargin","intercolumnSpaces","externalMargin"];
+      const stats = {};
+      const allTypes = [...horizontal, ...vertical];
+
+      allTypes.forEach((type) => {
+        const vals = [];
+        pages.forEach((p) => {
+          const arr = this.lengthMeasurements[type]?.[p];
+          if (arr?.length) vals.push(...this.extractValues(arr, type));
+        });
+        const summary = this.summarizeNumbers(vals);
+        if (summary.count > 0) {
+          stats[type] = {
+            average: summary.mean,
+            standardDeviation: summary.stdDev,
+            mode: summary.mode,
+            count: summary.count,
+          };
+        }
+      });
+
+      return stats;
+    },
+    calculateAverage(values) { return this.summarizeNumbers(values).mean; },
+    calculateStandardDeviation(values) { return this.summarizeNumbers(values).stdDev; },
+    calculateMode(values) { return this.summarizeNumbers(values).mode; },
     showStatisticsPopup(statistics) {
       this.horizontalStatistics = {};
       this.verticalStatistics = {};
+      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"];
+      const vertical = ["internalMargin","intercolumnSpaces","externalMargin"];
       for (const [type, stats] of Object.entries(statistics)) {
-        if (["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"].includes(type)) {
+        if (horizontal.includes(type)) {
           this.horizontalStatistics[type] = stats;
-        } else if (["internalMargin","intercolumnSpaces"].includes(type)) {
+        } else if (vertical.includes(type)) {
           this.verticalStatistics[type] = stats;
         }
       }
@@ -3329,62 +3361,12 @@ cancelPenSelection() {
       this.showStatistics = false;
     },
     getCurrentPageStatistics() {
-      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"];
-      const vertical = ["internalMargin","intercolumnSpaces","externalMargin"];
-      const stats = {};
-      horizontal.forEach((t) => {
-        const arr = this.lengthMeasurements[t]?.[this.currentPage];
-        if (arr?.length) {
-          const vals = this.extractValues(arr, t);
-          stats[t] = {
-            average: this.calculateAverage(vals),
-            standardDeviation: this.calculateStandardDeviation(vals),
-            mode: this.calculateMode(vals),
-          };
-        }
-      });
-      vertical.forEach((t) => {
-        const arr = this.lengthMeasurements[t]?.[this.currentPage];
-        if (arr?.length) {
-          const vals = this.extractValues(arr, t);
-          stats[t] = {
-            average: this.calculateAverage(vals),
-            standardDeviation: this.calculateStandardDeviation(vals),
-            mode: this.calculateMode(vals),
-          };
-        }
-      });
-      return stats;
+      return this.buildLengthStatisticsForPages([this.currentPage]);
     },
     getEntireDocumentStatistics() {
-      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"];
-      const vertical = ["internalMargin","intercolumnSpaces","externalMargin"];
-      const stats = {};
-      horizontal.forEach((t) => {
-        let vals = [];
-        for (let p = 0; p < this.totalPages; p++) {
-          const arr = this.lengthMeasurements[t]?.[p];
-          if (arr?.length) vals = vals.concat(this.extractValues(arr, t));
-        }
-        stats[t] = {
-          average: this.calculateAverage(vals),
-          standardDeviation: this.calculateStandardDeviation(vals),
-          mode: this.calculateMode(vals),
-        };
-      });
-      vertical.forEach((t) => {
-        let vals = [];
-        for (let p = 0; p < this.totalPages; p++) {
-          const arr = this.lengthMeasurements[t]?.[p];
-          if (arr?.length) vals = vals.concat(this.extractValues(arr, t));
-        }
-        stats[t] = {
-          average: this.calculateAverage(vals),
-          standardDeviation: this.calculateStandardDeviation(vals),
-          mode: this.calculateMode(vals),
-        };
-      });
-      return stats;
+      const pageCount = Math.max(this.totalPages || 0, this.annotationsByPage.length || 0);
+      const pages = pageCount > 0 ? Array.from({ length: pageCount }, (_, i) => i) : [this.currentPage];
+      return this.buildLengthStatisticsForPages(pages);
     },
 
     /* ---------- Tool message ---------- */
@@ -3755,20 +3737,24 @@ body.cropped-popup-active *::-moz-selection {
 }
 .btn-grid, .label-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
 .grid-btn {
-  border: 1px solid #2563eb;
+  border: 2px solid #2563eb;
   background: #3b82f6;         /* primary blue */
   color: #fff;
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 13px;
   cursor: pointer;
-  transition: filter .15s, transform .02s;
+  transition: all 0.2s ease;
 }
-.grid-btn:hover { filter: brightness(0.95); }
+.grid-btn:hover { 
+  background: #60a5fa; 
+  border-color: #3b82f6;
+}
 .grid-btn:active { transform: translateY(1px); }
 .grid-btn.active {
   background: #2563eb;
-  border-color: #1d4ed8;
+  border: 3px solid #00d0ff;
+  box-shadow: 0 0 0 3px #00ff87, 0 0 16px rgba(0,255,135,.6);
 }
 .grid-btn.confirm-btn {
   background: #3b82f6;
@@ -3870,6 +3856,7 @@ body.cropped-popup-active *::-moz-selection {
 .statistics-popup-content th, .statistics-popup-content td { border: 1px solid #ddd; padding: 8px; text-align: center; }
 .statistics-popup-content th { background: #f2f2f2; }
 .statistics-popup-content h4 { margin-top: 12px; margin-bottom: 8px; }
+.angle-stats-context { margin: 4px 0 12px; color: #4b5563; font-size: 13px; }
 
 /* Stage is a fixed viewport for the page; UI overlays sit on top via z-index */
 .pdf-viewer.stage {
