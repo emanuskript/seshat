@@ -194,15 +194,113 @@
             :stroke-height="stroke.penHeight"
             fill="none"
           />
-          <!-- measure points (temp) -->
-          <circle
-            v-for="(point, index) in measurePoints"
-            :key="'measure-point-' + index"
-            :cx="point.x"
-            :cy="point.y"
-            r="5"
-            fill="red"
+          <!-- Angle Construction Guides -->
+          <g v-if="measureModeActive && angleGuideMousePos">
+            <!-- Guide line from first point to cursor -->
+            <line
+              v-if="measurePoints.length === 1"
+              :x1="measurePoints[0].x"
+              :y1="measurePoints[0].y"
+              :x2="angleGuideMousePos.x"
+              :y2="angleGuideMousePos.y"
+              stroke="#00D4FF"
+              stroke-width="1"
+              stroke-dasharray="5,5"
+              opacity="0.7"
+            />
+            
+            <!-- Construction lines from vertex after 2nd point placed -->
+            <g v-if="measurePoints.length === 2">
+              <!-- Solid line to first point -->
+              <line
+                :x1="measurePoints[1].x"
+                :y1="measurePoints[1].y"
+                :x2="measurePoints[0].x"
+                :y2="measurePoints[0].y"
+                stroke="#00D4FF"
+                stroke-width="2"
+                opacity="0.8"
+              />
+              <!-- Dashed line to cursor -->
+              <line
+                :x1="measurePoints[1].x"
+                :y1="measurePoints[1].y"
+                :x2="angleGuideMousePos.x"
+                :y2="angleGuideMousePos.y"
+                stroke="#00D4FF"
+                stroke-width="1"
+                stroke-dasharray="5,5"
+                opacity="0.7"
+              />
+              <!-- Arc preview -->
+              <path
+                :d="getAngleArcPath(measurePoints[1], measurePoints[0], angleGuideMousePos)"
+                fill="none"
+                stroke="#00ff87"
+                stroke-width="2"
+                opacity="0.8"
+              />
+              <!-- Live angle display -->
+              <text
+                :x="measurePoints[1].x + 15"
+                :y="measurePoints[1].y - 15"
+                font-size="16"
+                font-weight="bold"
+                fill="#00ff87"
+                stroke="#000"
+                stroke-width="0.5"
+                paint-order="stroke"
+              >
+                {{ calculateLiveAngle(measurePoints[0], measurePoints[1], angleGuideMousePos) }}°
+              </text>
+            </g>
+          </g>
+          
+          <!-- Horizontal/Vertical Snap Guide -->
+          <line
+            v-if="angleSnapGuide && angleSnapGuide.type === 'horizontal'"
+            :x1="0"
+            :y1="angleSnapGuide.y"
+            :x2="currentImageWidth"
+            :y2="angleSnapGuide.y"
+            stroke="#FFD700"
+            stroke-width="2"
+            stroke-dasharray="10,5"
+            opacity="0.9"
           />
+          <line
+            v-if="angleSnapGuide && angleSnapGuide.type === 'vertical'"
+            :x1="angleSnapGuide.x"
+            :y1="0"
+            :x2="angleSnapGuide.x"
+            :y2="currentImageHeight"
+            stroke="#FFD700"
+            stroke-width="2"
+            stroke-dasharray="10,5"
+            opacity="0.9"
+          />
+          
+          <!-- measure points (temp) with numbered labels -->
+          <g v-for="(point, index) in measurePoints" :key="'measure-point-' + index">
+            <circle
+              :cx="point.x"
+              :cy="point.y"
+              r="6"
+              fill="#FF4444"
+              stroke="#FFF"
+              stroke-width="2"
+            />
+            <text
+              :x="point.x"
+              :y="point.y + 5"
+              font-size="10"
+              font-weight="bold"
+              fill="#FFF"
+              text-anchor="middle"
+            >
+              {{ index + 1 }}
+            </text>
+          </g>
           <!-- saved angles -->
           <g
             v-for="(annotation, index) in currentPageAngles"
@@ -230,8 +328,12 @@
               v-if="annotation.type === 'measure' && annotation.points.length === 3"
               :x="annotation.points[1].x + 10"
               :y="annotation.points[1].y - 10"
-              font-size="12"
-              fill="darkblue"
+              font-size="16"
+              font-weight="bold"
+              fill="#00ff87"
+              stroke="#000"
+              stroke-width="0.5"
+              paint-order="stroke"
             >
               {{ annotation.angle }}°{{ annotation.label ? ' • ' + annotation.label : '' }}
             </text>
@@ -1017,6 +1119,10 @@ export default {
       draggingPoint: -1,      // index within measurePoints
       editingAnnotationIndex: -1,
       calculatedAngle: 0,
+      
+      // Angle guides
+      angleGuideMousePos: null,  // current mouse position for construction guides
+      angleSnapGuide: null,      // { type: 'horizontal'|'vertical', y: number } for snap lines
 
       // Angle labels
       showAngleLabelPopup: false,
@@ -1236,6 +1342,13 @@ export default {
     viewerHeight() {
       const viewer = this.$refs.viewer;
       return viewer ? viewer.clientHeight : 0;
+    },
+    
+    currentImageWidth() {
+      return this.baseFitWidth || 1000;
+    },
+    currentImageHeight() {
+      return this.baseFitHeight || 1000;
     },
     currentImage() {
       return this.images[this.currentPage] || null;
@@ -1665,6 +1778,84 @@ export default {
       const deg = (angleRad * 180) / Math.PI;
       return Number.isFinite(deg) ? parseFloat(deg.toFixed(2)) : 0;
     },
+    
+    calculateLiveAngle(pt1, vertex, mousePt) {
+      // Calculate angle in real-time as mouse moves
+      return this.calculateAngle(pt1, vertex, mousePt);
+    },
+    
+    getAngleArcPath(vertex, pt1, pt2) {
+      // Draw an arc from pt1 to pt2 around vertex
+      const radius = 30; // Arc radius in pixels
+      
+      // Calculate angles for both points relative to vertex
+      const angle1 = Math.atan2(pt1.y - vertex.y, pt1.x - vertex.x);
+      const angle2 = Math.atan2(pt2.y - vertex.y, pt2.x - vertex.x);
+      
+      // Start and end points on the arc
+      const startX = vertex.x + radius * Math.cos(angle1);
+      const startY = vertex.y + radius * Math.sin(angle1);
+      const endX = vertex.x + radius * Math.cos(angle2);
+      const endY = vertex.y + radius * Math.sin(angle2);
+      
+      // Determine if we should use the large arc flag
+      let angleDiff = angle2 - angle1;
+      if (angleDiff < 0) angleDiff += 2 * Math.PI;
+      const largeArcFlag = angleDiff > Math.PI ? 1 : 0;
+      
+      // SVG path: Move to start, Arc to end
+      return `M ${startX} ${startY} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${endX} ${endY}`;
+    },
+    
+    getSnappedPosition(x, y) {
+      // Smart snapping for horizontal/vertical alignment
+      const snapThreshold = 8; // pixels
+      this.angleSnapGuide = null;
+      
+      if (this.measurePoints.length === 0) {
+        return { x, y };
+      }
+      
+      // When placing the 2nd point (vertex), check alignment with first point
+      if (this.measurePoints.length === 1) {
+        const pt = this.measurePoints[0];
+        
+        // Horizontal alignment (same Y as first point)
+        const verticalDist = Math.abs(y - pt.y);
+        if (verticalDist < snapThreshold) {
+          this.angleSnapGuide = { type: 'horizontal', y: pt.y };
+          return { x, y: pt.y };
+        }
+        
+        // Vertical alignment (same X as first point)
+        const horizontalDist = Math.abs(x - pt.x);
+        if (horizontalDist < snapThreshold) {
+          this.angleSnapGuide = { type: 'vertical', x: pt.x };
+          return { x: pt.x, y };
+        }
+      }
+      
+      // When placing the 3rd point, check alignment with vertex (2nd point)
+      if (this.measurePoints.length === 2) {
+        const vertex = this.measurePoints[1];
+        
+        // Horizontal alignment (same Y as vertex)
+        const verticalDist = Math.abs(y - vertex.y);
+        if (verticalDist < snapThreshold) {
+          this.angleSnapGuide = { type: 'horizontal', y: vertex.y };
+          return { x, y: vertex.y };
+        }
+        
+        // Vertical alignment (same X as vertex)
+        const horizontalDist = Math.abs(x - vertex.x);
+        if (horizontalDist < snapThreshold) {
+          this.angleSnapGuide = { type: 'vertical', x: vertex.x };
+          return { x: vertex.x, y };
+        }
+      }
+      
+      return { x, y };
+    },
     isHorizontalLabel(label) {
       return ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"].includes(label);
     },
@@ -1896,6 +2087,8 @@ export default {
       this.activeAngleLabel = null;
       this.showAngleLabelPopup = false;
       this.measureModeActive = false;
+      this.angleGuideMousePos = null;
+      this.angleSnapGuide = null;
     },
 
     confirmPenSelection() {
@@ -2263,7 +2456,8 @@ cancelPenSelection() {
 
       // MEASURE ANGLE
       if (this.measureModeActive) {
-        const { x, y } = this.getMousePosition(event);
+        const rawPos = this.getMousePosition(event);
+        const { x, y } = this.getSnappedPosition(rawPos.x, rawPos.y);
         const nearest = this.findNearestPoint(x, y, 10);
         if (nearest.annotationIndex !== -1) {
           this.editingAnnotationIndex = nearest.annotationIndex;
@@ -2287,6 +2481,8 @@ cancelPenSelection() {
             this.angleLabels.push(this.activeAngleLabel);
           }
           this.measurePoints = [];
+          this.angleGuideMousePos = null;
+          this.angleSnapGuide = null;
         }
         return;
       }
@@ -2365,9 +2561,16 @@ cancelPenSelection() {
         this.currentStroke.points.push({ x, y });
       }
 
+      // ANGLE: Update guide mouse position and check for snapping
+      if (this.measureModeActive) {
+        const { x, y } = this.getMousePosition(event);
+        const snappedPos = this.getSnappedPosition(x, y);
+        this.angleGuideMousePos = snappedPos;
+      }
+      
       // ANGLE drag existing vertex
       if (this.measureModeActive && this.draggingPoint !== -1) {
-        const { x, y } = this.getMousePosition(event);
+        const { x, y } = this.angleGuideMousePos || this.getMousePosition(event);
         this.measurePoints[this.draggingPoint] = { x, y };
         if (this.editingAnnotationIndex !== -1) {
           const ann = this.annotationsByPage[this.currentPage][this.editingAnnotationIndex];
