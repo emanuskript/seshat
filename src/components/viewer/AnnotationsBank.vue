@@ -1,6 +1,6 @@
 <template>
   <!-- Compact, anchored panel (old layout restored) -->
-  <aside class="bank">
+  <aside class="bank" :class="{ 'bank--blurred': isBlurred }">
     <header class="bank__header">
       <span class="bank__title">Annotations — Page {{ page + 1 }}</span>
       <div class="header-controls">
@@ -79,6 +79,7 @@ export default {
     zoomLevel: { type: Number, default: 1 },
     showInCm: { type: Boolean, default: false },
     pixelsPerCm: { type: Number, default: 37.8 }, // Approximate conversion: 96 DPI = 37.8 pixels per cm
+    isBlurred: { type: Boolean, default: false },
   },
   emits: ["update:selected", "toggle-multi", "request-move", "cancel-move", "request-delete", "toggle-units"],
   methods: {
@@ -141,8 +142,16 @@ export default {
   border-radius: 12px;
   box-shadow: 0 10px 26px rgba(0,0,0,.18);
   overflow: hidden;
-  z-index: 10000000 !important;
+  z-index: 2000 !important; /* Below all popups but above stage */
   font-size: 12px;
+  transition: filter 0.2s ease, opacity 0.2s ease, z-index 0s;
+}
+
+.bank--blurred {
+  filter: blur(3px);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 1000 !important; /* Even lower when blurred */
 }
 
 /* header (thin like old) */

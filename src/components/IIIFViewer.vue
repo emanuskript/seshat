@@ -523,6 +523,8 @@
 
 <!-- Compact Bank Panel (anchored, not affecting layout) -->
    <AnnotationsBank
+     class="bank-panel"
+     :class="{ 'annotations-bank--hidden': croppedImage }"
     :page="currentPage"
      :items="bankItems"
      :selectedKeys="bankSelectedKeys"
@@ -531,6 +533,7 @@
      :zoomLevel="zoomLevel"
      :showInCm="showMeasurementsInCm"
      :pixelsPerCm="pixelsPerCm"
+     :isBlurred="isAnyPopupOpen"
      @update:selected="(keys) => bankSelectedKeys = keys"
      @toggle-multi="bankMultiSelect = !bankMultiSelect"
      @request-move="enableMoveMode"
@@ -1350,6 +1353,20 @@ export default {
     currentImageHeight() {
       return this.baseFitHeight || 1000;
     },
+    
+    isAnyPopupOpen() {
+      return this.showAngleLabelPopup || 
+             this.showAngleFilterPopup || 
+             this.showTracePopup || 
+             this.showHorizontalPopup || 
+             this.showVerticalPopup || 
+             this.showAngleStatistics || 
+             this.showStatistics || 
+             this.showClearConfirmation || 
+             !!this.croppedImage ||
+             this.showStatsPanel;
+    },
+    
     currentImage() {
       return this.images[this.currentPage] || null;
     },
@@ -3731,6 +3748,7 @@ cancelPenSelection() {
 .statistics-popup,         /* results tables */
 .stats-panel {             /* the 'Statistics' quick panel */
   z-index: calc(var(--z-modal-top) + 500);  /* Always above cropped popup */
+  isolation: isolate;      /* Create stacking context to prevent blur bleeding */
 }
 
 .cropped-popup,            /* cropped image dialog */
@@ -3742,6 +3760,8 @@ cancelPenSelection() {
 .length-popup,
 .statistics-popup {
   z-index: 999999 !important;  /* NUCLEAR OPTION - MUST BE ON TOP */
+  isolation: isolate;
+  position: relative;
 }
 
 /* Just to be safe, their internal cards sit above their own backdrop */
@@ -3751,6 +3771,8 @@ cancelPenSelection() {
 .cropped-popup-content {
   position: relative;
   z-index: 1;
+  background: #fff;          /* Ensure solid background */
+  isolation: isolate;        /* Prevent blur inheritance */
 }
 
 .pdf-viewer {
@@ -3781,16 +3803,25 @@ cancelPenSelection() {
 
 .cropping-rectangle { position: absolute; border: 2px dashed #007bff; background-color: rgba(0, 123, 255, 0.2); pointer-events: none; z-index: 100; }
 
-.blurred-background { position: fixed; top: 0; left: 0; width: 100%; height: 100%; backdrop-filter: blur(8px); background-color: rgba(0,0,0,0.3); z-index: var(--z-modal); }
+.blurred-background {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.82); /* opaque mask so bank text does not show through */
+  backdrop-filter: none;
+  z-index: var(--z-modal);
+}
 .cropped-popup {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: #fff;
-  border: 1px solid #ccc;
+  background: #ffffff;
+  border: 2px solid #ccc;
   border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   z-index: var(--z-modal-top);
   padding: 20px;
   text-align: center;
@@ -3934,9 +3965,13 @@ body.cropped-popup-active *::-moz-selection {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   display: flex; justify-content: center; align-items: center;
   background-color: rgba(0,0,0,0.5); z-index: 999999 !important;
+  isolation: isolate;
 }
 .length-popup-content {
   background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center; width: 520px; max-width: calc(100% - 24px);
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
 }
 .btn-grid, .label-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
 .grid-btn {
@@ -4050,10 +4085,14 @@ body.cropped-popup-active *::-moz-selection {
 .statistics-popup {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   display: flex; justify-content: center; align-items: center; background: rgba(0,0,0,0.5); z-index: 999999 !important;
+  isolation: isolate;
 }
 .statistics-popup-content {
   background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
   max-width: 600px; width: 100%;
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
 }
 .statistics-popup-content table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
 .statistics-popup-content th, .statistics-popup-content td { border: 1px solid #ddd; padding: 8px; text-align: center; }
@@ -4355,9 +4394,10 @@ body.cropped-popup-active *::-moz-selection {
 :root {
   --z-stage: 0;
   --z-bank: 1500;
+  --z-bank-blurred: 1000;   /* bank when popups are open */
   --z-popover: 3000;        /* tooltips, small menus */
-  --z-modal: 9000;          /* standard dialogs (crop popup) */
-  --z-modal-top: 10000;     /* any popup that must be above all */
+  --z-modal: 50000;         /* standard dialogs (crop popup) */
+  --z-modal-top: 100000;    /* any popup that must be above all */
 }
 
 /* NUCLEAR OPTION: Force angle/trace popups above everything */
@@ -4395,6 +4435,11 @@ div.statistics-popup,
 
 /* Updated popup styles with new design */
 .cropped-popup {
+  /* Golden-ratio spacing system */
+  --space-1: 8px;
+  --space-phi: 13px;   /* 8px * 1.618 */
+  --space-2phi: 21px;  /* 13px * 1.618 */
+
   position: fixed; top: 50%; left: 50%;
   transform: translate(-50%,-50%);
   width: min(1100px, calc(100vw - 48px));
@@ -4406,14 +4451,14 @@ div.statistics-popup,
   overflow: hidden;
   z-index: var(--z-modal);
 }
-.cropped-popup-content { padding: 14px 16px 12px; }
+.cropped-popup-content { padding: var(--space-2phi) var(--space-phi) var(--space-phi); }
 
 .crop-header {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 10px;
-  padding: 2px 0 8px;
+  gap: var(--space-phi);
+  padding: 0 0 var(--space-phi);
 }
 .left-spacer { min-height: 1px; }
 
@@ -4421,21 +4466,21 @@ div.statistics-popup,
   display: flex; 
   align-items: center; 
   justify-content: space-evenly;
-  gap: 12px;
+  gap: var(--space-phi);
   background: linear-gradient(135deg, #f8faff 0%, #eef3ff 100%); 
   border: 1px solid #d8e1ff; 
   border-radius: 28px;
-  padding: 12px 20px;
+  padding: var(--space-phi) calc(var(--space-2phi) + 2px);
   box-shadow: 0 2px 8px rgba(47, 96, 227, 0.1);
   justify-self: center;
   min-height: 52px;
   min-width: 180px;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-phi);
 }
 
 .crop-actions { 
   display: inline-flex; 
-  gap: 8px; 
+  gap: var(--space-1); 
   justify-self: end;
 }
 
@@ -4495,12 +4540,12 @@ div.statistics-popup,
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
+  gap: var(--space-phi);
+  padding: var(--space-phi) var(--space-2phi);
   background: #f8faff;
   border-top: 1px solid #e1e7f0;
   border-bottom: 1px solid #e1e7f0;
-  margin-top: 8px;
+  margin-top: var(--space-phi);
 }
 
 .crop-tool {
@@ -4508,7 +4553,7 @@ div.statistics-popup,
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 8px 12px;
+  padding: var(--space-1) var(--space-phi);
   cursor: pointer;
   border-radius: 8px;
   transition: all 0.2s ease;
@@ -4544,7 +4589,7 @@ div.statistics-popup,
 .crop-stage {
   position: relative;
   height: 520px;
-  margin-top: 8px;
+  margin-top: var(--space-phi);
   background: #f7f9ff;
   border: 1px solid #e6ecff;
   border-radius: 12px;
@@ -4706,5 +4751,10 @@ div.statistics-popup,
 .floating-scribe-button:hover::before {
   opacity: 1;
   transform: scale(1.3);
+}
+
+.annotations-bank--hidden {
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 </style>
