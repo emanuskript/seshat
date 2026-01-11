@@ -1,4 +1,5 @@
 <!-- /src/components/IIIFViewer.vue -->
+<!-- Main IIIF viewer component -->
 <template>
   <div class="viewer-container">
     <!-- Top Bar -->
