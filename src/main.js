@@ -5,10 +5,6 @@ import router from "./router"; // Import the router
 // Tailwind CSS and global styles
 import './assets/styles/globals.css';
 
-// FontAwesome (kept for backward compatibility during migration)
-import '@fortawesome/fontawesome-free/css/all.css';
-import '@fortawesome/fontawesome-free/js/all.js';
-
 // Ensure every runtime origin points to the Hugging Face backend.
 const HF_BACKEND = 'https://basuony-pharosight.hf.space';
 

@@ -14,31 +14,31 @@
       <div class="toolbar">
         <!-- Comment -->
         <div class="toolbar-item" @click="selectTool('comment')">
-          <i class="fa-regular fa-comment"></i>
+          <MessageSquare :size="22" />
           <span>Comment</span>
         </div>
 
         <!-- Highlight -->
         <div class="toolbar-item" @click="selectTool('highlight')">
-          <i class="fa-solid fa-highlighter"></i>
+          <Highlighter :size="22" />
           <span>Highlight</span>
         </div>
 
         <!-- Underline -->
         <div class="toolbar-item" @click="selectTool('underline')">
-          <i class="fa-solid fa-underline"></i>
+          <Underline :size="22" />
           <span>Underline</span>
         </div>
 
         <!-- Trace -->
         <div class="toolbar-item" @click="selectTool('trace')">
-          <i class="fa-solid fa-pencil"></i>
+          <Pencil :size="22" />
           <span>Trace</span>
         </div>
 
         <!-- Crop -->
         <div class="toolbar-item" @click="startCrop">
-          <i class="fa-solid fa-scissors"></i>
+          <Scissors :size="22" />
           <span>Crop</span>
         </div>
 
@@ -47,28 +47,28 @@
 
         <!-- Measure Angle -->
         <div class="toolbar-item" @click="selectTool('measure')">
-          <i class="fa-solid fa-angle-up"></i>
+          <ChevronUp :size="22" />
           <span>Measure</span>
           <span>Angle</span>
         </div>
 
         <!-- Horizontal Bands -->
         <div class="toolbar-item" @click="openHorizontalPopup">
-          <i class="fa-solid fa-ruler-horizontal"></i>
+          <Ruler :size="22" />
           <span>Horizontal</span>
           <span>Bands</span>
         </div>
 
         <!-- Vertical Bands -->
         <div class="toolbar-item" @click="openVerticalPopup">
-          <i class="fa-solid fa-ruler-vertical"></i>
+          <RulerDimensionLine :size="22" />
           <span>Vertical</span>
           <span>Bands</span>
         </div>
 
         <!-- Generate Statistics -->
         <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
-          <i class="fa-solid fa-calculator"></i>
+          <Calculator :size="22" />
           <span>Generate</span>
           <span>Statistics</span>
         </div>
@@ -78,13 +78,13 @@
 
         <!-- Save -->
         <div class="toolbar-item" @click="saveAnnotations">
-          <i class="fa-solid fa-save"></i>
+          <Save :size="22" />
           <span>Save</span>
         </div>
 
         <!-- Clear -->
         <div class="toolbar-item" @click="toggleClearDropdown">
-          <i class="fa-regular fa-trash-can"></i>
+          <Trash2 :size="22" />
           <span>Clear</span>
           <div v-if="showClearDropdown" class="clear-dropdown">
             <div @click.stop="clearHighlights">Clear Highlights</div>
@@ -100,17 +100,17 @@
 
         <!-- Theme Toggle -->
         <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
-          <i class="fa-solid fa-palette"></i>
+          <Palette :size="22" />
           <span>Theme</span>
           <div v-if="showThemeDropdown" class="theme-dropdown">
             <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
-              <i class="fa-solid fa-sun"></i> Light
+              <Sun :size="16" /> Light
             </div>
             <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
-              <i class="fa-solid fa-moon"></i> Dark
+              <Moon :size="16" /> Dark
             </div>
             <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
-              <i class="fa-solid fa-circle-half-stroke"></i> High Contrast
+              <Contrast :size="16" /> High Contrast
             </div>
           </div>
         </div>
@@ -1078,10 +1078,46 @@ import AnnotationsBank from "@/components/viewer/AnnotationsBank.vue";
 import NavigationBar from "@/components/viewer/NavigationBar.vue";
 import ScribeDetectionPopup from "@/components/popups/ScribeDetectionPopup.vue";
 import { useTheme } from "@/composables/useTheme";
+import {
+  MessageSquare,
+  Highlighter,
+  Underline,
+  Pencil,
+  Scissors,
+  ChevronUp,
+  Ruler,
+  RulerDimensionLine,
+  Calculator,
+  Save,
+  Trash2,
+  Palette,
+  Sun,
+  Moon,
+  Contrast,
+} from "lucide-vue-next";
 
 export default {
   name: "IIIFViewer",
-  components: { AnnotationsBank, NavigationBar, ScribeDetectionPopup },
+  components: {
+    AnnotationsBank,
+    NavigationBar,
+    ScribeDetectionPopup,
+    MessageSquare,
+    Highlighter,
+    Underline,
+    Pencil,
+    Scissors,
+    ChevronUp,
+    Ruler,
+    RulerDimensionLine,
+    Calculator,
+    Save,
+    Trash2,
+    Palette,
+    Sun,
+    Moon,
+    Contrast,
+  },
   setup() {
     const { currentTheme, setTheme } = useTheme();
     return { currentTheme, setTheme };
@@ -3632,22 +3668,22 @@ cancelPenSelection() {
 </script>
 
 <style scoped>
-* { font-family: "Arial", "Helvetica", sans-serif !important; }
+* { font-family: var(--font-sans, "Arial", "Helvetica", sans-serif) !important; }
 .viewer-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-  background: #f1f1f1; /* gray canvas behind the manuscript */
+  background: hsl(var(--muted)); /* gray canvas behind the manuscript */
 }
-/* Full-bleed blue bars with clean layout */
+/* Full-bleed bars with clean layout */
 .top-bar {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 16px;
-  background: #e7f0ff;
-  border-bottom: 1px solid #c9d8ff;
+  background: hsl(var(--background));
+  border-bottom: 1px solid hsl(var(--border));
   padding: 12px 24px;
 }
 .logo { height: 60px; cursor: pointer; }
@@ -3665,32 +3701,37 @@ cancelPenSelection() {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  color: #222;
+  color: hsl(var(--foreground));
   cursor: pointer;
   padding: 6px 4px;
   user-select: none;
   position: relative;
+  border-radius: var(--radius-md, 8px);
+  transition: all 0.2s ease;
 }
-.toolbar-item:hover { color: #2b6fde; }
-.toolbar-item i { font-size: 22px; line-height: 1; }
+.toolbar-item:hover {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.1);
+}
+.toolbar-item svg { width: 22px; height: 22px; }
 .toolbar-item span { font-size: 12px; }
 
 .toolbar-divider {
   width: 1px;
   height: 32px;
-  background: #c9d8ff;
+  background: hsl(var(--border));
   margin: 0 8px;
 }
 
 .tool-message {
   position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
-  background-color: #007bff; color: white; padding: 8px 14px; border-radius: 6px; z-index: 1200; font-size: 12px;
+  background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); padding: 8px 14px; border-radius: 6px; z-index: 1200; font-size: 12px;
 }
 
 .workspace { display: block; height: calc(100vh - 110px); }
-.stage {    
-  position: relative;   
-  background: #f1f1f1;
+.stage {
+  position: relative;
+  background: hsl(var(--muted));
   user-select: none !important;
   -webkit-user-select: none !important;
   -moz-user-select: none !important;
@@ -3721,7 +3762,7 @@ cancelPenSelection() {
   background: transparent !important;
   color: inherit !important;
 }
-.bank { width: 300px; min-width: 300px; border-left: 1px solid #e5e7eb; }
+.bank { width: 300px; min-width: 300px; border-left: 1px solid hsl(var(--border)); }
 
 .navigation-bar {
   display: flex;
@@ -3730,16 +3771,16 @@ cancelPenSelection() {
   margin: 0;
   padding: 0 24px 10px 24px;
   gap: 10px;
-  background: #e7f0ff;
-  border-bottom: 1px solid #c9d8ff;
+  background: hsl(var(--background));
+  border-bottom: 1px solid hsl(var(--border));
 }
 .page-input-container { display: flex; align-items: center; gap: 4px; }
 .page-input-container input { width: 45px; text-align: center; }
 
 .navigation-bar .btn {
-  background: #2b6fde;
-  color: #fff;
-  border: 1px solid #235acc;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: 1px solid hsl(var(--primary));
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 12px;
@@ -3751,8 +3792,10 @@ cancelPenSelection() {
 .navigation-bar input {
   height: 28px;
   padding: 0 8px;
-  border: 1px solid #c9d8ff;
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 /* === Base stacking for stage and annotations === */
@@ -3804,7 +3847,7 @@ cancelPenSelection() {
 .cropped-popup-content {
   position: relative;
   z-index: 1;
-  background: #fff;          /* Ensure solid background */
+  background: hsl(var(--card));          /* Ensure solid background */
   isolation: isolate;        /* Prevent blur inheritance */
 }
 
@@ -3816,7 +3859,7 @@ cancelPenSelection() {
   justify-content: center;
   align-items: center;
   overflow: hidden;
-  background: #f1f1f1; /* gray behind manuscript */
+  background: hsl(var(--muted)); /* gray behind manuscript */
 }
 .pdf-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 
@@ -3827,7 +3870,7 @@ cancelPenSelection() {
 .length-measurement { position: absolute; border: 2px solid rgba(0, 0, 0, 0.5); pointer-events: none; }
 .length-label {
   position: absolute; left: 15px; top: 15px; transform: translateY(0);
-  color: black; font-size: 12px; background-color: white; padding: 2px 5px; border-radius: 3px;
+  color: hsl(var(--foreground)); font-size: 12px; background-color: hsl(var(--card)); padding: 2px 5px; border-radius: 3px;
 }
 .draggable-label { cursor: grab; user-select: none; }
 .draggable-label:active { cursor: grabbing; }
@@ -3851,8 +3894,8 @@ cancelPenSelection() {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: #ffffff;
-  border: 2px solid #ccc;
+  background: hsl(var(--card));
+  border: 2px solid hsl(var(--border));
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   z-index: var(--z-modal-top);
@@ -3890,8 +3933,8 @@ body.cropped-popup-active *::-moz-selection {
   background: transparent !important;
 }
 .cropped-popup-content img { max-width: 100%; max-height: 300px; margin-bottom: 20px; }
-.cropped-popup-content button { margin-top: 10px; padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-.cropped-popup-content button:hover { background-color: #0056b3; }
+.cropped-popup-content button { margin-top: 10px; padding: 8px 16px; background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border: none; border-radius: 4px; cursor: pointer; }
+.cropped-popup-content button:hover { filter: brightness(0.9); }
 
 /* Comment card */
 .comment-card {
@@ -3909,50 +3952,52 @@ body.cropped-popup-active *::-moz-selection {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #e7f0ff;       /* light blue */
-  color: #2b6fde;            /* blue icon */
-  border: 1px solid #c9d8ff;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary) / 0.3);
   font-size: 14px;
   flex: 0 0 auto;
 }
 
 .comment-bubble {
   flex: 1 1 auto;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   box-shadow: 0 4px 14px rgba(0,0,0,0.08);
   padding: 8px 10px;
 }
 .comment-text {
   font-size: 13px;
-  color: #111827;
+  color: hsl(var(--foreground));
   line-height: 1.35;
 }
 
 /* Composer */
 .comment-composer {
   width: 260px;
-  background: #ffffff;
-  border: 1px solid #c9d8ff;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(43, 111, 222, 0.18);
+  box-shadow: var(--shadow-lg, 0 10px 24px rgba(0, 0, 0, 0.18));
   padding: 10px;
 }
 
 .composer-textarea {
   width: 100%;
   min-height: 86px;
-  border: 1px solid #dbe4ff;
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 13px;
   resize: vertical;
   outline: none;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 .composer-textarea:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
 }
 
 .composer-actions {
@@ -3963,9 +4008,9 @@ body.cropped-popup-active *::-moz-selection {
 }
 
 .btn-blue {
-  border: 1px solid #2563eb;
-  background: #3b82f6;
-  color: #fff;
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   padding: 6px 10px;
   font-size: 13px;
   border-radius: 8px;
@@ -3976,9 +4021,9 @@ body.cropped-popup-active *::-moz-selection {
 .btn-blue:active { transform: translateY(1px); }
 
 .btn-gray {
-  border: 1px solid #c7c9d1;
-  background: #eef0f5;
-  color: #374151;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
   padding: 6px 10px;
   font-size: 13px;
   border-radius: 8px;
@@ -3989,10 +4034,10 @@ body.cropped-popup-active *::-moz-selection {
 .btn-gray:active { transform: translateY(1px); }
 
 .clear-dropdown {
-  position: absolute; top: 100%; left: 0; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1100; min-width: 160px;
+  position: absolute; top: 100%; left: 0; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); border: 1px solid hsl(var(--border)); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1100; min-width: 160px; padding: 4px 0;
 }
-.clear-dropdown div { padding: 8px 12px; cursor: pointer; }
-.clear-dropdown div:hover { background: #f5f5f5; }
+.clear-dropdown div { padding: 8px 12px; cursor: pointer; transition: background-color 0.15s; }
+.clear-dropdown div:hover { background: hsl(var(--accent) / 0.1); }
 
 /* Theme dropdown */
 .theme-container { position: relative; }

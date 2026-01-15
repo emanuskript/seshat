@@ -10,7 +10,9 @@
       @mouseup="$emit('cancel-hold-reset')"
       @mouseleave="$emit('cancel-hold-reset')"
       title="Zoom Out (hold 3s to reset)"
-    >−</button>
+    >
+      <Minus :size="16" />
+    </button>
 
     <!-- Center Navigation Group -->
     <div class="nav-center">
@@ -20,7 +22,8 @@
         aria-label="Previous page"
         class="nav-btn"
       >
-        ⬅️ Prev
+        <ChevronLeft :size="16" />
+        Prev
       </button>
 
       <div class="page-input-container">
@@ -44,7 +47,8 @@
         aria-label="Next page"
         class="nav-btn"
       >
-        Next ➡️
+        Next
+        <ChevronRight :size="16" />
       </button>
     </div>
 
@@ -54,13 +58,23 @@
       class="zoom-btn"
       @click="$emit('zoom-in')"
       title="Zoom In (+10%)"
-    >+</button>
+    >
+      <Plus :size="16" />
+    </button>
   </div>
 </template>
 
 <script>
+import { ChevronLeft, ChevronRight, Plus, Minus } from 'lucide-vue-next'
+
 export default {
   name: "NavigationBar",
+  components: {
+    ChevronLeft,
+    ChevronRight,
+    Plus,
+    Minus,
+  },
   props: {
     currentPage: { type: Number, required: true }, // 0-based
     totalPages: { type: Number, required: true },
@@ -72,18 +86,16 @@ export default {
   emits: ["prev", "next", "go-to", "zoom-in", "zoom-out", "start-hold-reset", "cancel-hold-reset"],
   data() {
     return {
-      localPageInput: this.pageInput, // keep a local model for the input
+      localPageInput: this.pageInput,
     };
   },
   watch: {
-    // keep input in sync if parent changes page externally
     pageInput(newVal) {
       this.localPageInput = newVal;
     },
   },
   methods: {
     emitGoTo() {
-      // clamp to [1, totalPages], parent will convert to 0-based
       const clamped = Math.max(1, Math.min(this.localPageInput || 1, this.totalPages || 1));
       this.localPageInput = clamped;
       this.$emit("go-to", clamped);
@@ -94,15 +106,15 @@ export default {
 
 <style scoped>
 .navigation-bar {
-  background: #e7f0ff;           /* match top bar */
-  border-bottom: 1px solid #c9d8ff;
+  background: hsl(var(--muted));
+  border-bottom: 1px solid hsl(var(--border));
   padding: 6px 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin: 5px 0;
-  font-family: "Arial", "Helvetica", sans-serif;
-  font-size: 13px;
+  font-family: var(--font-sans, "Arial", "Helvetica", sans-serif);
+  font-size: var(--text-sm, 13px);
 }
 
 .nav-center {
@@ -121,37 +133,47 @@ export default {
   display: flex;
   align-items: center;
   gap: 4px;
+  color: hsl(var(--foreground));
 }
 
 .page-input-container input {
   width: 45px;
   text-align: center;
   padding: 4px 6px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fff;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm, 4px);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   outline: none;
-  font-size: 12px;
+  font-size: var(--text-xs, 12px);
 }
 
 .page-input-container input:focus {
-  border-color: #007bff;
-  box-shadow: 0 0 0 1px rgba(0, 123, 255, 0.15);
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
 }
 
 .nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-xs, 12px);
   border: none;
-  background: #3b82f6;  /* blue */
-  color: #fff;
-  box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: var(--shadow-sm, 0 1px 0 rgba(0,0,0,0.06));
+  transition: all 0.2s ease;
 }
-.nav-btn:hover { background: #2f6fe0; }
+
+.nav-btn:hover {
+  filter: brightness(0.9);
+}
+
 .nav-btn:disabled {
-  background: #9fbdfd;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -159,9 +181,9 @@ export default {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 2px solid #3b82f6;
-  background: #3b82f6;
-  color: white;
+  border: 2px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 18px;
   font-weight: bold;
   cursor: pointer;
@@ -173,8 +195,7 @@ export default {
 }
 
 .zoom-btn:hover {
-  background: #2563eb;
-  border-color: #2563eb;
+  filter: brightness(0.9);
   transform: scale(1.05);
 }
 
@@ -183,8 +204,7 @@ export default {
 }
 
 .zoom-btn:disabled {
-  background: #9fbdfd;
-  border-color: #9fbdfd;
+  opacity: 0.5;
   cursor: not-allowed;
   transform: none;
 }

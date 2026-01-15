@@ -2,68 +2,69 @@
   <div class="top-bar">
     <img src="@/assets/logo.png" alt="Logo" class="logo" />
     <div class="toolbar">
-      <!-- Theme Toggle -->
-      <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
-        <i class="fa-solid fa-palette"></i>
-        <span>Theme</span>
-        <div v-if="showThemeDropdown" class="theme-dropdown">
-          <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
-            <i class="fa-solid fa-sun dropdown-icon"></i> Light
-          </div>
-          <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
-            <i class="fa-solid fa-moon dropdown-icon"></i> Dark
-          </div>
-          <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
-            <i class="fa-solid fa-circle-half-stroke dropdown-icon"></i> High Contrast
-          </div>
-        </div>
-      </div>
-
+      <!-- Highlight -->
       <div class="toolbar-item" @click="$emit('select-tool', 'highlight')">
-        <i class="fa-solid fa-highlighter"></i>
+        <Highlighter :size="20" />
         <span>Highlight</span>
       </div>
+
+      <!-- Underline -->
       <div class="toolbar-item" @click="$emit('select-tool', 'underline')">
-        <i class="fa-solid fa-underline"></i>
+        <Underline :size="20" />
         <span>Underline</span>
       </div>
+
+      <!-- Comment -->
       <div class="toolbar-item" @click="$emit('select-tool', 'comment')">
-        <i class="fa-regular fa-comment"></i>
+        <MessageSquare :size="20" />
         <span>Comment</span>
       </div>
+
+      <!-- Trace -->
       <div class="toolbar-item" @click="$emit('select-tool', 'trace')" data-tool="trace">
-        <i class="fa-solid fa-pencil"></i>
+        <Pencil :size="20" />
         <span>Trace</span>
       </div>
+
+      <!-- Divider -->
+      <div class="toolbar-divider" aria-hidden="true"></div>
+
+      <!-- Measure Angle -->
       <div class="toolbar-item" @click="$emit('select-tool', 'measure')" data-tool="measure">
-        <i class="fa-solid fa-angle-up"></i>
+        <ChevronUp :size="20" />
         <span>Measure</span>
         <span>Angle</span>
       </div>
 
-      <!-- Horizontal / Vertical length popups -->
+      <!-- Horizontal Bands -->
       <div class="toolbar-item" @click="$emit('show-length-popup', 'horizontal')">
-        <i class="fa-solid fa-ruler-horizontal"></i>
+        <Ruler :size="20" />
         <span>Horizontal</span>
         <span>Bands</span>
       </div>
+
+      <!-- Vertical Bands -->
       <div class="toolbar-item" @click="$emit('show-length-popup', 'vertical')">
-        <i class="fa-solid fa-ruler-vertical"></i>
+        <RulerDimensionLine :size="20" class="rotate-90" />
         <span>Vertical</span>
         <span>Bands</span>
       </div>
 
+      <!-- Crop -->
       <div class="toolbar-item" @click="$emit('start-crop')">
-        <i class="fa-solid fa-scissors"></i>
+        <Scissors :size="20" />
         <span>Crop</span>
       </div>
 
+      <!-- Divider -->
+      <div class="toolbar-divider" aria-hidden="true"></div>
+
       <!-- Calculate menu -->
       <div class="toolbar-item calculate-container" @click.stop="$emit('toggle-calculate-dropdown')">
-        <i class="fa-solid fa-calculator"></i>
+        <Calculator :size="20" />
         <span>Generate</span>
         <span>Statistics</span>
-        <div v-if="showCalculateDropdown" class="calculate-dropdown">
+        <div v-if="showCalculateDropdown" class="dropdown-menu">
           <div @click.stop="$emit('calculate-current-page')">
             Lengths Measurements (Current Page)
           </div>
@@ -76,16 +77,17 @@
         </div>
       </div>
 
+      <!-- Save -->
       <div class="toolbar-item" @click="$emit('save-annotations')">
-        <i class="fa-solid fa-save"></i>
+        <Save :size="20" />
         <span>Save</span>
       </div>
 
       <!-- Clear menu -->
       <div class="toolbar-item clear-container" @click.stop="$emit('toggle-clear-dropdown')">
-        <i class="fa-regular fa-trash-can"></i>
+        <Trash2 :size="20" />
         <span>Clear</span>
-        <div v-if="showClearDropdown" class="clear-dropdown">
+        <div v-if="showClearDropdown" class="dropdown-menu">
           <div @click.stop="$emit('clear-highlights')">Clear Highlights</div>
           <div @click.stop="$emit('clear-underlines')">Clear Underlines</div>
           <div @click.stop="$emit('clear-comments')">Clear Comments</div>
@@ -96,6 +98,26 @@
           <div @click.stop="$emit('clear-all')">Clear All</div>
         </div>
       </div>
+
+      <!-- Divider -->
+      <div class="toolbar-divider" aria-hidden="true"></div>
+
+      <!-- Theme Toggle -->
+      <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
+        <component :is="themeIcon" :size="20" />
+        <span>Theme</span>
+        <div v-if="showThemeDropdown" class="dropdown-menu theme-dropdown">
+          <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
+            <Sun :size="16" /> Light
+          </div>
+          <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
+            <Moon :size="16" /> Dark
+          </div>
+          <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
+            <Contrast :size="16" /> High Contrast
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="tool-message" v-if="toolMessage">{{ toolMessage }}</div>
@@ -103,12 +125,38 @@
 </template>
 
 <script>
-import { Sun, Moon, Contrast } from 'lucide-vue-next'
+import {
+  Highlighter,
+  Underline,
+  MessageSquare,
+  Pencil,
+  ChevronUp,
+  Ruler,
+  RulerDimensionLine,
+  Scissors,
+  Calculator,
+  Save,
+  Trash2,
+  Sun,
+  Moon,
+  Contrast,
+} from 'lucide-vue-next'
 import { useTheme } from '@/composables/useTheme'
 
 export default {
   name: "ViewerToolbar",
   components: {
+    Highlighter,
+    Underline,
+    MessageSquare,
+    Pencil,
+    ChevronUp,
+    Ruler,
+    RulerDimensionLine,
+    Scissors,
+    Calculator,
+    Save,
+    Trash2,
     Sun,
     Moon,
     Contrast,
@@ -171,65 +219,107 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: #f1f1f1;
-  border-bottom: 1px solid #ddd;
+  background-color: hsl(var(--background));
+  border-bottom: 1px solid hsl(var(--border));
   padding: 10px 20px;
 }
-.logo { height: 60px; }
+
+.logo {
+  height: 60px;
+}
+
 .toolbar {
   display: flex;
   justify-content: center;
-  gap: 30px;
+  align-items: center;
+  gap: var(--toolbar-gap, 1.5rem);
   flex: 1;
 }
+
 .toolbar-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  font-size: 12px;
-  color: #333;
+  font-size: var(--text-xs, 12px);
+  color: hsl(var(--foreground));
   cursor: pointer;
-  padding: 3px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md, 6px);
+  transition: all 0.2s ease;
+  position: relative;
 }
-.toolbar-item:hover { color: #007bff; }
+
+.toolbar-item:hover {
+  color: hsl(var(--primary));
+  background-color: hsl(var(--primary) / 0.1);
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 32px;
+  background-color: hsl(var(--border));
+  margin: 0 4px;
+}
+
+.rotate-90 {
+  transform: rotate(90deg);
+}
+
+/* Dropdown menus */
+.calculate-container,
+.clear-container,
+.theme-container {
+  position: relative;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 6px);
+  box-shadow: var(--shadow-lg, 0 4px 12px rgba(0,0,0,0.15));
+  z-index: var(--z-dropdown, 100);
+  min-width: 180px;
+  padding: 4px 0;
+  margin-top: 4px;
+}
+
+.dropdown-menu div {
+  padding: 8px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.15s;
+  font-size: var(--text-sm, 14px);
+}
+
+.dropdown-menu div:hover {
+  background-color: hsl(var(--accent));
+}
+
+.dropdown-menu div.active {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+/* Tool message toast */
 .tool-message {
   position: fixed;
-  top: 50%; left: 50%;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
-  background-color: #007bff; color: white;
-  padding: 10px 20px; border-radius: 5px; z-index: 1100;
-  font-size: 14px; text-align: center;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  padding: 10px 20px;
+  border-radius: var(--radius-md, 5px);
+  z-index: var(--z-tooltip, 700);
+  font-size: var(--text-sm, 14px);
+  text-align: center;
+  box-shadow: var(--shadow-lg, 0 4px 8px rgba(0, 0, 0, 0.2));
 }
-.calculate-container, .clear-container { position: relative; }
-.calculate-dropdown, .clear-dropdown {
-  position: absolute; top: 100%; left: 0;
-  background-color: white; border: 1px solid #ccc; border-radius: 4px;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1100; min-width: 150px;
-}
-.calculate-dropdown div, .clear-dropdown div { padding: 8px 16px; cursor: pointer; }
-.calculate-dropdown div:hover, .clear-dropdown div:hover { background-color: #f1f1f1; }
-
-/* Theme dropdown styles */
-.theme-container { position: relative; }
-.theme-icon-svg { width: 20px; height: 20px; }
-.theme-dropdown {
-  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-  background-color: var(--popover, white);
-  color: var(--popover-foreground, #333);
-  border: 1px solid var(--border, #ccc); border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1100; min-width: 160px;
-  padding: 4px 0;
-}
-.theme-dropdown div {
-  padding: 8px 16px; cursor: pointer;
-  display: flex; align-items: center; gap: 8px;
-  transition: background-color 0.15s;
-}
-.theme-dropdown div:hover { background-color: var(--accent, #f1f1f1); }
-.theme-dropdown div.active {
-  background-color: var(--primary, #3b82f6);
-  color: var(--primary-foreground, white);
-}
-.dropdown-icon { width: 16px; height: 16px; }
 </style>
