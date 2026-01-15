@@ -2,6 +2,23 @@
   <div class="top-bar">
     <img src="@/assets/logo.png" alt="Logo" class="logo" />
     <div class="toolbar">
+      <!-- Theme Toggle -->
+      <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
+        <i class="fa-solid fa-palette"></i>
+        <span>Theme</span>
+        <div v-if="showThemeDropdown" class="theme-dropdown">
+          <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
+            <i class="fa-solid fa-sun dropdown-icon"></i> Light
+          </div>
+          <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
+            <i class="fa-solid fa-moon dropdown-icon"></i> Dark
+          </div>
+          <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
+            <i class="fa-solid fa-circle-half-stroke dropdown-icon"></i> High Contrast
+          </div>
+        </div>
+      </div>
+
       <div class="toolbar-item" @click="$emit('select-tool', 'highlight')">
         <i class="fa-solid fa-highlighter"></i>
         <span>Highlight</span>
@@ -86,8 +103,16 @@
 </template>
 
 <script>
+import { Sun, Moon, Contrast } from 'lucide-vue-next'
+import { useTheme } from '@/composables/useTheme'
+
 export default {
   name: "ViewerToolbar",
+  components: {
+    Sun,
+    Moon,
+    Contrast,
+  },
   props: {
     toolStates: { type: Object, default: () => ({}) },
     showCalculateDropdown: { type: Boolean, default: false },
@@ -113,6 +138,31 @@ export default {
     "clear-all",
     "start-crop",
   ],
+  setup() {
+    const { currentTheme, setTheme } = useTheme()
+    return { currentTheme, setTheme }
+  },
+  data() {
+    return {
+      showThemeDropdown: false,
+    }
+  },
+  computed: {
+    themeIcon() {
+      if (this.currentTheme === 'dark') return Moon
+      if (this.currentTheme === 'high-contrast') return Contrast
+      return Sun
+    },
+  },
+  methods: {
+    toggleThemeDropdown() {
+      this.showThemeDropdown = !this.showThemeDropdown
+    },
+    setThemeAndClose(theme) {
+      this.setTheme(theme)
+      this.showThemeDropdown = false
+    },
+  },
 };
 </script>
 
@@ -159,4 +209,27 @@ export default {
 }
 .calculate-dropdown div, .clear-dropdown div { padding: 8px 16px; cursor: pointer; }
 .calculate-dropdown div:hover, .clear-dropdown div:hover { background-color: #f1f1f1; }
+
+/* Theme dropdown styles */
+.theme-container { position: relative; }
+.theme-icon-svg { width: 20px; height: 20px; }
+.theme-dropdown {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  background-color: var(--popover, white);
+  color: var(--popover-foreground, #333);
+  border: 1px solid var(--border, #ccc); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1100; min-width: 160px;
+  padding: 4px 0;
+}
+.theme-dropdown div {
+  padding: 8px 16px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  transition: background-color 0.15s;
+}
+.theme-dropdown div:hover { background-color: var(--accent, #f1f1f1); }
+.theme-dropdown div.active {
+  background-color: var(--primary, #3b82f6);
+  color: var(--primary-foreground, white);
+}
+.dropdown-icon { width: 16px; height: 16px; }
 </style>

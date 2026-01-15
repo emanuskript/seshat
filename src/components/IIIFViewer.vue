@@ -97,6 +97,23 @@
             <div @click.stop="clearAll">Clear All</div>
           </div>
         </div>
+
+        <!-- Theme Toggle -->
+        <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
+          <i class="fa-solid fa-palette"></i>
+          <span>Theme</span>
+          <div v-if="showThemeDropdown" class="theme-dropdown">
+            <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
+              <i class="fa-solid fa-sun"></i> Light
+            </div>
+            <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
+              <i class="fa-solid fa-moon"></i> Dark
+            </div>
+            <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
+              <i class="fa-solid fa-circle-half-stroke"></i> High Contrast
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <!-- Page Navigation (now right under the toolbar, at the top) -->
@@ -1060,10 +1077,15 @@ import html2canvas from "html2canvas";
 import AnnotationsBank from "@/components/viewer/AnnotationsBank.vue";
 import NavigationBar from "@/components/viewer/NavigationBar.vue";
 import ScribeDetectionPopup from "@/components/popups/ScribeDetectionPopup.vue";
+import { useTheme } from "@/composables/useTheme";
 
 export default {
   name: "IIIFViewer",
   components: { AnnotationsBank, NavigationBar, ScribeDetectionPopup },
+  setup() {
+    const { currentTheme, setTheme } = useTheme();
+    return { currentTheme, setTheme };
+  },
   props: {
     source: { type: String, required: true },
   },
@@ -1212,6 +1234,7 @@ export default {
 
       // UI
       showClearDropdown: false,
+      showThemeDropdown: false,
       showClearConfirmation: false,
       toolMessage: "",
 
@@ -2265,6 +2288,15 @@ cancelPenSelection() {
 
     stopDraggingComment() {
       this.draggingCommentIndex = null;
+    },
+
+    /* ---------- Theme dropdown ---------- */
+    toggleThemeDropdown() {
+      this.showThemeDropdown = !this.showThemeDropdown;
+    },
+    setThemeAndClose(theme) {
+      this.setTheme(theme);
+      this.showThemeDropdown = false;
     },
 
     /* ---------- Clear dropdown ---------- */
@@ -3961,6 +3993,27 @@ body.cropped-popup-active *::-moz-selection {
 }
 .clear-dropdown div { padding: 8px 12px; cursor: pointer; }
 .clear-dropdown div:hover { background: #f5f5f5; }
+
+/* Theme dropdown */
+.theme-container { position: relative; }
+.theme-dropdown {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  background: hsl(var(--popover, 0 0% 100%));
+  color: hsl(var(--popover-foreground, 0 0% 20%));
+  border: 1px solid hsl(var(--border, 220 13% 91%)); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1100; min-width: 160px;
+  padding: 4px 0;
+}
+.theme-dropdown div {
+  padding: 8px 16px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  transition: background-color 0.15s;
+}
+.theme-dropdown div:hover { background: hsl(var(--accent, 215 100% 50%) / 0.1); }
+.theme-dropdown div.active {
+  background: hsl(var(--primary, 217 91% 60%));
+  color: hsl(var(--primary-foreground, 0 0% 100%));
+}
 
 .length-popup {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
