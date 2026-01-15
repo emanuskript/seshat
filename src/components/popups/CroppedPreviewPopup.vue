@@ -1,102 +1,94 @@
 <template>
-  <div v-if="croppedImage" class="cropped-popup">
-    <div class="cropped-popup-content">
-      <h3>Cropped Image</h3>
-      <hr class="popup-divider" />
+  <Dialog :open="!!croppedImage" @update:open="handleOpenChange">
+    <DialogContent class="sm:max-w-4xl" @keydown.esc="$emit('close')">
+      <DialogHeader>
+        <DialogTitle>Cropped Image</DialogTitle>
+        <DialogDescription>
+          Preview your cropped image and save in your preferred format.
+        </DialogDescription>
+      </DialogHeader>
 
-      <div
-        class="cropped-image-container"
-        ref="croppedContainer"
-        @mousedown="$emit('start-annotation', $event)"
-        @mousemove="$emit('move-annotation', $event)"
-        @mouseup="$emit('end-annotation')"
-        @mouseleave="$emit('end-annotation')"
-      >
-        <img
-          :src="croppedImage"
-          alt="Cropped"
-          class="cropped-image"
-          draggable="false"
-        />
+      <div class="py-4">
+        <div
+          class="cropped-image-container"
+          ref="croppedContainer"
+          @mousedown="$emit('start-annotation', $event)"
+          @mousemove="$emit('move-annotation', $event)"
+          @mouseup="$emit('end-annotation')"
+          @mouseleave="$emit('end-annotation')"
+        >
+          <img
+            :src="croppedImage"
+            alt="Cropped"
+            class="cropped-image"
+            draggable="false"
+          />
 
-        <!-- Default slot for annotation overlays -->
-        <slot></slot>
+          <!-- Default slot for annotation overlays -->
+          <slot></slot>
+        </div>
       </div>
 
-      <div class="popup-actions">
-        <button @click="$emit('save-png')">Save as PNG</button>
-        <button @click="$emit('save-svg')">Save as SVG</button>
-        <button @click="$emit('save-annotated')">Save with Annotations</button>
-        <button @click="$emit('close')">Close</button>
-      </div>
-    </div>
-  </div>
+      <DialogFooter class="flex-wrap gap-2">
+        <Button variant="outline" @click="$emit('save-png')">Save as PNG</Button>
+        <Button variant="outline" @click="$emit('save-svg')">Save as SVG</Button>
+        <Button variant="outline" @click="$emit('save-annotated')">Save with Annotations</Button>
+        <Button @click="$emit('close')">Close</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <script>
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+
 export default {
   name: "CroppedPreviewPopup",
+  components: {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    Button,
+  },
   props: {
     croppedImage: { type: String, default: null },
+  },
+  emits: ['start-annotation', 'move-annotation', 'end-annotation', 'save-png', 'save-svg', 'save-annotated', 'close'],
+  methods: {
+    handleOpenChange(open) {
+      if (!open) {
+        this.$emit('close');
+      }
+    },
   },
 };
 </script>
 
 <style scoped>
-.cropped-popup {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: rgba(0, 0, 0, 0.3);
-  z-index: 1000;
-}
-
-.cropped-popup-content {
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-  padding: 20px;
-  width: 80%;
-  max-width: 900px;
-  text-align: center;
-  position: relative;
-  z-index: 1;
-}
-
 .cropped-image-container {
   position: relative;
-  display: inline-block;
+  display: flex;
+  justify-content: center;
   width: 100%;
-  z-index: 1;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: hsl(var(--muted));
 }
 
 .cropped-image {
   display: block;
-  width: 100%;
+  max-width: 100%;
   height: auto;
-  position: relative;
-  z-index: 1;
-}
-
-.popup-actions {
-  margin-top: 20px;
-  display: flex;
-  justify-content: space-evenly;
-}
-
-.popup-actions button {
-  padding: 8px 16px;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.popup-actions button:hover {
-  background-color: #0056b3;
 }
 </style>

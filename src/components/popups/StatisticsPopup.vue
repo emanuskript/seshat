@@ -1,128 +1,161 @@
 <template>
-  <div v-if="visible" class="statistics-popup">
-    <div class="statistics-popup-content">
-      <h3>Statistics</h3>
+  <Dialog :open="visible" @update:open="handleOpenChange">
+    <DialogContent class="sm:max-w-xl" @keydown.esc="$emit('close')">
+      <DialogHeader>
+        <DialogTitle>Statistics</DialogTitle>
+        <DialogDescription>
+          Measurement statistics for horizontal and vertical lengths.
+        </DialogDescription>
+      </DialogHeader>
 
-      <!-- Horizontal Lengths -->
-      <h4>Horizontal Lengths</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>Measurement</th>
-            <th>Average</th>
-            <th>Standard Deviation</th>
-            <th>Mode</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(stats, type) in horizontal" :key="type">
-            <td>{{ type }}</td>
-            <td>{{ stats.average.toFixed(2) }}</td>
-            <td>{{ stats.standardDeviation.toFixed(2) }}</td>
-            <td>
-              {{ typeof stats.mode === "number" ? stats.mode.toFixed(2) : stats.mode }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="space-y-6 py-4">
+        <!-- Horizontal Lengths -->
+        <div>
+          <h4 class="section-title">Horizontal Lengths</h4>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Measurement</TableHead>
+                <TableHead class="text-right">Average</TableHead>
+                <TableHead class="text-right">Std Dev</TableHead>
+                <TableHead class="text-right">Mode</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="(stats, type) in horizontal" :key="type">
+                <TableCell class="font-medium">{{ formatType(type) }}</TableCell>
+                <TableCell class="text-right">{{ stats.average.toFixed(2) }}</TableCell>
+                <TableCell class="text-right">{{ stats.standardDeviation.toFixed(2) }}</TableCell>
+                <TableCell class="text-right">
+                  {{ typeof stats.mode === "number" ? stats.mode.toFixed(2) : stats.mode }}
+                </TableCell>
+              </TableRow>
+              <TableRow v-if="!hasHorizontalData">
+                <TableCell colspan="4" class="text-center text-muted-foreground">
+                  No horizontal measurements yet
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
 
-      <!-- Vertical Lengths -->
-      <h4>Vertical Lengths</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>Measurement</th>
-            <th>Average</th>
-            <th>Standard Deviation</th>
-            <th>Mode</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(stats, type) in vertical" :key="type">
-            <td>{{ type }}</td>
-            <td>{{ stats.average.toFixed(2) }}</td>
-            <td>{{ stats.standardDeviation.toFixed(2) }}</td>
-            <td>
-              {{ typeof stats.mode === "number" ? stats.mode.toFixed(2) : stats.mode }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+        <!-- Vertical Lengths -->
+        <div>
+          <h4 class="section-title">Vertical Lengths</h4>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Measurement</TableHead>
+                <TableHead class="text-right">Average</TableHead>
+                <TableHead class="text-right">Std Dev</TableHead>
+                <TableHead class="text-right">Mode</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="(stats, type) in vertical" :key="type">
+                <TableCell class="font-medium">{{ formatType(type) }}</TableCell>
+                <TableCell class="text-right">{{ stats.average.toFixed(2) }}</TableCell>
+                <TableCell class="text-right">{{ stats.standardDeviation.toFixed(2) }}</TableCell>
+                <TableCell class="text-right">
+                  {{ typeof stats.mode === "number" ? stats.mode.toFixed(2) : stats.mode }}
+                </TableCell>
+              </TableRow>
+              <TableRow v-if="!hasVerticalData">
+                <TableCell colspan="4" class="text-center text-muted-foreground">
+                  No vertical measurements yet
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+      </div>
 
-      <button @click="$emit('close')">Close</button>
-    </div>
-  </div>
+      <DialogFooter>
+        <Button @click="$emit('close')">Close</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <script>
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+
 export default {
   name: "StatisticsPopup",
+  components: {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    Button,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  },
   props: {
     visible: { type: Boolean, default: false },
     horizontal: { type: Object, default: () => ({}) },
     vertical: { type: Object, default: () => ({}) },
   },
+  emits: ['close'],
+  computed: {
+    hasHorizontalData() {
+      return Object.keys(this.horizontal || {}).length > 0;
+    },
+    hasVerticalData() {
+      return Object.keys(this.vertical || {}).length > 0;
+    },
+  },
+  methods: {
+    formatType(type) {
+      const map = {
+        ascenders: "Ascenders",
+        descenders: "Descenders",
+        interlinear: "Interlinear",
+        upperMargin: "Upper Margin",
+        lowerMargin: "Lower Margin",
+        lineHeight: "Line Height",
+        minimumHeight: "Minimum Height",
+        internalMargin: "Internal Margin",
+        intercolumnSpaces: "Intercolumn Spaces",
+      };
+      return map[type] || type;
+    },
+    handleOpenChange(open) {
+      if (!open) {
+        this.$emit('close');
+      }
+    },
+  },
 };
 </script>
 
 <style scoped>
-.statistics-popup {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: rgba(0, 0, 0, 0.5);
-  z-index: 1100;
-}
-
-.statistics-popup-content {
-  background-color: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-  max-width: 500px;
-  width: 100%;
-  font-family: "Arial", "Helvetica", sans-serif;
-}
-
-.statistics-popup-content table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 20px;
-}
-
-.statistics-popup-content th,
-.statistics-popup-content td {
-  border: 1px solid #ddd;
-  padding: 8px;
-  text-align: center;
-}
-
-.statistics-popup-content th {
-  background-color: #f2f2f2;
-}
-
-.statistics-popup-content h3 {
-  margin-bottom: 16px;
-}
-
-.statistics-popup-content h4 {
-  margin-top: 12px;
-  margin-bottom: 8px;
-}
-
-.statistics-popup-content button {
-  margin-top: 16px;
-  padding: 8px 16px;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.statistics-popup-content button:hover {
-  background-color: #0056b3;
+.section-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin-bottom: 0.5rem;
 }
 </style>

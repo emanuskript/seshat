@@ -1,51 +1,86 @@
 <template>
-  <div v-if="visible" class="length-popup" @keydown.esc="$emit('cancel')">
-    <div class="length-popup-content" role="dialog" aria-modal="true" aria-label="Select angle label">
-      <h3 class="title">Choose Angle Label</h3>
+  <Dialog :open="visible" @update:open="handleOpenChange">
+    <DialogContent class="sm:max-w-2xl" @keydown.esc="$emit('cancel')">
+      <DialogHeader>
+        <DialogTitle>Choose Angle Label</DialogTitle>
+      </DialogHeader>
 
-      <div v-if="labels && labels.length" class="section-title">Existing Labels</div>
-      <div v-if="labels && labels.length" class="options-grid">
-        <button
-          v-for="l in labels"
-          :key="l"
-          type="button"
-          class="type-button"
-          :class="{ selected: selected === l }"
-          :aria-pressed="selected === l ? 'true' : 'false'"
-          @click="selected = l"
-        >
-          <span class="swatch" />
-          <span class="label">{{ l }}</span>
-        </button>
+      <div class="space-y-4 py-4">
+        <!-- Existing Labels -->
+        <div v-if="labels && labels.length">
+          <Label class="text-sm font-semibold mb-2 block">Existing Labels</Label>
+          <RadioGroup v-model="selected" orientation="horizontal" class="flex flex-wrap gap-3">
+            <div
+              v-for="l in labels"
+              :key="l"
+              class="label-option"
+              :class="{ selected: selected === l }"
+              @click="selected = l"
+            >
+              <RadioGroupItem :value="l" :id="`label-${l}`" class="sr-only" />
+              <div class="swatch" />
+              <span class="text-sm">{{ l }}</span>
+            </div>
+          </RadioGroup>
+        </div>
+
+        <!-- Create New Label -->
+        <div>
+          <Label class="text-sm font-semibold mb-2 block">Create New Label</Label>
+          <div class="flex gap-2">
+            <Input
+              v-model="newLabel"
+              type="text"
+              placeholder="e.g., Main Hand, Corrector A, Line-end flourish"
+              class="flex-1"
+              @keyup.enter="confirmNew"
+            />
+            <Button @click="confirmNew">Create & Use</Button>
+          </div>
+        </div>
       </div>
 
-      <div class="section-title">Create New Label</div>
-      <div class="new-row">
-        <input
-          v-model.trim="newLabel"
-          type="text"
-          placeholder="e.g., Main Hand, Corrector A, Line-end flourish"
-          @keyup.enter="confirmNew"
-        />
-        <button class="make-btn" type="button" @click="confirmNew">Create & Use</button>
-      </div>
-
-      <div class="actions">
-        <button type="button" class="confirm" :disabled="!selected" @click="$emit('confirm', selected)">Use Selected</button>
-        <button type="button" class="cancel" @click="$emit('cancel')">Cancel</button>
-      </div>
-    </div>
-  </div>
+      <DialogFooter class="gap-2 sm:gap-0">
+        <Button variant="outline" @click="$emit('cancel')">Cancel</Button>
+        <Button :disabled="!selected" @click="$emit('confirm', selected)">Use Selected</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <script>
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+
 export default {
   name: "AngleLabelPopup",
+  components: {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    Button,
+    Input,
+    Label,
+    RadioGroup,
+    RadioGroupItem,
+  },
   props: {
     visible: { type: Boolean, default: false },
     labels: { type: Array, default: () => [] },
     initialLabel: { type: String, default: "" },
   },
+  emits: ['confirm', 'cancel'],
   data() {
     return {
       selected: this.initialLabel || "",
@@ -67,32 +102,50 @@ export default {
       this.newLabel = "";
     },
     focusFirst() {
-      const el =
-        this.$el.querySelector(".type-button") ||
-        this.$el.querySelector("input");
+      const el = this.$el?.querySelector("input");
       if (el) el.focus();
+    },
+    handleOpenChange(open) {
+      if (!open) {
+        this.$emit('cancel');
+      }
     },
   },
 };
 </script>
 
 <style scoped>
-.length-popup { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.5); z-index: 1100; }
-.length-popup-content { width: min(720px, 92vw); background: #fff; border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.25); padding: 28px; }
-.title { font-size: 28px; text-align: center; margin: 0 0 16px; }
-.section-title { margin: 14px 4px 8px; font-weight: 600; color: #222; }
-.options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; margin-bottom: 10px; }
-.type-button { display: grid; justify-items: center; gap: 8px; padding: 10px; border: 2px solid #d3d3d3; border-radius: 10px; background: #fafafa; cursor: pointer; transition: all 0.2s ease; }
-.type-button:hover { border-color: #9ec9ff; background: #f0f8ff; }
-.type-button.selected { border-color: #00ff87; border-width: 3px; box-shadow: 0 0 0 3px #00ff87, 0 0 12px rgba(0,255,135,.5); background: #f4f9ff; }
-.swatch { width: 40px; height: 40px; border-radius: 8px; background: #e9ecef; border: 2px solid rgba(0,0,0,.08); }
-.label { font-size: 14px; color: #222; text-align: center; }
-.new-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 8px 0 4px; }
-.new-row input { border: 1px solid #cfd4da; border-radius: 8px; padding: 10px 12px; font-size: 15px; }
-.make-btn { border: 1px solid #0d6efd; color: #fff; background: #0d6efd; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
-.actions { display: flex; justify-content: center; gap: 16px; margin-top: 16px; }
-.actions button { min-width: 130px; padding: 10px 14px; border-radius: 8px; border: 1px solid #c8c8c8; background: #fff; font-size: 16px; cursor: pointer; }
-.actions .confirm { background: #0d6efd; color: #fff; border-color: #0d6efd; }
-.actions .confirm:disabled { opacity: .5; cursor: not-allowed; }
-.actions .cancel:hover { background: #f3f3f3; }
+.label-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 2px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--muted));
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 100px;
+}
+
+.label-option:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--primary) / 0.05);
+}
+
+.label-option.selected {
+  border-color: hsl(var(--primary));
+  border-width: 2px;
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+  background: hsl(var(--primary) / 0.1);
+}
+
+.swatch {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-md);
+  background: hsl(var(--muted-foreground) / 0.2);
+  border: 1px solid hsl(var(--border));
+}
 </style>

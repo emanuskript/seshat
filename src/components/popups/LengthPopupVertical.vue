@@ -1,36 +1,57 @@
 <template>
-  <div v-if="visible" class="length-popup" @keydown.esc="$emit('cancel')">
-    <div class="length-popup-content" role="dialog" aria-modal="true" aria-label="Select vertical measurement type">
-      <h3 class="title">Select Vertical Measurement Type</h3>
+  <Dialog :open="visible" @update:open="handleOpenChange">
+    <DialogContent class="sm:max-w-lg" @keydown.esc="$emit('cancel')">
+      <DialogHeader>
+        <DialogTitle>Select Vertical Measurement Type</DialogTitle>
+      </DialogHeader>
 
-      <!-- Options -->
-      <div class="options-grid">
-        <button
-          v-for="opt in options"
-          :key="opt"
-          type="button"
-          class="type-button"
-          :class="{ selected: selected === opt }"
-          :aria-pressed="selected === opt ? 'true' : 'false'"
-          @click="selected = opt"
-        >
-          <span class="swatch" :style="{ backgroundColor: colorFor(opt) }" />
-          <span class="label">{{ label(opt) }}</span>
-        </button>
+      <div class="py-4">
+        <RadioGroup v-model="selected" orientation="horizontal" class="options-grid">
+          <div
+            v-for="opt in options"
+            :key="opt"
+            class="type-option"
+            :class="{ selected: selected === opt }"
+            @click="selected = opt"
+          >
+            <RadioGroupItem :value="opt" :id="`vert-${opt}`" class="sr-only" />
+            <span class="swatch" :style="{ backgroundColor: colorFor(opt) }" />
+            <span class="option-label">{{ label(opt) }}</span>
+          </div>
+        </RadioGroup>
       </div>
 
-      <!-- Actions -->
-      <div class="actions">
-        <button type="button" class="confirm" @click="$emit('confirm', selected)">Confirm</button>
-        <button type="button" class="cancel" @click="$emit('cancel')">Cancel</button>
-      </div>
-    </div>
-  </div>
+      <DialogFooter class="gap-2 sm:gap-0">
+        <Button variant="outline" @click="$emit('cancel')">Cancel</Button>
+        <Button @click="$emit('confirm', selected)">Confirm</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <script>
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+
 export default {
   name: "LengthPopupVertical",
+  components: {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    Button,
+    RadioGroup,
+    RadioGroupItem,
+  },
   props: {
     visible: { type: Boolean, default: false },
     measurementColors: {
@@ -43,6 +64,7 @@ export default {
       default: "internalMargin",
     },
   },
+  emits: ['confirm', 'cancel'],
   data() {
     return {
       options: ["internalMargin", "intercolumnSpaces"],
@@ -53,13 +75,10 @@ export default {
     initialSelection(v) {
       if (v && this.options.includes(v)) this.selected = v;
     },
-    visible(v) {
-      if (v) this.$nextTick(() => this.focusSelected());
-    },
   },
   methods: {
     colorFor(k) {
-      return this.measurementColors?.[k] || "#ddd";
+      return this.measurementColors?.[k] || "hsl(var(--muted-foreground) / 0.3)";
     },
     label(k) {
       const map = {
@@ -68,108 +87,56 @@ export default {
       };
       return map[k] || k;
     },
-    focusSelected() {
-      const btn = this.$el.querySelector(".type-button.selected");
-      if (btn) btn.focus();
+    handleOpenChange(open) {
+      if (!open) {
+        this.$emit('cancel');
+      }
     },
   },
 };
 </script>
 
 <style scoped>
-.length-popup {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 1100;
-}
-
-.length-popup-content {
-  width: min(700px, 92vw);
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
-  padding: 28px 28px 22px;
-}
-
-.title {
-  font-size: 28px;
-  text-align: center;
-  margin: 0 0 18px;
-}
-
 .options-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 18px 16px;
-  padding: 6px 6px 4px;
-  margin-bottom: 18px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
 }
 
-.type-button {
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  gap: 8px;
-  padding: 10px 8px 12px;
-  border: 1px solid #d3d3d3;
-  border-radius: 10px;
-  background: #fafafa;
+.type-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 2px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--muted));
   cursor: pointer;
-  outline: none;
+  transition: all 0.2s ease;
 }
-.type-button:hover {
-  border-color: #9ec9ff;
-  background: #f6fbff;
+
+.type-option:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--primary) / 0.05);
 }
-.type-button:focus-visible {
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.35);
-}
-.type-button.selected {
-  border-color: #007bff;
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
-  background: #f4f9ff;
+
+.type-option.selected {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+  background: hsl(var(--primary) / 0.1);
 }
 
 .swatch {
-  width: 54px;
-  height: 54px;
-  border-radius: 8px;
-  border: 2px solid rgba(0, 0, 0, 0.12);
-  display: block;
-}
-.label {
-  font-size: 15px;
-  color: #222;
-  text-align: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: var(--radius-md);
+  border: 2px solid hsl(var(--foreground) / 0.12);
 }
 
-.actions {
-  display: flex;
-  justify-content: center;
-  gap: 22px;
-  margin-top: 6px;
-}
-.actions button {
-  min-width: 120px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid #c8c8c8;
-  background: #fff;
-  font-size: 16px;
-  cursor: pointer;
-}
-.actions .confirm {
-  background: #0d6efd;
-  color: #fff;
-  border-color: #0d6efd;
-}
-.actions .confirm:hover {
-  filter: brightness(0.95);
-}
-.actions .cancel:hover {
-  background: #f3f3f3;
+.option-label {
+  font-size: var(--text-sm);
+  color: hsl(var(--foreground));
+  text-align: center;
 }
 </style>
