@@ -1,7 +1,7 @@
 <script setup>
 import { DropdownMenuRoot } from 'radix-vue'
 
-const props = defineProps({
+defineProps({
   open: Boolean,
   defaultOpen: Boolean,
 })

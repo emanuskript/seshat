@@ -140,41 +140,45 @@
      THEME COLORS
      ======================================== */
 
-  /* LIGHT THEME (Default) */
-  --background: 0 0% 94.5%;          /* #f1f1f1 - current app background */
-  --foreground: 0 0% 20%;            /* #333 - main text */
+  /* LIGHT THEME (Default) - Clean, professional */
+  --background: 0 0% 98%;            /* #fafafa - slightly warmer than pure white */
+  --foreground: 0 0% 12%;            /* #1f1f1f - slightly darker for contrast */
 
   --card: 0 0% 100%;                 /* white */
-  --card-foreground: 0 0% 20%;
+  --card-foreground: 0 0% 12%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 20%;
+  --popover-foreground: 0 0% 12%;
 
-  --primary: 217 91% 60%;            /* #3b82f6 - main blue */
+  --primary: 217 85% 48%;            /* #1a6dd8 - deeper, more professional blue */
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 220 89% 53%;          /* #2b6fde - secondary blue */
-  --secondary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;          /* neutral secondary */
+  --secondary-foreground: 0 0% 12%;
 
-  --muted: 220 14% 96%;              /* #f8f9fa */
-  --muted-foreground: 0 0% 40%;      /* #666 */
+  --muted: 0 0% 96%;                 /* #f5f5f5 - neutral muted */
+  --muted-foreground: 0 0% 45%;      /* #737373 */
 
-  --accent: 215 100% 50%;            /* #007bff */
+  --accent: 217 85% 48%;
   --accent-foreground: 0 0% 100%;
 
   --destructive: 0 72% 51%;          /* #dc2626 */
   --destructive-foreground: 0 0% 100%;
 
-  --border: 220 13% 91%;             /* #e5e7eb */
-  --input: 220 13% 91%;
-  --ring: 217 91% 60%;
+  --border: 0 0% 90%;                /* #e5e5e5 - neutral border */
+  --input: 0 0% 90%;
+  --ring: 217 85% 48%;
 
   --radius: 0.5rem;
 
+  /* Canvas/Stage - matches theme */
+  --canvas: 0 0% 92%;                /* #ebebeb - light gray canvas for light mode */
+  --canvas-foreground: 0 0% 20%;
+
   /* Panel-specific (AnnotationsBank) */
-  --panel-bg: 0 0% 94.5%;
-  --panel-border: 213 70% 90%;       /* #cfe2ff */
-  --panel-text: 214 70% 19%;         /* #0c2a53 */
+  --panel-bg: 0 0% 100%;
+  --panel-border: 0 0% 90%;
+  --panel-text: 0 0% 15%;
 
   /* Measurement colors (preserve functional RGBA values) */
   --measurement-ascenders: rgba(0, 255, 0, 0.5);
@@ -187,47 +191,60 @@
   --measurement-line-height: rgba(100, 100, 255, 0.5);
   --measurement-minimum-height: rgba(255, 100, 100, 0.5);
 
-  /* Navigation bar specific */
-  --nav-bg: 217 100% 95%;            /* #e7f0ff */
-  --nav-border: 220 100% 90%;        /* #c9d8ff */
+  /* Navigation bar specific - now using neutral colors */
+  --nav-bg: 0 0% 100%;               /* white nav bar */
+  --nav-border: 0 0% 90%;
 }
 
-/* DARK THEME */
+/* DARK THEME - Professional neutral grays */
 .dark {
-  --background: 222 47% 11%;         /* #0f172a */
-  --foreground: 213 31% 91%;         /* #e2e8f0 */
+  /* Base surfaces - using neutral grays (no blue tint) */
+  --background: 0 0% 9%;             /* #171717 - main background */
+  --foreground: 0 0% 95%;            /* #f2f2f2 - brighter for readability */
 
-  --card: 222 47% 15%;               /* #1e293b */
-  --card-foreground: 213 31% 91%;
+  /* Elevated surfaces */
+  --card: 0 0% 12%;                  /* #1f1f1f - cards, panels */
+  --card-foreground: 0 0% 95%;
 
-  --popover: 222 47% 15%;
-  --popover-foreground: 213 31% 91%;
+  --popover: 0 0% 14%;               /* #242424 - dropdowns, popovers */
+  --popover-foreground: 0 0% 95%;
 
-  --primary: 217 91% 60%;
-  --primary-foreground: 222 47% 11%;
+  /* Brand colors - reduced saturation for comfort */
+  --primary: 213 85% 58%;            /* #3d8bfa - easier on eyes */
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 215 20% 25%;
-  --secondary-foreground: 213 31% 91%;
+  --secondary: 0 0% 18%;             /* #2e2e2e - subtle secondary */
+  --secondary-foreground: 0 0% 95%;
 
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20% 65%;
+  /* Muted elements - improved readability */
+  --muted: 0 0% 15%;                 /* #262626 - muted backgrounds */
+  --muted-foreground: 0 0% 65%;      /* #a6a6a6 - more readable */
 
-  --accent: 217 91% 60%;
-  --accent-foreground: 222 47% 11%;
+  /* Accent - same as primary for consistency */
+  --accent: 213 85% 58%;
+  --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 63% 31%;
+  /* Destructive - slightly muted red */
+  --destructive: 0 62% 50%;          /* #c93c3c */
   --destructive-foreground: 0 0% 100%;
 
-  --border: 217 33% 17%;
-  --input: 217 33% 17%;
-  --ring: 224 76% 48%;
+  /* Borders - more visible separation */
+  --border: 0 0% 22%;                /* #383838 - clearer borders */
+  --input: 0 0% 22%;
+  --ring: 213 85% 58%;
 
-  --panel-bg: 222 47% 11%;
-  --panel-border: 217 33% 25%;
-  --panel-text: 213 31% 91%;
+  /* Panel specific */
+  --panel-bg: 0 0% 12%;
+  --panel-border: 0 0% 24%;          /* more visible panel borders */
+  --panel-text: 0 0% 95%;
 
-  --nav-bg: 222 47% 13%;
-  --nav-border: 217 33% 20%;
+  /* Navigation */
+  --nav-bg: 0 0% 11%;                /* #1c1c1c */
+  --nav-border: 0 0% 20%;
+
+  /* Canvas/Stage - deep black for manuscript viewing */
+  --canvas: 0 0% 5%;                 /* #0d0d0d - deeper for contrast */
+  --canvas-foreground: 0 0% 90%;
 }
 
 /* HIGH CONTRAST THEME */

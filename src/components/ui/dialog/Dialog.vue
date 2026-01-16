@@ -1,7 +1,7 @@
 <script setup>
 import { DialogRoot } from 'radix-vue'
 
-const props = defineProps({
+defineProps({
   open: Boolean,
   defaultOpen: Boolean,
 })

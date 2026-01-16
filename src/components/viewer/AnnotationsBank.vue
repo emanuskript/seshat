@@ -251,8 +251,11 @@ export default {
 }
 .bank__btn{
   flex:1; appearance:none; border:1px solid hsl(var(--border)); background: hsl(var(--muted));
-  color: hsl(var(--foreground)); font-weight:600; padding:6px 8px; border-radius:8px; cursor:pointer;
+  color: hsl(var(--foreground)); font-weight:600; padding:6px 6px; border-radius:8px; cursor:pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
+  font-size: 11px;
+  min-width: 0;
 }
 .bank__btn:hover{ filter: brightness(0.95); }
 .bank__btn:disabled{ opacity:.5; cursor:not-allowed; }

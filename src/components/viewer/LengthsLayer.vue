@@ -78,7 +78,6 @@ export default {
         top: pos.y ? `${pos.y}px` : "50%",
         position: "absolute",
         cursor: "grab",
-        backgroundColor: "white",
         zIndex: 2000,
         userSelect: "none",
         pointerEvents: "auto",
@@ -109,11 +108,14 @@ export default {
   left: 15px;
   top: 50%;
   transform: translateY(-50%);
-  color: black;
+  color: hsl(var(--foreground));
   font-size: 12px;
-  background-color: white;
-  padding: 2px 5px;
-  border-radius: 3px;
+  font-weight: 500;
+  background-color: hsl(var(--card));
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .draggable-label {

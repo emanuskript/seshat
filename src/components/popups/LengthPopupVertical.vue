@@ -67,7 +67,7 @@ export default {
   emits: ['confirm', 'cancel'],
   data() {
     return {
-      options: ["internalMargin", "intercolumnSpaces"],
+      options: ["internalMargin", "intercolumnSpaces", "externalMargin"],
       selected: this.initialSelection || "internalMargin",
     };
   },
@@ -84,6 +84,7 @@ export default {
       const map = {
         internalMargin: "Internal Margin",
         intercolumnSpaces: "Intercolumn Spaces",
+        externalMargin: "External Margin",
       };
       return map[k] || k;
     },
@@ -99,7 +100,7 @@ export default {
 <style scoped>
 .options-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 

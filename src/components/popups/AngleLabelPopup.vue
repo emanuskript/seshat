@@ -1,6 +1,6 @@
 <template>
   <Dialog :open="visible" @update:open="handleOpenChange">
-    <DialogContent class="sm:max-w-2xl" @keydown.esc="$emit('cancel')">
+    <DialogContent class="sm:max-w-2xl z-[60]" overlay-class="z-[60]">
       <DialogHeader>
         <DialogTitle>Choose Angle Label</DialogTitle>
       </DialogHeader>
@@ -102,8 +102,11 @@ export default {
       this.newLabel = "";
     },
     focusFirst() {
-      const el = this.$el?.querySelector("input");
-      if (el) el.focus();
+      // Use document.querySelector since Dialog uses a portal and $el may not be a real element
+      this.$nextTick(() => {
+        const el = document.querySelector('[role="dialog"] input');
+        if (el) el.focus();
+      });
     },
     handleOpenChange(open) {
       if (!open) {

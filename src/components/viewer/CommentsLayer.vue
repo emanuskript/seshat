@@ -118,13 +118,17 @@ export default {
 
 .comment-icon {
   font-size: 24px;
-  background-color: hsl(45 100% 85%); /* warm yellow for comment icons */
+  background-color: hsl(45 90% 80%); /* warm yellow for comment icons */
   border-radius: 50%;
   width: 30px;
   height: 30px;
   display: flex;
   justify-content: center;
   align-items: center;
+  transition: background-color 0.2s ease;
+}
+.dark .comment-icon {
+  background-color: hsl(45 65% 42%); /* muted gold for dark mode */
 }
 
 .comment-bubble {

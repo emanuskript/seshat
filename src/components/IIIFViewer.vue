@@ -11,67 +11,84 @@
         @click="goHome"
       />
 
-      <div class="toolbar">
-        <!-- Comment -->
-        <div class="toolbar-item" @click="selectTool('comment')">
-          <MessageSquare :size="22" />
-          <span>Comment</span>
-        </div>
+      <TooltipProvider :delay-duration="300">
+        <div class="toolbar">
+          <!-- Comment -->
+          <div class="toolbar-item" @click="selectTool('comment')">
+            <MessageSquare :size="22" />
+            <span>Comment</span>
+          </div>
 
-        <!-- Highlight -->
-        <div class="toolbar-item" @click="selectTool('highlight')">
-          <Highlighter :size="22" />
-          <span>Highlight</span>
-        </div>
+          <!-- Highlight -->
+          <div class="toolbar-item" @click="selectTool('highlight')">
+            <Highlighter :size="22" />
+            <span>Highlight</span>
+          </div>
 
-        <!-- Underline -->
-        <div class="toolbar-item" @click="selectTool('underline')">
-          <Underline :size="22" />
-          <span>Underline</span>
-        </div>
+          <!-- Underline -->
+          <div class="toolbar-item" @click="selectTool('underline')">
+            <Underline :size="22" />
+            <span>Underline</span>
+          </div>
 
-        <!-- Trace -->
-        <div class="toolbar-item" @click="selectTool('trace')">
-          <Pencil :size="22" />
-          <span>Trace</span>
-        </div>
+          <!-- Trace -->
+          <div class="toolbar-item" @click="selectTool('trace')">
+            <Pencil :size="22" />
+            <span>Trace</span>
+          </div>
 
-        <!-- Crop -->
-        <div class="toolbar-item" @click="startCrop">
-          <Scissors :size="22" />
-          <span>Crop</span>
-        </div>
+          <!-- Crop -->
+          <div class="toolbar-item" @click="startCrop">
+            <Scissors :size="22" />
+            <span>Crop</span>
+          </div>
 
-        <!-- divider -->
-        <div class="toolbar-divider" aria-hidden="true"></div>
+          <!-- divider -->
+          <div class="toolbar-divider" aria-hidden="true"></div>
 
-        <!-- Measure Angle -->
-        <div class="toolbar-item" @click="selectTool('measure')">
-          <ChevronUp :size="22" />
-          <span>Measure</span>
-          <span>Angle</span>
-        </div>
+          <!-- Measure Angle -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="selectTool('measure')">
+                <ChevronUp :size="22" />
+                <span>Angle</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Measure Angle</TooltipContent>
+          </Tooltip>
 
-        <!-- Horizontal Bands -->
-        <div class="toolbar-item" @click="openHorizontalPopup">
-          <Ruler :size="22" />
-          <span>Horizontal</span>
-          <span>Bands</span>
-        </div>
+          <!-- Horizontal Bands -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="openHorizontalPopup">
+                <Ruler :size="22" />
+                <span>Horizontal</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Measure Horizontal Bands</TooltipContent>
+          </Tooltip>
 
-        <!-- Vertical Bands -->
-        <div class="toolbar-item" @click="openVerticalPopup">
-          <RulerDimensionLine :size="22" />
-          <span>Vertical</span>
-          <span>Bands</span>
-        </div>
+          <!-- Vertical Bands -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="openVerticalPopup">
+                <RulerDimensionLine :size="22" />
+                <span>Vertical</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Measure Vertical Bands</TooltipContent>
+          </Tooltip>
 
-        <!-- Generate Statistics -->
-        <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
-          <Calculator :size="22" />
-          <span>Generate</span>
-          <span>Statistics</span>
-        </div>
+          <!-- Generate Statistics -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
+                <Calculator :size="22" />
+                <span>Statistics</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Generate Statistics</TooltipContent>
+          </Tooltip>
 
         <!-- divider -->
         <div class="toolbar-divider" aria-hidden="true"></div>
@@ -115,6 +132,7 @@
           </div>
         </div>
       </div>
+      </TooltipProvider>
     </div>
     <!-- Page Navigation (now right under the toolbar, at the top) -->
     <NavigationBar
@@ -567,33 +585,14 @@
     </div>
 
     <!-- Angle Label Picker Popup -->
-    <div v-if="showAngleLabelPopup" class="length-popup" @click.self="showAngleLabelPopup = false">
-      <div class="length-popup-content">
-        <h3>Select or Create Angle Label</h3>
-
-        <div class="label-grid">
-          <button
-            v-for="label in angleLabels"
-            :key="label"
-            class="grid-btn"
-            :class="{ active: activeAngleLabel === label }"
-            @click="activeAngleLabel = label"
-          >
-            {{ label }}
-          </button>
-        </div>
-
-        <div class="new-label-row">
-          <input v-model="newAngleLabel" placeholder="New label…" />
-          <button class="grid-btn" @click="confirmNewAngleLabel">Add</button>
-        </div>
-
-        <div class="popup-actions">
-          <button class="grid-btn" @click="confirmAngleLabel">Use Label</button>
-          <button class="grid-btn" @click="cancelAngleLabel">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <!-- Angle Label Popup -->
+    <AngleLabelPopup
+      :visible="showAngleLabelPopup"
+      :labels="angleLabels"
+      :initial-label="activeAngleLabel"
+      @confirm="onAngleLabelConfirm"
+      @cancel="cancelAngleLabel"
+    />
 
     <!-- Angle Statistics Filter Popup -->
     <div v-if="showAngleFilterPopup" class="length-popup" @click.self="showAngleFilterPopup = false">
@@ -630,46 +629,17 @@
     </div>
 
     <!-- Trace Pen Popup -->
-    <div v-if="showTracePopup" class="length-popup" @click.self="showTracePopup = false">
-      <div class="length-popup-content">
-        <h3>Choose Pen & Angle</h3>
-
-        <div class="row" style="text-align:center">
-          <label style="width:auto;margin-right:8px">Angle:</label>
-          <div class="label-grid">
-            <button
-              v-for="ang in penAngles"
-              :key="'ang-'+ang"
-              class="grid-btn"
-              :class="{ active: selectedPenAngle === ang }"
-              @click="selectedPenAngle = ang"
-            >
-              {{ ang }}°
-            </button>
-          </div>
-        </div>
-
-        <div class="row" style="text-align:center">
-          <label style="width:auto;margin-right:8px">Nib size:</label>
-          <div class="label-grid">
-            <button
-              v-for="p in penSizes"
-              :key="'size-'+p.key"
-              class="grid-btn"
-              :class="{ active: selectedPenSize === p.key }"
-              @click="selectedPenSize = p.key"
-            >
-              {{ p.label }}
-            </button>
-          </div>
-        </div>
-
-        <div class="popup-actions">
-          <button class="grid-btn" @click="confirmPenSelection">Start Tracing</button>
-          <button class="grid-btn" @click="cancelPenSelection">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <TracePopup
+      :visible="showTracePopup"
+      :penAngles="penAngles"
+      :penSizes="penSizes"
+      :selectedAngle="selectedPenAngle"
+      :selectedSize="selectedPenSize"
+      @update:selectedAngle="selectedPenAngle = $event"
+      @update:selectedSize="selectedPenSize = $event"
+      @confirm="confirmPenSelection"
+      @cancel="cancelPenSelection"
+    />
 
     <!-- Stats quick panel (Lengths + Angles entry) -->
     <div
@@ -689,69 +659,21 @@
       </div>
     </div>
 
-    <!-- Horizontal Bands Popup (as buttons) -->
-    <div v-if="showHorizontalPopup" class="length-popup" @click.self="showHorizontalPopup = false">
-      <div class="length-popup-content">
-        <h3>Select Horizontal Measurement</h3>
-        <div class="btn-grid">
-          <button class="grid-btn" @click="beginLength('ascenders')">
-            <span class="swatch" :style="{ background: measurementColors.ascenders }"></span>
-            <span>Ascenders</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('descenders')">
-            <span class="swatch" :style="{ background: measurementColors.descenders }"></span>
-            <span>Descenders</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('interlinear')">
-            <span class="swatch" :style="{ background: measurementColors.interlinear }"></span>
-            <span>Interlinear Spaces</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('upperMargin')">
-            <span class="swatch" :style="{ background: measurementColors.upperMargin }"></span>
-            <span>Upper Margin</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('lowerMargin')">
-            <span class="swatch" :style="{ background: measurementColors.lowerMargin }"></span>
-            <span>Lower Margin</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('lineHeight')">
-            <span class="swatch" :style="{ background: measurementColors.lineHeight }"></span>
-            <span>Line Height</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('minimumHeight')">
-            <span class="swatch" :style="{ background: measurementColors.minimumHeight }"></span>
-            <span>Minim Height</span>
-          </button>
-        </div>
-        <div class="popup-actions">
-          <button class="grid-btn" @click="hideLengthPopup">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <!-- Horizontal Bands Popup -->
+    <LengthPopupHorizontal
+      :visible="showHorizontalPopup"
+      :measurement-colors="measurementColors"
+      @confirm="onHorizontalConfirm"
+      @cancel="showHorizontalPopup = false"
+    />
 
-    <!-- Vertical Bands Popup (as buttons) -->
-    <div v-if="showVerticalPopup" class="length-popup" @click.self="showVerticalPopup = false">
-      <div class="length-popup-content">
-        <h3>Select Vertical Measurement</h3>
-        <div class="btn-grid">
-          <button class="grid-btn" @click="beginLength('internalMargin')">
-            <span class="swatch" :style="{ background: measurementColors.internalMargin }"></span>
-            <span>Internal Margin</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('intercolumnSpaces')">
-            <span class="swatch" :style="{ background: measurementColors.intercolumnSpaces }"></span>
-            <span>Intercolumn Spaces</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('externalMargin')">
-            <span class="swatch" :style="{ background: measurementColors.externalMargin }"></span>
-            <span>External Margin</span>
-          </button>
-        </div>
-        <div class="popup-actions">
-          <button class="grid-btn" @click="hideLengthPopup">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <!-- Vertical Bands Popup -->
+    <LengthPopupVertical
+      :visible="showVerticalPopup"
+      :measurement-colors="measurementColors"
+      @confirm="onVerticalConfirm"
+      @cancel="showVerticalPopup = false"
+    />
 
     <!-- Angle Statistics Result Popup -->
     <div v-if="showAngleStatistics" class="statistics-popup" @click.self="showAngleStatistics = false">
@@ -783,55 +705,12 @@
     </div>
 
     <!-- Lengths Statistics Result Popup -->
-    <div v-if="showStatistics" class="statistics-popup" @click.self="showStatistics = false">
-      <div class="statistics-popup-content">
-        <h3>Statistics</h3>
-
-        <!-- Horizontal -->
-        <h4>Horizontal Lengths</h4>
-        <table>
-          <thead>
-            <tr>
-              <th>Measurement</th>
-              <th>Average</th>
-              <th>Standard Deviation</th>
-              <th>Mode</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(stats, type) in horizontalStatistics" :key="type">
-              <td>{{ type }}</td>
-              <td>{{ stats.average.toFixed(2) }}</td>
-              <td>{{ stats.standardDeviation.toFixed(2) }}</td>
-              <td>{{ typeof stats.mode === 'number' ? stats.mode.toFixed(2) : stats.mode }}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <!-- Vertical -->
-        <h4>Vertical Lengths</h4>
-        <table>
-          <thead>
-            <tr>
-              <th>Measurement</th>
-              <th>Average</th>
-              <th>Standard Deviation</th>
-              <th>Mode</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(stats, type) in verticalStatistics" :key="type">
-              <td>{{ type }}</td>
-              <td>{{ stats.average.toFixed(2) }}</td>
-              <td>{{ stats.standardDeviation.toFixed(2) }}</td>
-              <td>{{ typeof stats.mode === 'number' ? stats.mode.toFixed(2) : stats.mode }}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <button class="grid-btn" @click="closeStatisticsPopup">Close</button>
-      </div>
-    </div>
+    <StatisticsPopup
+      :visible="showStatistics"
+      :horizontal="horizontalStatistics"
+      :vertical="verticalStatistics"
+      @close="closeStatisticsPopup"
+    />
 
     <!-- Clear Confirmation Popup -->
     <div v-if="showClearConfirmation" class="length-popup" @click.self="showClearConfirmation = false">
@@ -845,27 +724,27 @@
       </div>
     </div>
 
-    <!-- ========= CROPPED IMAGE MODAL (drop-in replacement) ========= -->
-    <div v-if="croppedImage" class="blurred-background" @click="closeCroppedPopup"></div>
+    <!-- ========= CROPPED IMAGE MODAL (shadcn Dialog) ========= -->
+    <Dialog :open="!!croppedImage" @update:open="handleCropDialogChange">
+      <DialogContent class="max-w-[1100px] w-[calc(100vw-48px)] max-h-[calc(100vh-96px)] p-4 flex flex-col gap-0 overflow-hidden">
+        <DialogHeader class="sr-only">
+          <DialogTitle>Cropped Image</DialogTitle>
+          <DialogDescription>Annotate and export your cropped selection.</DialogDescription>
+        </DialogHeader>
 
-    <div v-if="croppedImage" class="cropped-popup" @click.stop>
-      <div class="cropped-popup-content">
-
-        <!-- Header row with centered zoom controls -->
+        <!-- Header with controls -->
         <div class="crop-header">
-          <div class="left-spacer"></div>
-
           <div class="zoom-cluster">
-            <button class="zoom-pill" :disabled="cropZoom<=1" @click.stop="cropZoomOut">−</button>
-            <button class="zoom-pill" @click.stop="cropZoomIn">+</button>
+            <button class="zoom-pill" :disabled="cropZoom<=1" @click="cropZoomOut">−</button>
+            <button class="zoom-pill" @click="cropZoomIn">+</button>
             <span class="zoom-readout">{{ Math.round(cropZoom*100) }}%</span>
           </div>
 
           <div class="crop-actions">
-            <button class="grid-btn" @click.stop="saveCroppedImageAsPNG">Save PNG</button>
-            <button class="grid-btn" @click.stop="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</button>
-            <button class="grid-btn" @click.stop="saveCroppedImage">Save w/ Annotations</button>
-            <button class="grid-btn cancel-btn" @click.stop="closeCroppedPopup">Close</button>
+            <Button variant="outline" size="sm" @click="saveCroppedImageAsPNG">Save PNG</Button>
+            <Button variant="outline" size="sm" @click="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</Button>
+            <Button variant="outline" size="sm" @click="saveCroppedImage">Save w/ Annotations</Button>
+            <Button size="sm" @click="closeCroppedPopup">Close</Button>
           </div>
         </div>
 
@@ -1016,7 +895,7 @@
                   stroke="blue" stroke-width="2" />
                 <text v-if="a.points.length===3"
                   :x="a.points[1].x + 10" :y="a.points[1].y - 10"
-                  fill="darkblue" font-size="12">
+                  :fill="svgLabelFill" font-size="12" font-weight="500">
                   {{ a.angle }}°{{ a.label ? ' • '+a.label : '' }}
                 </text>
               </g>
@@ -1057,8 +936,8 @@
           @request-delete="deleteSelectedCropped"
           @toggle-units="toggleMeasurementUnits"
         />
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
 
     <!-- Scribe Detection Popup -->
     <ScribeDetectionPopup
@@ -1077,6 +956,27 @@ import html2canvas from "html2canvas";
 import AnnotationsBank from "@/components/viewer/AnnotationsBank.vue";
 import NavigationBar from "@/components/viewer/NavigationBar.vue";
 import ScribeDetectionPopup from "@/components/popups/ScribeDetectionPopup.vue";
+import AngleLabelPopup from "@/components/popups/AngleLabelPopup.vue";
+import LengthPopupHorizontal from "@/components/popups/LengthPopupHorizontal.vue";
+import LengthPopupVertical from "@/components/popups/LengthPopupVertical.vue";
+import PenSelectionPopup from "@/components/popups/PenSelectionPopup.vue";
+import AngleStatsPickerPopup from "@/components/popups/AngleStatsPickerPopup.vue";
+import StatisticsPopup from "@/components/popups/StatisticsPopup.vue";
+import TracePopup from "@/components/popups/TracePopup.vue";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useTheme } from "@/composables/useTheme";
 import {
   MessageSquare,
@@ -1105,6 +1005,13 @@ export default {
     AnnotationsBank,
     NavigationBar,
     ScribeDetectionPopup,
+    AngleLabelPopup,
+    LengthPopupHorizontal,
+    LengthPopupVertical,
+    PenSelectionPopup,
+    AngleStatsPickerPopup,
+    StatisticsPopup,
+    TracePopup,
     MessageSquare,
     Highlighter,
     Underline,
@@ -1123,6 +1030,16 @@ export default {
     Minus,
     Compass,
     Hand,
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    Button,
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
   },
   setup() {
     const { currentTheme, setTheme } = useTheme();
@@ -1352,6 +1269,18 @@ export default {
 
     imageReady() {
       return this.imageLoaded && this.baseFitWidth > 0 && this.baseFitHeight > 0;
+    },
+
+    // SVG fill color that adapts to theme (for angle labels in cropped preview)
+    svgLabelFill() {
+      // Read the primary color from CSS variables
+      const style = getComputedStyle(document.documentElement);
+      const primary = style.getPropertyValue('--primary').trim();
+      if (primary) {
+        // Convert HSL values to hsl() format
+        return `hsl(${primary})`;
+      }
+      return '#3d8bfa'; // Fallback blue
     },
 
     anchorBoxInViewer() {
@@ -2145,6 +2074,34 @@ export default {
       this.activeBandGroup = this.pendingBandGroup || this.activeBandGroup || 'horizontal';
       const groupLabel = this.activeBandGroup === 'vertical' ? 'Vertical' : 'Horizontal';
       this.showToolMessage(`${groupLabel} "${type}" measuring is ACTIVE. Click the ${groupLabel} Bands button again to exit.`);
+    },
+
+    // Handler for horizontal measurement popup confirm
+    onHorizontalConfirm(type) {
+      this.pendingBandGroup = 'horizontal';
+      this.beginLength(type);
+    },
+
+    // Handler for vertical measurement popup confirm
+    onVerticalConfirm(type) {
+      this.pendingBandGroup = 'vertical';
+      this.beginLength(type);
+    },
+
+    // Handler for angle label popup confirm
+    onAngleLabelConfirm(label) {
+      if (!label) {
+        this.showToolMessage("Choose or create a label first.");
+        return;
+      }
+      // Add to labels if new
+      if (!this.angleLabels.includes(label)) {
+        this.angleLabels.push(label);
+      }
+      this.activeAngleLabel = label;
+      this.showAngleLabelPopup = false;
+      this.measureModeActive = true;
+      this.showToolMessage(`Angle measure: label "${label}". Click 3 points (A, vertex, B).`);
     },
 
     /* ---------- Angle label popup ---------- */
@@ -3034,6 +2991,11 @@ cancelPenSelection() {
       this.angleStatisticsContext = "Cropped image";
       this.showAngleStatistics = true;
     },
+    handleCropDialogChange(open) {
+      if (!open) {
+        this.closeCroppedPopup();
+      }
+    },
     closeCroppedPopup() {
       // Clear cropped annotations (temporary labels will be removed)
       this.croppedAnnotations = [];
@@ -3680,7 +3642,7 @@ cancelPenSelection() {
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-  background: hsl(var(--muted)); /* gray canvas behind the manuscript */
+  background: hsl(var(--canvas)); /* dark canvas behind the manuscript */
 }
 /* Full-bleed bars with clean layout */
 .top-bar {
@@ -3688,11 +3650,22 @@ cancelPenSelection() {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 16px;
-  background: hsl(var(--background));
+  background: hsl(var(--card));
   border-bottom: 1px solid hsl(var(--border));
   padding: 12px 24px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
+  position: relative;
+  z-index: 100;
 }
-.logo { height: 60px; cursor: pointer; }
+.dark .top-bar {
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+}
+.logo {
+  height: 60px;
+  cursor: pointer;
+  border-radius: 12px;
+  overflow: hidden;
+}
 
 .toolbar {
   display: grid;
@@ -3718,9 +3691,18 @@ cancelPenSelection() {
 .toolbar-item:hover {
   color: hsl(var(--primary));
   background: hsl(var(--primary) / 0.1);
+  transform: translateY(-1px);
+}
+.toolbar-item:active {
+  transform: translateY(0);
+}
+.toolbar-item.active {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  border: 1px solid hsl(var(--primary) / 0.25);
 }
 .toolbar-item svg { width: 22px; height: 22px; }
-.toolbar-item span { font-size: 12px; }
+.toolbar-item span { font-size: 11px; text-align: center; line-height: 1.2; }
 
 .toolbar-divider {
   width: 1px;
@@ -3734,16 +3716,25 @@ cancelPenSelection() {
   background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); padding: 8px 14px; border-radius: 6px; z-index: 1200; font-size: 12px;
 }
 
-.workspace { display: block; height: calc(100vh - 110px); }
+.workspace {
+  display: flex;
+  height: calc(100vh - 110px);
+  width: 100%;
+  background: hsl(var(--canvas));
+}
 .stage {
   position: relative;
-  background: hsl(var(--muted));
+  background: hsl(var(--canvas));
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 0.15);
   user-select: none !important;
   -webkit-user-select: none !important;
   -moz-user-select: none !important;
   -ms-user-select: none !important;
   -webkit-touch-callout: none !important;
   -webkit-tap-highlight-color: transparent !important;
+}
+.dark .stage {
+  box-shadow: inset 0 2px 12px rgb(0 0 0 / 0.35);
 }
 
 .stage *,
@@ -3790,6 +3781,14 @@ cancelPenSelection() {
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 12px;
+  transition: all 0.15s ease;
+}
+.navigation-bar .btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: scale(1.02);
+}
+.navigation-bar .btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 .navigation-bar .btn:disabled {
   opacity: .45;
@@ -3865,7 +3864,8 @@ cancelPenSelection() {
   justify-content: center;
   align-items: center;
   overflow: hidden;
-  background: hsl(var(--muted)); /* gray behind manuscript */
+  background: hsl(var(--canvas)); /* dark canvas behind manuscript */
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 0.15);
 }
 .pdf-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 
@@ -4040,25 +4040,30 @@ body.cropped-popup-active *::-moz-selection {
 .btn-gray:active { transform: translateY(1px); }
 
 .clear-dropdown {
-  position: absolute; top: 100%; left: 0; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); border: 1px solid hsl(var(--border)); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1100; min-width: 160px; padding: 4px 0;
+  position: absolute; top: 100%; left: 0; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); border: 1px solid hsl(var(--border)); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; min-width: 160px; padding: 4px 0; margin-top: 4px;
 }
 .clear-dropdown div { padding: 8px 12px; cursor: pointer; transition: background-color 0.15s; }
 .clear-dropdown div:hover { background: hsl(var(--accent) / 0.1); }
 
 /* Theme dropdown */
-.theme-container { position: relative; }
+.theme-container { position: relative; z-index: 200; }
 .theme-dropdown {
-  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
   background: hsl(var(--popover, 0 0% 100%));
   color: hsl(var(--popover-foreground, 0 0% 20%));
   border: 1px solid hsl(var(--border, 220 13% 91%)); border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1100; min-width: 160px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 300; min-width: 160px;
   padding: 4px 0;
 }
 .theme-dropdown div {
   padding: 8px 16px; cursor: pointer;
   display: flex; align-items: center; gap: 8px;
   transition: background-color 0.15s;
+  white-space: nowrap;
 }
 .theme-dropdown div:hover { background: hsl(var(--accent, 215 100% 50%) / 0.1); }
 .theme-dropdown div.active {
@@ -4073,49 +4078,59 @@ body.cropped-popup-active *::-moz-selection {
   isolation: isolate;
 }
 .length-popup-content {
-  background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center; width: 520px; max-width: calc(100% - 24px);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  padding: 20px;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid hsl(var(--border));
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
+  text-align: center;
+  width: 520px;
+  max-width: calc(100% - 24px);
   position: relative;
   z-index: 1;
   isolation: isolate;
 }
+
+.length-popup-content h3 {
+  color: hsl(var(--foreground));
+  margin-bottom: 16px;
+}
 .btn-grid, .label-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
 .grid-btn {
-  border: 2px solid #2563eb;
-  background: #3b82f6;         /* primary blue */
-  color: #fff;
+  border: 2px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
-.grid-btn:hover { 
-  background: #60a5fa; 
-  border-color: #3b82f6;
+.grid-btn:hover {
+  filter: brightness(0.9);
 }
 .grid-btn:active { transform: translateY(1px); }
 .grid-btn.active {
-  background: #2563eb;
-  border: 3px solid #00d0ff;
-  box-shadow: 0 0 0 3px #00ff87, 0 0 16px rgba(0,255,135,.6);
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3);
 }
 .grid-btn.confirm-btn {
-  background: #3b82f6;
-  border-color: #2563eb;
-  color: white;
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 .grid-btn.confirm-btn:hover {
-  background: #2563eb;
-  border-color: #1d4ed8;
+  filter: brightness(0.9);
 }
 .grid-btn.cancel-btn {
-  background: #6b7280;
-  border-color: #4b5563;
-  color: white;
+  background: hsl(var(--muted));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
 }
 .grid-btn.cancel-btn:hover {
-  background: #4b5563;
-  border-color: #374151;
+  filter: brightness(0.95);
 }
 .swatch {
   display:inline-block;
@@ -4129,9 +4144,20 @@ body.cropped-popup-active *::-moz-selection {
 .popup-actions { display: flex; justify-content: center; gap: 10px; }
 
 .row { margin: 12px 0; text-align: left; }
-.row label { display: inline-block; width: 80px; font-size: 13px; color: #333; }
+.row label { display: inline-block; width: 80px; font-size: 13px; color: hsl(var(--foreground)); }
 .new-label-row { display: flex; gap: 8px; justify-content: center; margin: 8px 0 0; }
-.new-label-row input { flex: 1; min-width: 240px; border: 1px solid #ddd; border-radius: 6px; padding: 6px 8px; }
+.new-label-row input {
+  flex: 1;
+  min-width: 240px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 6px);
+  padding: 6px 8px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+.new-label-row input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
 
 /* Overlay for stats panel */
 .stats-panel {
@@ -4145,9 +4171,11 @@ body.cropped-popup-active *::-moz-selection {
 
 /* Card look & feel */
 .panel-card.stats-card {
-  background: #ffffff;
-  border-radius: 14px;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
   width: min(680px, calc(100% - 32px));
   padding: 22px 24px 24px;
   text-align: center;
@@ -4158,6 +4186,7 @@ body.cropped-popup-active *::-moz-selection {
   margin: 0 0 14px;
   font-size: 26px;
   font-weight: 700;
+  color: hsl(var(--foreground));
 }
 
 /* Button layout inside the stats card */
@@ -4169,19 +4198,18 @@ body.cropped-popup-active *::-moz-selection {
   margin-top: 6px;
 }
 
-/* Reuse the blue 'grid-btn' look but add a little breathing room */
+/* Reuse the themed 'grid-btn' look but add a little breathing room */
 .panel-actions .grid-btn {
   min-width: 230px;
   padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid #2f60e3;
-  background: #3f6eea;
-  color: #fff;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-weight: 600;
-  box-shadow: 0 2px 0 rgba(0,0,0,0.06) inset;
 }
 .panel-actions .grid-btn:hover {
-  filter: brightness(0.97);
+  filter: brightness(0.9);
 }
 .panel-actions .grid-btn:active {
   transform: translateY(1px);
@@ -4193,15 +4221,41 @@ body.cropped-popup-active *::-moz-selection {
   isolation: isolate;
 }
 .statistics-popup-content {
-  background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-  max-width: 600px; width: 100%;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  padding: 20px;
+  border-radius: var(--radius-lg, 8px);
+  border: 1px solid hsl(var(--border));
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
+  max-width: 600px;
+  width: 100%;
   position: relative;
   z-index: 1;
   isolation: isolate;
 }
-.statistics-popup-content table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-.statistics-popup-content th, .statistics-popup-content td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-.statistics-popup-content th { background: #f2f2f2; }
+.statistics-popup-content h3,
+.statistics-popup-content h4 {
+  color: hsl(var(--foreground));
+}
+.statistics-popup-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+.statistics-popup-content th,
+.statistics-popup-content td {
+  border: 1px solid hsl(var(--border));
+  padding: 10px 12px;
+  text-align: center;
+}
+.statistics-popup-content th {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+.statistics-popup-content td {
+  color: hsl(var(--foreground));
+}
 .statistics-popup-content h4 { margin-top: 12px; margin-bottom: 8px; }
 .angle-stats-context { margin: 4px 0 12px; color: #4b5563; font-size: 13px; }
 
@@ -4405,39 +4459,31 @@ body.cropped-popup-active *::-moz-selection {
   z-index: 2000;
 }
 
-/* Enhanced Cropped Popup Styles */
-.cropped-popup {
-  position: fixed;
-  top: 50%; left: 50%;
-  transform: translate(-50%,-50%);
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0,0,0,.2);
-  z-index: 2000;
-  width: min(1100px, calc(100vw - 48px));
-  max-height: calc(100vh - 120px);
-  overflow: hidden;
-}
-
-.cropped-popup-content {
-  padding: 16px 18px 12px;
-}
-
+/* Cropped Image Dialog Styles */
 .crop-header {
-  display:flex; align-items:center; justify-content:space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
-.crop-header h3 { margin: 0; font-size: 22px; font-weight: 700; }
-.crop-actions { display:flex; gap:8px; }
+
+.crop-actions {
+  display: flex;
+  gap: 8px;
+}
 
 .crop-stage {
   position: relative;
-  height: 520px;              /* feel free to tune */
-  background: #f7f9ff;
-  border: 1px solid #e6ecff;
-  border-radius: 12px;
+  height: 480px;
+  min-height: 300px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 12px);
   overflow: hidden;
-  margin: 12px 0 10px;
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .crop-anchor {
@@ -4461,8 +4507,8 @@ body.cropped-popup-active *::-moz-selection {
   width: 36px; height: 36px;
   border-radius: 50%;
   border: none;
-  background: #3b82f6;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 20px;
   line-height: 36px;
   text-align: center;
@@ -4470,15 +4516,19 @@ body.cropped-popup-active *::-moz-selection {
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 .zoom-btn:disabled { opacity:.45; cursor:not-allowed; }
-.zoom-btn:hover { filter: brightness(.95); }
+.zoom-btn:hover { filter: brightness(.9); }
 
 .mini-bank {
-  margin-top: 10px;
-  border-top: 1px dashed #e5e7eb;
+  margin-top: 12px;
+  border-top: 1px dashed hsl(var(--border));
   padding-top: 10px;
+  flex-shrink: 0;
 }
 .mini-bank-title {
-  font-weight: 700; font-size: 14px; color: #334155; margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 14px;
+  color: hsl(var(--foreground));
+  margin-bottom: 6px;
 }
 .mini-bank-grid {
   display: grid;
@@ -4487,9 +4537,12 @@ body.cropped-popup-active *::-moz-selection {
 }
 .mini-bank-item {
   display:flex; align-items:center; gap:8px;
-  background:#f8fafc; border:1px solid #e5e7eb;
-  padding:6px 8px; border-radius:8px;
-  font-size:12px; color:#0f172a;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  padding:6px 8px;
+  border-radius: var(--radius-md, 8px);
+  font-size:12px;
+  color: hsl(var(--foreground));
 }
 .mini-bank-item .dot {
   width:10px; height:10px; border-radius:50%;
@@ -4549,10 +4602,10 @@ div.statistics-popup,
   transform: translate(-50%,-50%);
   width: min(1100px, calc(100vw - 48px));
   max-height: calc(100vh - 96px);
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0,0,0,.2);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
   overflow: hidden;
   z-index: var(--z-modal);
 }
@@ -4568,15 +4621,15 @@ div.statistics-popup,
 .left-spacer { min-height: 1px; }
 
 .zoom-cluster {
-  display: flex; 
-  align-items: center; 
+  display: flex;
+  align-items: center;
   justify-content: space-evenly;
   gap: var(--space-phi);
-  background: linear-gradient(135deg, #f8faff 0%, #eef3ff 100%); 
-  border: 1px solid #d8e1ff; 
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 28px;
   padding: var(--space-phi) calc(var(--space-2phi) + 2px);
-  box-shadow: 0 2px 8px rgba(47, 96, 227, 0.1);
+  box-shadow: 0 2px 8px hsl(var(--primary) / 0.1);
   justify-self: center;
   min-height: 52px;
   min-width: 180px;
@@ -4593,51 +4646,50 @@ div.statistics-popup,
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px; 
+  min-width: 36px;
   width: 36px;
-  height: 36px; 
-  border-radius: 10px; 
-  border: 10px solid #2f60e3;
-  background: linear-gradient(135deg, #4a7aed 0%, #3f6eea 100%); 
-  color: #fff; 
-  font-weight: 700; 
+  height: 36px;
+  border-radius: 10px;
+  border: 2px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 700;
   font-size: 18px;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(47, 96, 227, 0.2);
+  box-shadow: 0 2px 4px hsl(var(--primary) / 0.2);
   flex-shrink: 10;
-  margin-top: -30px;
 }
-.zoom-pill:hover:not(:disabled) { 
-  background: linear-gradient(135deg, #2f60e3 0%, #2856d6 100%); 
+.zoom-pill:hover:not(:disabled) {
+  filter: brightness(0.9);
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(47, 96, 227, 0.3);
+  box-shadow: 0 4px 8px hsl(var(--primary) / 0.3);
 }
 .zoom-pill:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(47, 96, 227, 0.3);
+  box-shadow: 0 1px 2px hsl(var(--primary) / 0.3);
 }
-.zoom-pill:disabled { 
-  opacity: .45; 
-  cursor: not-allowed; 
+.zoom-pill:disabled {
+  opacity: .45;
+  cursor: not-allowed;
   transform: none;
   box-shadow: none;
 }
-.zoom-readout { 
+.zoom-readout {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px; 
-  color: #2856d6; 
+  font-size: 14px;
+  color: hsl(var(--primary));
   font-weight: 600;
   min-width: 60px;
   height: 36px;
   padding: 0 12px;
-  background: rgba(255, 255, 255, 0.9);
+  background: hsl(var(--card));
   border-radius: 18px;
   margin: 0;
   flex-shrink: 0;
-  border: 1px solid rgba(216, 225, 255, 0.6);
+  border: 1px solid hsl(var(--border));
 }
 
 /* Mini Toolbar for cropped popup */
@@ -4645,35 +4697,36 @@ div.statistics-popup,
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: var(--space-phi);
-  padding: var(--space-phi) var(--space-2phi);
-  background: #f8faff;
-  border-top: 1px solid #e1e7f0;
-  border-bottom: 1px solid #e1e7f0;
-  margin-top: var(--space-phi);
+  gap: var(--space-phi, 13px);
+  padding: 10px 16px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 8px);
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .crop-tool {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: var(--space-1) var(--space-phi);
+  gap: 6px;
+  padding: 10px 14px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   transition: all 0.2s ease;
-  color: #555;
-  min-width: 60px;
+  color: hsl(var(--muted-foreground));
+  min-width: 64px;
 }
 
 .crop-tool:hover {
-  background: #e8f0ff;
-  color: #2f60e3;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
 }
 
 .crop-tool.active {
-  background: #3f6eea;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 .crop-tool i {
@@ -4688,16 +4741,16 @@ div.statistics-popup,
 .crop-tool-divider {
   width: 1px;
   height: 32px;
-  background: #d0d7e0;
+  background: hsl(var(--border));
 }
 
 .crop-stage {
   position: relative;
   height: 520px;
   margin-top: var(--space-phi);
-  background: #f7f9ff;
-  border: 1px solid #e6ecff;
-  border-radius: 12px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 12px);
   overflow: hidden;
   user-select: none !important;
   -webkit-user-select: none !important;

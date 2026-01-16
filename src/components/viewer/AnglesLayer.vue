@@ -145,8 +145,9 @@ export default {
 }
 
 .angle-label {
-  fill: darkblue;
+  fill: hsl(var(--primary));
   font-size: 12px;
+  font-weight: 500;
   user-select: none;
   pointer-events: none;
 }
