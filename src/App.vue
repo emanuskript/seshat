@@ -15,6 +15,8 @@ html, body, #app {
   margin: 0;
 }
 body {
-  background-color: #f1f1f1; /* gray canvas behind the manuscript */
+  background-color: hsl(var(--background)); /* themed background */
+  color: hsl(var(--foreground));
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 </style>

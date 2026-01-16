@@ -871,51 +871,51 @@
 
         <!-- Mini Toolbar for cropped popup -->
         <div class="crop-toolbar">
-          <div class="crop-tool" 
+          <div class="crop-tool"
                :class="{ active: highlightModeActive }"
                @click="selectTool('highlight')"
                title="Highlight">
-            <i class="fas fa-highlighter"></i>
+            <Highlighter :size="18" />
             <span>Highlight</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                :class="{ active: underlineModeActive }"
                @click="selectTool('underline')"
                title="Underline">
-            <i class="fas fa-minus"></i>
+            <Minus :size="18" />
             <span>Underline</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                :class="{ active: traceModeActive }"
                @click="selectTool('trace')"
                title="Draw">
-            <i class="fas fa-pencil-alt"></i>
+            <Pencil :size="18" />
             <span>Draw</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                :class="{ active: measureModeActive }"
                @click="selectTool('measure')"
                title="Measure Angle">
-            <i class="fas fa-drafting-compass"></i>
+            <Compass :size="18" />
             <span>Angle</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                @click="calculateCroppedAngleStatistics"
                title="Angle Statistics">
-            <i class="fas fa-calculator"></i>
+            <Calculator :size="18" />
             <span>Stats</span>
           </div>
-          
+
           <div class="crop-tool-divider"></div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                @click="selectTool('')"
                title="Pan/Zoom">
-            <i class="fas fa-hand-paper"></i>
+            <Hand :size="18" />
             <span>Pan</span>
           </div>
         </div>
@@ -1094,6 +1094,9 @@ import {
   Sun,
   Moon,
   Contrast,
+  Minus,
+  Compass,
+  Hand,
 } from "lucide-vue-next";
 
 export default {
@@ -1117,6 +1120,9 @@ export default {
     Sun,
     Moon,
     Contrast,
+    Minus,
+    Compass,
+    Hand,
   },
   setup() {
     const { currentTheme, setTheme } = useTheme();

@@ -297,7 +297,7 @@ export default {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: #f1f1f1;
+  background-color: hsl(var(--muted));
   position: relative;
   z-index: 0;
 }

@@ -118,7 +118,7 @@ export default {
 
 .comment-icon {
   font-size: 24px;
-  background-color: #ffecb3;
+  background-color: hsl(45 100% 85%); /* warm yellow for comment icons */
   border-radius: 50%;
   width: 30px;
   height: 30px;
@@ -130,10 +130,10 @@ export default {
 .comment-bubble {
   margin-left: 8px;
   padding: 8px;
-  background: #fff;
-  border: 1px solid #ccc;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
-  box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm, 0px 2px 4px rgba(0, 0, 0, 0.1));
   position: relative;
 }
 .comment-bubble::after {
@@ -144,13 +144,13 @@ export default {
   width: 0;
   height: 0;
   border: 8px solid transparent;
-  border-right-color: #fff;
+  border-right-color: hsl(var(--card));
   transform: translateY(-50%);
 }
 
 .comment-content {
   font-size: 14px;
-  color: #333;
+  color: hsl(var(--foreground));
 }
 
 .comment-input-container {
@@ -158,10 +158,10 @@ export default {
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  background-color: #fff;
-  border: 1px solid #ccc;
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md, 0 2px 8px rgba(0, 0, 0, 0.1));
   padding: 10px;
   width: 300px;
   z-index: 1000;
@@ -170,12 +170,14 @@ export default {
 .comment-input-box {
   width: 100%;
   height: 60px;
-  border: 1px solid #ccc;
+  border: 1px solid hsl(var(--border));
   border-radius: 5px;
   padding: 8px;
   font-size: 14px;
   margin-bottom: 8px;
   resize: none;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 .comment-input-actions {
@@ -185,25 +187,27 @@ export default {
 
 .btn-save-comment,
 .btn-cancel-comment {
-  background-color: #007bff;
-  color: white;
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   border: none;
   border-radius: 5px;
   padding: 5px 10px;
   font-size: 14px;
   cursor: pointer;
+  transition: filter 0.15s ease;
 }
 
 .btn-cancel-comment {
-  background-color: #6c757d;
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
   margin-left: 10px;
 }
 
 .btn-save-comment:hover {
-  background-color: #0056b3;
+  filter: brightness(0.9);
 }
 
 .btn-cancel-comment:hover {
-  background-color: #5a6268;
+  filter: brightness(0.9);
 }
 </style>
