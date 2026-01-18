@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+/* Tailwind v4 theme configuration */
+@theme {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/* CSS Variables for themes */
+:root {
+  /* ========================================
+     DESIGN TOKENS
+     ======================================== */
+
+  /* Typography - Font Families */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Monaco, 'Cascadia Code', monospace;
+
+  /* Typography - Font Sizes */
+  --text-xs: 0.75rem;      /* 12px */
+  --text-sm: 0.875rem;     /* 14px */
+  --text-base: 1rem;       /* 16px */
+  --text-lg: 1.125rem;     /* 18px */
+  --text-xl: 1.25rem;      /* 20px */
+  --text-2xl: 1.5rem;      /* 24px */
+  --text-3xl: 1.875rem;    /* 30px */
+
+  /* Typography - Font Weights */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* Typography - Line Heights */
+  --leading-none: 1;
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* Spacing Scale (4px base unit) */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 0.125rem;   /* 2px */
+  --space-1: 0.25rem;      /* 4px */
+  --space-1-5: 0.375rem;   /* 6px */
+  --space-2: 0.5rem;       /* 8px */
+  --space-2-5: 0.625rem;   /* 10px */
+  --space-3: 0.75rem;      /* 12px */
+  --space-3-5: 0.875rem;   /* 14px */
+  --space-4: 1rem;         /* 16px */
+  --space-5: 1.25rem;      /* 20px */
+  --space-6: 1.5rem;       /* 24px */
+  --space-7: 1.75rem;      /* 28px */
+  --space-8: 2rem;         /* 32px */
+  --space-9: 2.25rem;      /* 36px */
+  --space-10: 2.5rem;      /* 40px */
+  --space-12: 3rem;        /* 48px */
+  --space-14: 3.5rem;      /* 56px */
+  --space-16: 4rem;        /* 64px */
+
+  /* Component-Specific Spacing */
+  --toolbar-gap: var(--space-6);           /* 24px */
+  --toolbar-item-gap: var(--space-1);      /* 4px */
+  --panel-padding: var(--space-4);         /* 16px */
+  --modal-padding: var(--space-6);         /* 24px */
+  --input-padding-x: var(--space-3);       /* 12px */
+  --input-padding-y: var(--space-2);       /* 8px */
+  --button-padding-x: var(--space-4);      /* 16px */
+  --button-padding-y: var(--space-2);      /* 8px */
+
+  /* Border Radius */
+  --radius-none: 0;
+  --radius-sm: 0.25rem;    /* 4px */
+  --radius-md: 0.5rem;     /* 8px */
+  --radius-lg: 0.75rem;    /* 12px */
+  --radius-xl: 1rem;       /* 16px */
+  --radius-2xl: 1.5rem;    /* 24px */
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  --shadow-modal: 0 8px 28px rgb(0 0 0 / 0.25);
+  --shadow-dropdown: 0 4px 12px rgb(0 0 0 / 0.15);
+
+  /* Z-Index Scale */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-fixed: 300;
+  --z-modal-backdrop: 400;
+  --z-modal: 500;
+  --z-popover: 600;
+  --z-tooltip: 700;
+  --z-notification: 800;
+
+  /* Transitions */
+  --transition-fast: 150ms;
+  --transition-normal: 200ms;
+  --transition-slow: 300ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ========================================
+     THEME COLORS
+     ======================================== */
+
+  /* LIGHT THEME (Default) - Clean, professional */
+  --background: 0 0% 98%;            /* #fafafa - slightly warmer than pure white */
+  --foreground: 0 0% 12%;            /* #1f1f1f - slightly darker for contrast */
+
+  --card: 0 0% 100%;                 /* white */
+  --card-foreground: 0 0% 12%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 12%;
+
+  --primary: 217 85% 48%;            /* #1a6dd8 - deeper, more professional blue */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 220 14% 96%;          /* neutral secondary */
+  --secondary-foreground: 0 0% 12%;
+
+  --muted: 0 0% 96%;                 /* #f5f5f5 - neutral muted */
+  --muted-foreground: 0 0% 45%;      /* #737373 */
+
+  --accent: 217 85% 48%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 72% 51%;          /* #dc2626 */
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 0 0% 90%;                /* #e5e5e5 - neutral border */
+  --input: 0 0% 90%;
+  --ring: 217 85% 48%;
+
+  --radius: 0.5rem;
+
+  /* Canvas/Stage - matches theme */
+  --canvas: 0 0% 92%;                /* #ebebeb - light gray canvas for light mode */
+  --canvas-foreground: 0 0% 20%;
+
+  /* Panel-specific (AnnotationsBank) */
+  --panel-bg: 0 0% 100%;
+  --panel-border: 0 0% 90%;
+  --panel-text: 0 0% 15%;
+
+  /* Measurement colors (preserve functional RGBA values) */
+  --measurement-ascenders: rgba(0, 255, 0, 0.5);
+  --measurement-descenders: rgba(0, 0, 255, 0.5);
+  --measurement-interlinear: rgba(255, 165, 0, 0.5);
+  --measurement-upper-margin: rgba(255, 0, 0, 0.5);
+  --measurement-lower-margin: rgba(128, 0, 128, 0.5);
+  --measurement-internal-margin: rgba(0, 255, 255, 0.5);
+  --measurement-intercolumn: rgba(255, 0, 255, 0.5);
+  --measurement-line-height: rgba(100, 100, 255, 0.5);
+  --measurement-minimum-height: rgba(255, 100, 100, 0.5);
+
+  /* Navigation bar specific - now using neutral colors */
+  --nav-bg: 0 0% 100%;               /* white nav bar */
+  --nav-border: 0 0% 90%;
+}
+
+/* DARK THEME - Professional neutral grays */
+.dark {
+  /* Base surfaces - using neutral grays (no blue tint) */
+  --background: 0 0% 9%;             /* #171717 - main background */
+  --foreground: 0 0% 95%;            /* #f2f2f2 - brighter for readability */
+
+  /* Elevated surfaces */
+  --card: 0 0% 12%;                  /* #1f1f1f - cards, panels */
+  --card-foreground: 0 0% 95%;
+
+  --popover: 0 0% 14%;               /* #242424 - dropdowns, popovers */
+  --popover-foreground: 0 0% 95%;
+
+  /* Brand colors - reduced saturation for comfort */
+  --primary: 213 85% 58%;            /* #3d8bfa - easier on eyes */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 18%;             /* #2e2e2e - subtle secondary */
+  --secondary-foreground: 0 0% 95%;
+
+  /* Muted elements - improved readability */
+  --muted: 0 0% 15%;                 /* #262626 - muted backgrounds */
+  --muted-foreground: 0 0% 65%;      /* #a6a6a6 - more readable */
+
+  /* Accent - same as primary for consistency */
+  --accent: 213 85% 58%;
+  --accent-foreground: 0 0% 100%;
+
+  /* Destructive - slightly muted red */
+  --destructive: 0 62% 50%;          /* #c93c3c */
+  --destructive-foreground: 0 0% 100%;
+
+  /* Borders - more visible separation */
+  --border: 0 0% 22%;                /* #383838 - clearer borders */
+  --input: 0 0% 22%;
+  --ring: 213 85% 58%;
+
+  /* Panel specific */
+  --panel-bg: 0 0% 12%;
+  --panel-border: 0 0% 24%;          /* more visible panel borders */
+  --panel-text: 0 0% 95%;
+
+  /* Navigation */
+  --nav-bg: 0 0% 11%;                /* #1c1c1c */
+  --nav-border: 0 0% 20%;
+
+  /* Canvas/Stage - deep black for manuscript viewing */
+  --canvas: 0 0% 5%;                 /* #0d0d0d - deeper for contrast */
+  --canvas-foreground: 0 0% 90%;
+}
+
+/* HIGH CONTRAST THEME */
+.high-contrast {
+  --background: 0 0% 100%;           /* Pure white */
+  --foreground: 0 0% 0%;             /* Pure black */
+
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 0%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 0%;
+
+  --primary: 217 100% 35%;           /* Darker blue for contrast */
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 0%;
+  --secondary-foreground: 0 0% 100%;
+
+  --muted: 0 0% 95%;
+  --muted-foreground: 0 0% 0%;
+
+  --accent: 217 100% 35%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 100% 40%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 0 0% 0%;
+  --input: 0 0% 0%;
+  --ring: 0 0% 0%;
+
+  --panel-bg: 0 0% 100%;
+  --panel-border: 0 0% 0%;
+  --panel-text: 0 0% 0%;
+
+  --nav-bg: 0 0% 95%;
+  --nav-border: 0 0% 0%;
+
+  /* High contrast measurement colors - more saturated */
+  --measurement-ascenders: rgba(0, 180, 0, 0.8);
+  --measurement-descenders: rgba(0, 0, 200, 0.8);
+  --measurement-interlinear: rgba(200, 130, 0, 0.8);
+  --measurement-upper-margin: rgba(200, 0, 0, 0.8);
+  --measurement-lower-margin: rgba(100, 0, 100, 0.8);
+  --measurement-internal-margin: rgba(0, 180, 180, 0.8);
+  --measurement-intercolumn: rgba(180, 0, 180, 0.8);
+  --measurement-line-height: rgba(80, 80, 200, 0.8);
+  --measurement-minimum-height: rgba(200, 80, 80, 0.8);
+}
+
+/* Base styles */
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  font-feature-settings: "rlig" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Utility classes for backward compatibility during migration */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border-radius: var(--radius);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  padding: 1.25rem;
+}

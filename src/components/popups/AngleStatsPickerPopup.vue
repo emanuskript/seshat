@@ -1,66 +1,161 @@
 <template>
-  <div v-if="visible" class="length-popup" @keydown.esc="$emit('cancel')">
-    <div class="length-popup-content" role="dialog" aria-modal="true" aria-label="Choose angle statistics scope">
-      <h3 class="title">Angle Statistics</h3>
+  <Dialog :open="visible" @update:open="handleOpenChange">
+    <DialogContent class="sm:max-w-3xl" @keydown.esc="$emit('cancel')">
+      <DialogHeader>
+        <DialogTitle>Angle Statistics</DialogTitle>
+        <DialogDescription>
+          Choose a scope to view statistics for your angle measurements.
+        </DialogDescription>
+      </DialogHeader>
 
-      <div class="section-title">Scope</div>
-      <div class="options-grid wide">
-        <button type="button" class="type-button" @click="$emit('confirm', { scope: 'current', label: null })">
-          <span class="swatch big"></span>
-          <span class="label">Current Page (All Labels)</span>
-        </button>
-        <button type="button" class="type-button" @click="$emit('confirm', { scope: 'entire', label: null })">
-          <span class="swatch big"></span>
-          <span class="label">Entire Document (All Labels)</span>
-        </button>
+      <div class="space-y-4 py-4">
+        <!-- Scope Section -->
+        <div>
+          <Label class="text-sm font-semibold mb-2 block">Scope</Label>
+          <div class="options-grid wide">
+            <button
+              type="button"
+              class="scope-button"
+              @click="$emit('confirm', { scope: 'current', label: null })"
+            >
+              <span class="swatch big" />
+              <span class="button-label">Current Page (All Labels)</span>
+            </button>
+            <button
+              type="button"
+              class="scope-button"
+              @click="$emit('confirm', { scope: 'entire', label: null })"
+            >
+              <span class="swatch big" />
+              <span class="button-label">Entire Document (All Labels)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- By Label Section -->
+        <div>
+          <Label class="text-sm font-semibold mb-2 block">By Label</Label>
+          <div v-if="labels && labels.length" class="options-grid">
+            <button
+              v-for="l in labels"
+              :key="l"
+              type="button"
+              class="scope-button"
+              @click="$emit('confirm', { scope: 'byLabel', label: l })"
+            >
+              <span class="swatch" />
+              <span class="button-label">{{ l }}</span>
+            </button>
+          </div>
+          <p v-else class="empty-message">
+            No labels yet — create one by measuring with a new label.
+          </p>
+        </div>
       </div>
 
-      <div class="section-title">By Label</div>
-      <div v-if="labels && labels.length" class="options-grid">
-        <button
-          v-for="l in labels"
-          :key="l"
-          type="button"
-          class="type-button"
-          @click="$emit('confirm', { scope: 'byLabel', label: l })"
-        >
-          <span class="swatch"></span>
-          <span class="label">{{ l }}</span>
-        </button>
-      </div>
-      <div v-else class="empty">No labels yet — create one by measuring with a new label.</div>
-
-      <div class="actions">
-        <button class="cancel" type="button" @click="$emit('cancel')">Close</button>
-      </div>
-    </div>
-  </div>
+      <DialogFooter>
+        <Button variant="outline" @click="$emit('cancel')">Close</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <script>
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+
 export default {
   name: "AngleStatsPickerPopup",
+  components: {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    Button,
+    Label,
+  },
   props: {
     visible: { type: Boolean, default: false },
     labels: { type: Array, default: () => [] },
+  },
+  emits: ['confirm', 'cancel'],
+  methods: {
+    handleOpenChange(open) {
+      if (!open) {
+        this.$emit('cancel');
+      }
+    },
   },
 };
 </script>
 
 <style scoped>
-.length-popup { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.5); z-index: 1100; }
-.length-popup-content { width: min(760px, 92vw); background: #fff; border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.25); padding: 28px; }
-.title { font-size: 28px; text-align: center; margin: 0 0 12px; }
-.section-title { margin: 14px 4px 8px; font-weight: 600; color: #222; }
-.options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 10px; }
-.options-grid.wide { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.type-button { display: grid; justify-items: center; gap: 8px; padding: 12px 10px; border: 1px solid #d3d3d3; border-radius: 10px; background: #fafafa; cursor: pointer; }
-.type-button:hover { border-color: #9ec9ff; background: #f6fbff; }
-.swatch { width: 44px; height: 44px; border-radius: 8px; background: #e9ecef; border: 2px solid rgba(0,0,0,.08); }
-.swatch.big { width: 58px; height: 58px; }
-.label { font-size: 14px; color: #222; text-align: center; }
-.empty { font-size: 14px; color: #666; margin: 6px 0 12px; }
-.actions { display: flex; justify-content: center; margin-top: 10px; }
-.actions .cancel { min-width: 120px; padding: 10px 14px; border-radius: 8px; border: 1px solid #c8c8c8; background: #fff; font-size: 16px; cursor: pointer; }
-.actions .cancel:hover { background: #f3f3f3; }
+.options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+.options-grid.wide {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.scope-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 2px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--muted));
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.scope-button:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--primary) / 0.05);
+}
+
+.scope-button:focus-visible {
+  outline: none;
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+}
+
+.swatch {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-md);
+  background: hsl(var(--muted-foreground) / 0.15);
+  border: 2px solid hsl(var(--border));
+}
+
+.swatch.big {
+  width: 3.5rem;
+  height: 3.5rem;
+}
+
+.button-label {
+  font-size: var(--text-sm);
+  color: hsl(var(--foreground));
+  text-align: center;
+}
+
+.empty-message {
+  font-size: var(--text-sm);
+  color: hsl(var(--muted-foreground));
+  margin: 0.25rem 0;
+}
 </style>

@@ -3,6 +3,19 @@
     <!-- Moving icon background -->
     <div class="bg-icons" aria-hidden="true"></div>
 
+    <!-- Theme Toggle -->
+    <div class="theme-toggle">
+      <button
+        class="theme-btn"
+        @click="cycleTheme"
+        :title="`Current: ${currentTheme}`"
+      >
+        <Sun v-if="currentTheme === 'light'" :size="20" />
+        <Moon v-else-if="currentTheme === 'dark'" :size="20" />
+        <Contrast v-else :size="20" />
+      </button>
+    </div>
+
     <!-- Centered Logo -->
     <div class="brand">
       <img src="@/assets/logo.png" alt="Seshat logo" />
@@ -17,7 +30,7 @@
       <div class="form">
         <!-- IIIF Link Input -->
         <label class="field">
-          <i class="fa-solid fa-link" aria-hidden="true"></i>
+          <Link :size="18" aria-hidden="true" />
           <input
             type="text"
             v-model="iiifLink"
@@ -30,7 +43,7 @@
         <!-- Upload -->
         <div class="upload">
           <label class="upload-btn" for="upload-file">
-            <i class="fa-solid fa-upload" aria-hidden="true"></i>
+            <Upload :size="18" aria-hidden="true" />
             <span>Upload Image</span>
           </label>
           <input
@@ -48,7 +61,7 @@
         <!-- Start -->
         <button class="cta" @click="startAnnotating">
           <span>Start Annotating</span>
-          <i class="fa-solid fa-arrow-right-long" aria-hidden="true"></i>
+          <ArrowRight :size="18" aria-hidden="true" />
         </button>
       </div>
 
@@ -58,8 +71,24 @@
 </template>
 
 <script>
+import { Link, Upload, ArrowRight, Sun, Moon, Contrast } from 'lucide-vue-next'
+import { useTheme } from '@/composables/useTheme'
+
 export default {
   name: "SeshatInput",
+  components: { Link, Upload, ArrowRight, Sun, Moon, Contrast },
+  setup() {
+    const { currentTheme, setTheme } = useTheme()
+
+    const cycleTheme = () => {
+      const themes = ['light', 'dark', 'high-contrast']
+      const currentIndex = themes.indexOf(currentTheme.value)
+      const nextIndex = (currentIndex + 1) % themes.length
+      setTheme(themes[nextIndex])
+    }
+
+    return { currentTheme, setTheme, cycleTheme }
+  },
   data() {
     return {
       iiifLink: "",
@@ -100,13 +129,33 @@ export default {
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  background: radial-gradient(
-    1200px 600px at 50% -10%,
-    #eef6ff 0%,
-    #f6f9ff 40%,
-    #f8fbff 60%,
-    #f4f6fa 100%
-  );
+  background: hsl(var(--background));
+}
+
+/* Theme toggle button */
+.theme-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+}
+.theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-md, 0 4px 6px -1px rgb(0 0 0 / 0.1));
+}
+.theme-btn:hover {
+  background: hsl(var(--muted));
+  transform: scale(1.05);
 }
 
 /* --- Animated icon background --- */
@@ -117,6 +166,7 @@ export default {
   background-size: 240px 240px;
   animation: scroll-bg 20s linear infinite;
   pointer-events: none;
+  opacity: 0.5;
 }
 @keyframes scroll-bg {
   from {
@@ -136,7 +186,7 @@ export default {
   z-index: 10;
 }
 .brand img {
-  height: 160px; /* Bigger logo */
+  height: 160px;
   width: auto;
   filter: drop-shadow(0 8px 18px rgba(22, 45, 90, 0.2));
 }
@@ -148,25 +198,24 @@ export default {
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(780px, 92vw);
-  background: #fffdfa;
-  border: 1px solid #f2e3b3;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 18px;
-  box-shadow: 0 14px 40px rgba(11, 39, 85, 0.12);
+  box-shadow: var(--shadow-lg, 0 14px 40px rgba(0, 0, 0, 0.12));
   padding: 24px;
 }
 
 .ribbon {
-  --r: #2b6fde;
   margin: -18px auto 18px;
   width: 70%;
-  background: var(--r);
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-weight: 700;
   text-align: center;
   border-radius: 14px;
   padding: 10px 16px;
   letter-spacing: 0.2px;
-  box-shadow: 0 6px 0 rgba(22, 69, 170, 0.25) inset;
+  box-shadow: 0 6px 0 hsl(var(--primary) / 0.3) inset;
 }
 
 .base-accent {
@@ -176,7 +225,7 @@ export default {
   bottom: -10px;
   height: 10px;
   border-radius: 10px;
-  background: linear-gradient(90deg, #f6d684, #eac663);
+  background: linear-gradient(90deg, hsl(45 90% 70%), hsl(45 80% 60%));
   box-shadow: 0 6px 10px rgba(180, 140, 40, 0.25);
 }
 
@@ -190,13 +239,14 @@ export default {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #f5f9ff;
-  border: 1px solid #d7e6ff;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   padding: 10px 12px;
 }
-.field i {
-  color: #2b6fde;
+.field svg {
+  color: hsl(var(--primary));
+  flex-shrink: 0;
 }
 .field input {
   flex: 1;
@@ -205,7 +255,10 @@ export default {
   outline: 0;
   background: transparent;
   padding: 6px 4px;
-  color: #0f2250;
+  color: hsl(var(--foreground));
+}
+.field input::placeholder {
+  color: hsl(var(--muted-foreground));
 }
 
 /* Upload row */
@@ -219,9 +272,9 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #eaf1ff;
-  color: #1746b2;
-  border: 1px solid #cfe0ff;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary) / 0.3);
   border-radius: 10px;
   padding: 9px 14px;
   cursor: pointer;
@@ -229,14 +282,14 @@ export default {
   transition: all 0.15s ease;
 }
 .upload-btn:hover {
-  background: #e1ebff;
+  background: hsl(var(--primary) / 0.15);
   transform: translateY(-1px);
 }
 .file-input {
   display: none;
 }
 .file-name {
-  color: #334;
+  color: hsl(var(--foreground));
   font-size: 14px;
   max-width: 260px;
   white-space: nowrap;
@@ -244,7 +297,7 @@ export default {
   text-overflow: ellipsis;
 }
 .file-name.muted {
-  color: #9099aa;
+  color: hsl(var(--muted-foreground));
 }
 
 /* CTA */
@@ -253,19 +306,19 @@ export default {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: #2b6fde;
-  color: #fff;
-  border: 1px solid #2059d5;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: 1px solid hsl(var(--primary));
   border-radius: 12px;
   padding: 12px 16px;
   font-weight: 700;
   letter-spacing: 0.2px;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(23, 70, 178, 0.25);
+  box-shadow: var(--shadow-md, 0 6px 18px rgba(0, 0, 0, 0.15));
   transition: transform 0.06s ease, filter 0.15s ease;
 }
 .cta:hover {
-  filter: brightness(0.98);
+  filter: brightness(0.95);
 }
 .cta:active {
   transform: translateY(1px);

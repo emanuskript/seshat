@@ -114,18 +114,7 @@ export default {
 </script>
 
 <style scoped>
-/* Light blue theme + old compact layout feel */
-:root{
-  --panel-bg: #f1f1f1; /* same as main app background - solid, not transparent */
-  --panel-border: #cfe2ff;
-  --panel-text: #0c2a53;
-
-  --blue: #0d6efd;
-  --blue-600:#0b5ed7;
-
-  --danger:#dc3545;
-  --danger-600:#bb2d3b;
-}
+/* Themed annotations bank panel */
 
 /* anchored, compact */
 .bank{
@@ -136,11 +125,11 @@ export default {
   max-height: 52vh;
   display: flex;
   flex-direction: column;
-  background: #f1f1f1; /* direct solid gray background */
-  color: var(--panel-text);
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  box-shadow: 0 10px 26px rgba(0,0,0,.18);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-lg, 0 10px 26px rgba(0,0,0,.18));
   overflow: hidden;
   z-index: 2000 !important; /* Below all popups but above stage */
   font-size: 12px;
@@ -157,13 +146,13 @@ export default {
 /* header (thin like old) */
 .bank__header{
   padding: 8px 10px;
-  border-bottom: 1px solid var(--panel-border);
-  background: #f1f1f1; /* solid background, same as main */
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
-.bank__title{ font-weight: 600; }
+.bank__title{ font-weight: 600; color: hsl(var(--foreground)); }
 
 .header-controls {
   display: flex;
@@ -172,8 +161,8 @@ export default {
 }
 
 .zoom-indicator {
-  background: #3b82f6;
-  color: white;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
@@ -192,13 +181,13 @@ export default {
   position: relative;
   width: 32px;
   height: 16px;
-  background: #ccc;
+  background: hsl(var(--muted));
   border-radius: 16px;
   transition: background-color 0.3s ease;
 }
 
 .toggle-switch.active {
-  background: #3b82f6;
+  background: hsl(var(--primary));
 }
 
 .toggle-slider {
@@ -207,7 +196,7 @@ export default {
   left: 2px;
   width: 12px;
   height: 12px;
-  background: white;
+  background: hsl(var(--background));
   border-radius: 50%;
   transition: transform 0.3s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -220,7 +209,7 @@ export default {
 .unit-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--panel-text);
+  color: hsl(var(--foreground));
   min-width: 16px;
 }
 
@@ -229,11 +218,12 @@ export default {
 .bank__row{
   display:flex; gap:8px; align-items:flex-start;
   padding:7px 8px; border-radius:10px; cursor:pointer; user-select:none;
+  transition: background 0.15s ease;
 }
-.bank__row:hover{ background: rgba(13,110,253,.08); }
+.bank__row:hover{ background: hsl(var(--primary) / 0.08); }
 .bank__row--selected{
-  outline: 2px solid rgba(13,110,253,.55);
-  background: rgba(13,110,253,.12);
+  outline: 2px solid hsl(var(--primary) / 0.55);
+  background: hsl(var(--primary) / 0.12);
 }
 .bank__dot{
   width:10px; height:10px; border-radius:999px; margin-top:3px;
@@ -241,38 +231,42 @@ export default {
 }
 .bank__text{ flex:1; min-width:0; }
 .bank__title-line{ display:flex; align-items:center; gap:6px; }
-.bank__row-title{ font-weight:600; font-size:12px; line-height:1.15; }
+.bank__row-title{ font-weight:600; font-size:12px; line-height:1.15; color: hsl(var(--foreground)); }
 .bank__badge{
-  font-size:10px; background:#e7f1ff; border:1px solid #cfe2ff; color:#0a58ca;
+  font-size:10px; background: hsl(var(--primary) / 0.1); border:1px solid hsl(var(--primary) / 0.3); color: hsl(var(--primary));
   padding:2px 6px; border-radius:999px;
 }
 .bank__subtitle{
-  font-size:11px; color:#2d496f; opacity:.9; margin-top:2px;
+  font-size:11px; color: hsl(var(--muted-foreground)); opacity:.9; margin-top:2px;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 
 /* empty */
-.bank__empty{ padding:16px 10px; color:#5a7aa9; text-align:center; }
+.bank__empty{ padding:16px 10px; color: hsl(var(--muted-foreground)); text-align:center; }
 
-/* footer (blue buttons like requested) */
+/* footer (themed buttons) */
 .bank__footer{
-  display:flex; gap:8px; padding:8px; border-top:1px solid var(--panel-border);
-  background: #f1f1f1; /* solid background, same as main */
+  display:flex; gap:8px; padding:8px; border-top:1px solid hsl(var(--border));
+  background: hsl(var(--card));
 }
 .bank__btn{
-  flex:1; appearance:none; border:1px solid #b6d1ff; background:#e7f1ff;
-  color:#0a58ca; font-weight:600; padding:6px 8px; border-radius:8px; cursor:pointer;
+  flex:1; appearance:none; border:1px solid hsl(var(--border)); background: hsl(var(--muted));
+  color: hsl(var(--foreground)); font-weight:600; padding:6px 6px; border-radius:8px; cursor:pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  font-size: 11px;
+  min-width: 0;
 }
-.bank__btn:hover{ background:#d9e9ff; }
+.bank__btn:hover{ filter: brightness(0.95); }
 .bank__btn:disabled{ opacity:.5; cursor:not-allowed; }
 
 .bank__btn--primary{
-  background: #3b82f6; border-color: #3b82f6; color:#fff;
+  background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground));
 }
-.bank__btn--primary:hover{ background: #2563eb; border-color: #2563eb; }
+.bank__btn--primary:hover{ filter: brightness(0.9); }
 
 .bank__btn--danger{
-  background: #dc2626; border-color: #dc2626; color:#fff;
+  background: hsl(var(--destructive)); border-color: hsl(var(--destructive)); color: hsl(var(--destructive-foreground));
 }
-.bank__btn--danger:hover{ background: #b91c1c; border-color: #b91c1c; }
+.bank__btn--danger:hover{ filter: brightness(0.9); }
 </style>

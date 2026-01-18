@@ -24,3 +24,22 @@ pnpm-debug.log*
 .vercel
 Pharosight/
 pharosight-backend/Pharosight/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+python-backend/scribe_env/
+venv/
+.venv/
+env/
+
+# Runtime/upload files
+python-backend/uploads/
+python-backend/static/jobs/
+
+# Claude Code
+.claude/

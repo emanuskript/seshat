@@ -1,8 +1,9 @@
 import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router"; // Import the router
-import '@fortawesome/fontawesome-free/css/all.css';
-import '@fortawesome/fontawesome-free/js/all.js';
+
+// Tailwind CSS and global styles
+import './assets/styles/globals.css';
 
 // Ensure every runtime origin points to the Hugging Face backend.
 const HF_BACKEND = 'https://basuony-pharosight.hf.space';

@@ -11,80 +11,108 @@
         @click="goHome"
       />
 
-      <div class="toolbar">
-        <!-- Comment -->
-        <div class="toolbar-item" @click="selectTool('comment')">
-          <i class="fa-regular fa-comment"></i>
-          <span>Comment</span>
-        </div>
+      <TooltipProvider :delay-duration="300">
+        <div class="toolbar">
+          <!-- Comment -->
+          <div class="toolbar-item" @click="selectTool('comment')">
+            <MessageSquare :size="22" />
+            <span>Comment</span>
+          </div>
 
-        <!-- Highlight -->
-        <div class="toolbar-item" @click="selectTool('highlight')">
-          <i class="fa-solid fa-highlighter"></i>
-          <span>Highlight</span>
-        </div>
+          <!-- Highlight -->
+          <div class="toolbar-item" @click="selectTool('highlight')">
+            <Highlighter :size="22" />
+            <span>Highlight</span>
+          </div>
 
-        <!-- Underline -->
-        <div class="toolbar-item" @click="selectTool('underline')">
-          <i class="fa-solid fa-underline"></i>
-          <span>Underline</span>
-        </div>
+          <!-- Underline -->
+          <div class="toolbar-item" @click="selectTool('underline')">
+            <Underline :size="22" />
+            <span>Underline</span>
+          </div>
 
-        <!-- Trace -->
-        <div class="toolbar-item" @click="selectTool('trace')">
-          <i class="fa-solid fa-pencil"></i>
-          <span>Trace</span>
-        </div>
+          <!-- Trace -->
+          <div class="toolbar-item" @click="selectTool('trace')">
+            <Pencil :size="22" />
+            <span>Trace</span>
+          </div>
 
-        <!-- Crop -->
-        <div class="toolbar-item" @click="startCrop">
-          <i class="fa-solid fa-scissors"></i>
-          <span>Crop</span>
-        </div>
+          <!-- Crop -->
+          <div class="toolbar-item" @click="startCrop">
+            <Scissors :size="22" />
+            <span>Crop</span>
+          </div>
 
-        <!-- divider -->
-        <div class="toolbar-divider" aria-hidden="true"></div>
+          <!-- Image Adjustments -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" :class="{ active: showAdjustmentsPanel || hasActiveFilters }" @click="toggleAdjustmentsPanel">
+                <SlidersHorizontal :size="22" />
+                <span>Adjust</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Adjust Image (Brightness, Contrast, etc.)</TooltipContent>
+          </Tooltip>
 
-        <!-- Measure Angle -->
-        <div class="toolbar-item" @click="selectTool('measure')">
-          <i class="fa-solid fa-angle-up"></i>
-          <span>Measure</span>
-          <span>Angle</span>
-        </div>
+          <!-- divider -->
+          <div class="toolbar-divider" aria-hidden="true"></div>
 
-        <!-- Horizontal Bands -->
-        <div class="toolbar-item" @click="openHorizontalPopup">
-          <i class="fa-solid fa-ruler-horizontal"></i>
-          <span>Horizontal</span>
-          <span>Bands</span>
-        </div>
+          <!-- Measure Angle -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="selectTool('measure')">
+                <ChevronUp :size="22" />
+                <span>Angle</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Measure Angle</TooltipContent>
+          </Tooltip>
 
-        <!-- Vertical Bands -->
-        <div class="toolbar-item" @click="openVerticalPopup">
-          <i class="fa-solid fa-ruler-vertical"></i>
-          <span>Vertical</span>
-          <span>Bands</span>
-        </div>
+          <!-- Horizontal Bands -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="openHorizontalPopup">
+                <Ruler :size="22" />
+                <span>Horizontal</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Measure Horizontal Bands</TooltipContent>
+          </Tooltip>
 
-        <!-- Generate Statistics -->
-        <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
-          <i class="fa-solid fa-calculator"></i>
-          <span>Generate</span>
-          <span>Statistics</span>
-        </div>
+          <!-- Vertical Bands -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="openVerticalPopup">
+                <RulerDimensionLine :size="22" />
+                <span>Vertical</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Measure Vertical Bands</TooltipContent>
+          </Tooltip>
+
+          <!-- Generate Statistics -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
+                <Calculator :size="22" />
+                <span>Statistics</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Generate Statistics</TooltipContent>
+          </Tooltip>
 
         <!-- divider -->
         <div class="toolbar-divider" aria-hidden="true"></div>
 
         <!-- Save -->
         <div class="toolbar-item" @click="saveAnnotations">
-          <i class="fa-solid fa-save"></i>
+          <Save :size="22" />
           <span>Save</span>
         </div>
 
         <!-- Clear -->
         <div class="toolbar-item" @click="toggleClearDropdown">
-          <i class="fa-regular fa-trash-can"></i>
+          <Trash2 :size="22" />
           <span>Clear</span>
           <div v-if="showClearDropdown" class="clear-dropdown">
             <div @click.stop="clearHighlights">Clear Highlights</div>
@@ -97,7 +125,25 @@
             <div @click.stop="clearAll">Clear All</div>
           </div>
         </div>
+
+        <!-- Theme Toggle -->
+        <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
+          <Palette :size="22" />
+          <span>Theme</span>
+          <div v-if="showThemeDropdown" class="theme-dropdown">
+            <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
+              <Sun :size="16" /> Light
+            </div>
+            <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
+              <Moon :size="16" /> Dark
+            </div>
+            <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
+              <Contrast :size="16" /> High Contrast
+            </div>
+          </div>
+        </div>
       </div>
+      </TooltipProvider>
     </div>
     <!-- Page Navigation (now right under the toolbar, at the top) -->
     <NavigationBar
@@ -126,9 +172,6 @@
         class="pdf-viewer stage"
         ref="viewer"
         :style="{ cursor: stageCursor }"
-        @mousedown="startTrace($event)"
-        @mousemove="trace($event)"
-        @mouseup="endTrace($event)"
         @selectstart.prevent.stop
         @dragstart.prevent.stop
         @contextmenu.prevent.stop
@@ -137,53 +180,31 @@
         oncontextmenu="return false"
         unselectable="on"
       >
-        <!-- NEW: zoom anchor -->
-        <div v-show="imageReady" class="zoom-anchor" :style="anchorStyle">
-          <!-- ⬇️ keep your existing <img>, <svg>, rectangles, comments, etc. here ⬇️ -->
-        
-        <!-- NUCLEAR OPTION: Replace img with div background -->
+        <!-- OpenSeadragon Container -->
+        <div ref="osdContainer" class="osd-container"></div>
+
+        <!-- Event Intercept Layer - captures events when tools are active -->
         <div
-          v-if="croppedImage || currentImage"
-          class="image-viewer-background"
-          :style="{
-            backgroundImage: `url(${croppedImage || currentImage})`,
-            backgroundSize: 'contain',
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'center',
-            width: '100%',
-            height: '100%'
-          }"
-          draggable="false"
-          unselectable="on"
-          @selectstart.prevent.stop
-          @dragstart.prevent.stop
-          @mousedown.prevent.stop="handleMainImageMouseDown"
-          @contextmenu.prevent.stop
-          ondragstart="return false"
-          onselectstart="return false"
-          oncontextmenu="return false"
-          onmousedown="return false"
-          onmouseup="return false"
-          onmousemove="return false"
-          onclick="return false"
+          v-show="isAnyToolActive"
+          class="event-intercept-layer"
+          @mousedown="startTrace($event)"
+          @mousemove="trace($event)"
+          @mouseup="endTrace($event)"
+          @mouseleave="handleMouseLeave($event)"
+          @touchstart.prevent="startTrace($event)"
+          @touchmove.prevent="trace($event)"
+          @touchend.prevent="endTrace($event)"
         ></div>
-        
-        <!-- Invisible image for size calculations positioned correctly -->
-        <img
-          v-if="croppedImage || currentImage"
-          :src="croppedImage || currentImage"
-          ref="image"
-          class="calculation-image"
-          @load="handleImageLoad"
-          style="width: 100% !important; height: 100% !important; object-fit: contain !important; opacity: 0 !important; pointer-events: none !important; user-select: none !important; position: absolute !important; top: 0 !important; left: 0 !important; z-index: -1 !important;"
-        />
+
+        <!-- Annotation Overlay - positioned to match OSD viewport -->
+        <div v-show="osdReady && osdImageWidth > 0" class="annotation-overlay" :style="annotationOverlayStyle">
 
         <!-- SVG drawing layer -->
         <svg
           v-if="showTraces"
           class="drawing-layer"
-          :width="baseFitWidth"
-          :height="baseFitHeight"
+          :viewBox="`0 0 ${osdImageWidth || baseFitWidth} ${osdImageHeight || baseFitHeight}`"
+          preserveAspectRatio="xMidYMid meet"
         >
           <!-- existing traces -->
           <polyline
@@ -350,15 +371,15 @@
           />
         </svg>
 
-        <!-- Dynamic Crop / Highlight / Length rectangles -->
+        <!-- Dynamic Crop / Highlight / Length rectangles - use percentage positioning -->
         <div
           v-if="(isMeasuring && currentSquare) || (highlightModeActive && currentSquare) || (croppingStarted && currentSquare)"
           class="length-measurement"
           :style="{
-            left: `${currentSquare.x}px`,
-            top: `${currentSquare.y}px`,
-            width: `${currentSquare.width}px`,
-            height: `${currentSquare.height}px`,
+            left: `${(currentSquare.x / osdImageWidth) * 100}%`,
+            top: `${(currentSquare.y / osdImageHeight) * 100}%`,
+            width: `${(currentSquare.width / osdImageWidth) * 100}%`,
+            height: `${(currentSquare.height / osdImageHeight) * 100}%`,
             backgroundColor: currentSquare.color || 'rgba(0,0,0,0.1)',
             position: 'absolute',
           }"
@@ -387,16 +408,16 @@
           </div>
         </div>
 
-        <!-- Finalized Lengths -->
+        <!-- Finalized Lengths - use percentage positioning -->
         <div
           v-for="(measurement, index) in currentPageLengthMeasurements"
           :key="'length-' + index"
           class="length-measurement"
           :style="{
-            left: `${measurement.x}px`,
-            top: `${measurement.y}px`,
-            width: `${measurement.width}px`,
-            height: `${measurement.height}px`,
+            left: `${(measurement.x / osdImageWidth) * 100}%`,
+            top: `${(measurement.y / osdImageHeight) * 100}%`,
+            width: `${(measurement.width / osdImageWidth) * 100}%`,
+            height: `${(measurement.height / osdImageHeight) * 100}%`,
             backgroundColor: measurement.color,
             position: 'absolute',
             border: '1px solid #000',
@@ -425,58 +446,58 @@
           </div>
         </div>
 
-        <!-- Highlights -->
+        <!-- Highlights - use percentage positioning relative to overlay -->
         <div
           v-for="(annotation, index) in currentPageHighlights"
           :key="'highlight-' + index"
           class="highlight-rectangle"
           :style="{
-            left: `${annotation.x}px`,
-            top: `${annotation.y}px`,
-            width: `${annotation.width}px`,
-            height: `${annotation.height}px`,
+            left: `${(annotation.x / osdImageWidth) * 100}%`,
+            top: `${(annotation.y / osdImageHeight) * 100}%`,
+            width: `${(annotation.width / osdImageWidth) * 100}%`,
+            height: `${(annotation.height / osdImageHeight) * 100}%`,
             position: 'absolute',
           }"
         ></div>
 
-        <!-- Dynamic Underline -->
+        <!-- Dynamic Underline - use percentage positioning -->
         <div
           v-if="underlineModeActive && currentUnderline"
           class="underline-line"
           :style="{
             position: 'absolute',
-            left: `${currentUnderline.x}px`,
-            top: `${currentUnderline.y}px`,
-            width: `${currentUnderline.width}px`,
+            left: `${(currentUnderline.x / osdImageWidth) * 100}%`,
+            top: `${(currentUnderline.y / osdImageHeight) * 100}%`,
+            width: `${(currentUnderline.width / osdImageWidth) * 100}%`,
             height: '2px',
             backgroundColor: 'blue',
           }"
         ></div>
 
-        <!-- Saved Underlines -->
+        <!-- Saved Underlines - use percentage positioning -->
         <div
           v-for="(annotation, index) in currentPageUnderlines"
           :key="'underline-' + index"
           class="underline-line"
           :style="{
             position: 'absolute',
-            left: `${annotation.x}px`,
-            top: `${annotation.y}px`,
-            width: `${annotation.width}px`,
+            left: `${(annotation.x / osdImageWidth) * 100}%`,
+            top: `${(annotation.y / osdImageHeight) * 100}%`,
+            width: `${(annotation.width / osdImageWidth) * 100}%`,
             height: '2px',
             backgroundColor: 'red',
           }"
         ></div>
 
-        <!-- Cropping rectangle -->
+        <!-- Cropping rectangle - use percentage positioning -->
         <div
           v-if="croppingStarted && currentSquare"
           class="cropping-rectangle"
           :style="{
-            left: `${currentSquare.x}px`,
-            top: `${currentSquare.y}px`,
-            width: `${currentSquare.width}px`,
-            height: `${currentSquare.height}px`,
+            left: `${(currentSquare.x / osdImageWidth) * 100}%`,
+            top: `${(currentSquare.y / osdImageHeight) * 100}%`,
+            width: `${(currentSquare.width / osdImageWidth) * 100}%`,
+            height: `${(currentSquare.height / osdImageHeight) * 100}%`,
             position: 'absolute',
           }"
         ></div>
@@ -550,33 +571,14 @@
     </div>
 
     <!-- Angle Label Picker Popup -->
-    <div v-if="showAngleLabelPopup" class="length-popup" @click.self="showAngleLabelPopup = false">
-      <div class="length-popup-content">
-        <h3>Select or Create Angle Label</h3>
-
-        <div class="label-grid">
-          <button
-            v-for="label in angleLabels"
-            :key="label"
-            class="grid-btn"
-            :class="{ active: activeAngleLabel === label }"
-            @click="activeAngleLabel = label"
-          >
-            {{ label }}
-          </button>
-        </div>
-
-        <div class="new-label-row">
-          <input v-model="newAngleLabel" placeholder="New label…" />
-          <button class="grid-btn" @click="confirmNewAngleLabel">Add</button>
-        </div>
-
-        <div class="popup-actions">
-          <button class="grid-btn" @click="confirmAngleLabel">Use Label</button>
-          <button class="grid-btn" @click="cancelAngleLabel">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <!-- Angle Label Popup -->
+    <AngleLabelPopup
+      :visible="showAngleLabelPopup"
+      :labels="angleLabels"
+      :initial-label="activeAngleLabel"
+      @confirm="onAngleLabelConfirm"
+      @cancel="cancelAngleLabel"
+    />
 
     <!-- Angle Statistics Filter Popup -->
     <div v-if="showAngleFilterPopup" class="length-popup" @click.self="showAngleFilterPopup = false">
@@ -613,46 +615,17 @@
     </div>
 
     <!-- Trace Pen Popup -->
-    <div v-if="showTracePopup" class="length-popup" @click.self="showTracePopup = false">
-      <div class="length-popup-content">
-        <h3>Choose Pen & Angle</h3>
-
-        <div class="row" style="text-align:center">
-          <label style="width:auto;margin-right:8px">Angle:</label>
-          <div class="label-grid">
-            <button
-              v-for="ang in penAngles"
-              :key="'ang-'+ang"
-              class="grid-btn"
-              :class="{ active: selectedPenAngle === ang }"
-              @click="selectedPenAngle = ang"
-            >
-              {{ ang }}°
-            </button>
-          </div>
-        </div>
-
-        <div class="row" style="text-align:center">
-          <label style="width:auto;margin-right:8px">Nib size:</label>
-          <div class="label-grid">
-            <button
-              v-for="p in penSizes"
-              :key="'size-'+p.key"
-              class="grid-btn"
-              :class="{ active: selectedPenSize === p.key }"
-              @click="selectedPenSize = p.key"
-            >
-              {{ p.label }}
-            </button>
-          </div>
-        </div>
-
-        <div class="popup-actions">
-          <button class="grid-btn" @click="confirmPenSelection">Start Tracing</button>
-          <button class="grid-btn" @click="cancelPenSelection">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <TracePopup
+      :visible="showTracePopup"
+      :penAngles="penAngles"
+      :penSizes="penSizes"
+      :selectedAngle="selectedPenAngle"
+      :selectedSize="selectedPenSize"
+      @update:selectedAngle="selectedPenAngle = $event"
+      @update:selectedSize="selectedPenSize = $event"
+      @confirm="confirmPenSelection"
+      @cancel="cancelPenSelection"
+    />
 
     <!-- Stats quick panel (Lengths + Angles entry) -->
     <div
@@ -672,69 +645,21 @@
       </div>
     </div>
 
-    <!-- Horizontal Bands Popup (as buttons) -->
-    <div v-if="showHorizontalPopup" class="length-popup" @click.self="showHorizontalPopup = false">
-      <div class="length-popup-content">
-        <h3>Select Horizontal Measurement</h3>
-        <div class="btn-grid">
-          <button class="grid-btn" @click="beginLength('ascenders')">
-            <span class="swatch" :style="{ background: measurementColors.ascenders }"></span>
-            <span>Ascenders</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('descenders')">
-            <span class="swatch" :style="{ background: measurementColors.descenders }"></span>
-            <span>Descenders</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('interlinear')">
-            <span class="swatch" :style="{ background: measurementColors.interlinear }"></span>
-            <span>Interlinear Spaces</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('upperMargin')">
-            <span class="swatch" :style="{ background: measurementColors.upperMargin }"></span>
-            <span>Upper Margin</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('lowerMargin')">
-            <span class="swatch" :style="{ background: measurementColors.lowerMargin }"></span>
-            <span>Lower Margin</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('lineHeight')">
-            <span class="swatch" :style="{ background: measurementColors.lineHeight }"></span>
-            <span>Line Height</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('minimumHeight')">
-            <span class="swatch" :style="{ background: measurementColors.minimumHeight }"></span>
-            <span>Minim Height</span>
-          </button>
-        </div>
-        <div class="popup-actions">
-          <button class="grid-btn" @click="hideLengthPopup">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <!-- Horizontal Bands Popup -->
+    <LengthPopupHorizontal
+      :visible="showHorizontalPopup"
+      :measurement-colors="measurementColors"
+      @confirm="onHorizontalConfirm"
+      @cancel="showHorizontalPopup = false"
+    />
 
-    <!-- Vertical Bands Popup (as buttons) -->
-    <div v-if="showVerticalPopup" class="length-popup" @click.self="showVerticalPopup = false">
-      <div class="length-popup-content">
-        <h3>Select Vertical Measurement</h3>
-        <div class="btn-grid">
-          <button class="grid-btn" @click="beginLength('internalMargin')">
-            <span class="swatch" :style="{ background: measurementColors.internalMargin }"></span>
-            <span>Internal Margin</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('intercolumnSpaces')">
-            <span class="swatch" :style="{ background: measurementColors.intercolumnSpaces }"></span>
-            <span>Intercolumn Spaces</span>
-          </button>
-          <button class="grid-btn" @click="beginLength('externalMargin')">
-            <span class="swatch" :style="{ background: measurementColors.externalMargin }"></span>
-            <span>External Margin</span>
-          </button>
-        </div>
-        <div class="popup-actions">
-          <button class="grid-btn" @click="hideLengthPopup">Cancel</button>
-        </div>
-      </div>
-    </div>
+    <!-- Vertical Bands Popup -->
+    <LengthPopupVertical
+      :visible="showVerticalPopup"
+      :measurement-colors="measurementColors"
+      @confirm="onVerticalConfirm"
+      @cancel="showVerticalPopup = false"
+    />
 
     <!-- Angle Statistics Result Popup -->
     <div v-if="showAngleStatistics" class="statistics-popup" @click.self="showAngleStatistics = false">
@@ -766,55 +691,21 @@
     </div>
 
     <!-- Lengths Statistics Result Popup -->
-    <div v-if="showStatistics" class="statistics-popup" @click.self="showStatistics = false">
-      <div class="statistics-popup-content">
-        <h3>Statistics</h3>
+    <StatisticsPopup
+      :visible="showStatistics"
+      :horizontal="horizontalStatistics"
+      :vertical="verticalStatistics"
+      @close="closeStatisticsPopup"
+    />
 
-        <!-- Horizontal -->
-        <h4>Horizontal Lengths</h4>
-        <table>
-          <thead>
-            <tr>
-              <th>Measurement</th>
-              <th>Average</th>
-              <th>Standard Deviation</th>
-              <th>Mode</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(stats, type) in horizontalStatistics" :key="type">
-              <td>{{ type }}</td>
-              <td>{{ stats.average.toFixed(2) }}</td>
-              <td>{{ stats.standardDeviation.toFixed(2) }}</td>
-              <td>{{ typeof stats.mode === 'number' ? stats.mode.toFixed(2) : stats.mode }}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <!-- Vertical -->
-        <h4>Vertical Lengths</h4>
-        <table>
-          <thead>
-            <tr>
-              <th>Measurement</th>
-              <th>Average</th>
-              <th>Standard Deviation</th>
-              <th>Mode</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(stats, type) in verticalStatistics" :key="type">
-              <td>{{ type }}</td>
-              <td>{{ stats.average.toFixed(2) }}</td>
-              <td>{{ stats.standardDeviation.toFixed(2) }}</td>
-              <td>{{ typeof stats.mode === 'number' ? stats.mode.toFixed(2) : stats.mode }}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <button class="grid-btn" @click="closeStatisticsPopup">Close</button>
-      </div>
-    </div>
+    <!-- Image Adjustments Panel -->
+    <ImageAdjustmentsPanel
+      v-if="showAdjustmentsPanel"
+      :total-pages="totalPages"
+      @close="showAdjustmentsPanel = false"
+      @apply-to-all="handleApplyFiltersToAll"
+      @filters-changed="onFiltersChanged"
+    />
 
     <!-- Clear Confirmation Popup -->
     <div v-if="showClearConfirmation" class="length-popup" @click.self="showClearConfirmation = false">
@@ -828,77 +719,77 @@
       </div>
     </div>
 
-    <!-- ========= CROPPED IMAGE MODAL (drop-in replacement) ========= -->
-    <div v-if="croppedImage" class="blurred-background" @click="closeCroppedPopup"></div>
+    <!-- ========= CROPPED IMAGE MODAL (shadcn Dialog) ========= -->
+    <Dialog :open="!!croppedImage" @update:open="handleCropDialogChange">
+      <DialogContent class="max-w-[1100px] w-[calc(100vw-48px)] max-h-[calc(100vh-96px)] p-4 flex flex-col gap-0 overflow-hidden">
+        <DialogHeader class="sr-only">
+          <DialogTitle>Cropped Image</DialogTitle>
+          <DialogDescription>Annotate and export your cropped selection.</DialogDescription>
+        </DialogHeader>
 
-    <div v-if="croppedImage" class="cropped-popup" @click.stop>
-      <div class="cropped-popup-content">
-
-        <!-- Header row with centered zoom controls -->
+        <!-- Header with controls -->
         <div class="crop-header">
-          <div class="left-spacer"></div>
-
           <div class="zoom-cluster">
-            <button class="zoom-pill" :disabled="cropZoom<=1" @click.stop="cropZoomOut">−</button>
-            <button class="zoom-pill" @click.stop="cropZoomIn">+</button>
+            <button class="zoom-pill" :disabled="cropZoom<=1" @click="cropZoomOut">−</button>
+            <button class="zoom-pill" @click="cropZoomIn">+</button>
             <span class="zoom-readout">{{ Math.round(cropZoom*100) }}%</span>
           </div>
 
           <div class="crop-actions">
-            <button class="grid-btn" @click.stop="saveCroppedImageAsPNG">Save PNG</button>
-            <button class="grid-btn" @click.stop="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</button>
-            <button class="grid-btn" @click.stop="saveCroppedImage">Save w/ Annotations</button>
-            <button class="grid-btn cancel-btn" @click.stop="closeCroppedPopup">Close</button>
+            <Button variant="outline" size="sm" @click="saveCroppedImageAsPNG">Save PNG</Button>
+            <Button variant="outline" size="sm" @click="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</Button>
+            <Button variant="outline" size="sm" @click="saveCroppedImage">Save w/ Annotations</Button>
+            <Button size="sm" @click="closeCroppedPopup">Close</Button>
           </div>
         </div>
 
         <!-- Mini Toolbar for cropped popup -->
         <div class="crop-toolbar">
-          <div class="crop-tool" 
+          <div class="crop-tool"
                :class="{ active: highlightModeActive }"
                @click="selectTool('highlight')"
                title="Highlight">
-            <i class="fas fa-highlighter"></i>
+            <Highlighter :size="18" />
             <span>Highlight</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                :class="{ active: underlineModeActive }"
                @click="selectTool('underline')"
                title="Underline">
-            <i class="fas fa-minus"></i>
+            <Minus :size="18" />
             <span>Underline</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                :class="{ active: traceModeActive }"
                @click="selectTool('trace')"
                title="Draw">
-            <i class="fas fa-pencil-alt"></i>
+            <Pencil :size="18" />
             <span>Draw</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                :class="{ active: measureModeActive }"
                @click="selectTool('measure')"
                title="Measure Angle">
-            <i class="fas fa-drafting-compass"></i>
+            <Compass :size="18" />
             <span>Angle</span>
           </div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                @click="calculateCroppedAngleStatistics"
                title="Angle Statistics">
-            <i class="fas fa-calculator"></i>
+            <Calculator :size="18" />
             <span>Stats</span>
           </div>
-          
+
           <div class="crop-tool-divider"></div>
-          
-          <div class="crop-tool" 
+
+          <div class="crop-tool"
                @click="selectTool('')"
                title="Pan/Zoom">
-            <i class="fas fa-hand-paper"></i>
+            <Hand :size="18" />
             <span>Pan</span>
           </div>
         </div>
@@ -999,7 +890,7 @@
                   stroke="blue" stroke-width="2" />
                 <text v-if="a.points.length===3"
                   :x="a.points[1].x + 10" :y="a.points[1].y - 10"
-                  fill="darkblue" font-size="12">
+                  :fill="svgLabelFill" font-size="12" font-weight="500">
                   {{ a.angle }}°{{ a.label ? ' • '+a.label : '' }}
                 </text>
               </g>
@@ -1040,8 +931,8 @@
           @request-delete="deleteSelectedCropped"
           @toggle-units="toggleMeasurementUnits"
         />
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
 
     <!-- Scribe Detection Popup -->
     <ScribeDetectionPopup
@@ -1060,10 +951,120 @@ import html2canvas from "html2canvas";
 import AnnotationsBank from "@/components/viewer/AnnotationsBank.vue";
 import NavigationBar from "@/components/viewer/NavigationBar.vue";
 import ScribeDetectionPopup from "@/components/popups/ScribeDetectionPopup.vue";
+import AngleLabelPopup from "@/components/popups/AngleLabelPopup.vue";
+import LengthPopupHorizontal from "@/components/popups/LengthPopupHorizontal.vue";
+import LengthPopupVertical from "@/components/popups/LengthPopupVertical.vue";
+import PenSelectionPopup from "@/components/popups/PenSelectionPopup.vue";
+import AngleStatsPickerPopup from "@/components/popups/AngleStatsPickerPopup.vue";
+import StatisticsPopup from "@/components/popups/StatisticsPopup.vue";
+import TracePopup from "@/components/popups/TracePopup.vue";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { useTheme } from "@/composables/useTheme";
+import { useImageAdjustments } from "@/composables/useImageAdjustments";
+import ImageAdjustmentsPanel from "@/components/viewer/ImageAdjustmentsPanel.vue";
+import OpenSeadragon from "openseadragon";
+import "openseadragon-filtering";
+import { extractServiceId, fetchImageInfo, buildTileSource } from "@/services/iiifService";
+import {
+  MessageSquare,
+  SlidersHorizontal,
+  Highlighter,
+  Underline,
+  Pencil,
+  Scissors,
+  ChevronUp,
+  Ruler,
+  RulerDimensionLine,
+  Calculator,
+  Save,
+  Trash2,
+  Palette,
+  Sun,
+  Moon,
+  Contrast,
+  Minus,
+  Compass,
+  Hand,
+} from "lucide-vue-next";
 
 export default {
   name: "IIIFViewer",
-  components: { AnnotationsBank, NavigationBar, ScribeDetectionPopup },
+  components: {
+    AnnotationsBank,
+    NavigationBar,
+    ScribeDetectionPopup,
+    AngleLabelPopup,
+    LengthPopupHorizontal,
+    LengthPopupVertical,
+    PenSelectionPopup,
+    AngleStatsPickerPopup,
+    StatisticsPopup,
+    TracePopup,
+    ImageAdjustmentsPanel,
+    MessageSquare,
+    SlidersHorizontal,
+    Highlighter,
+    Underline,
+    Pencil,
+    Scissors,
+    ChevronUp,
+    Ruler,
+    RulerDimensionLine,
+    Calculator,
+    Save,
+    Trash2,
+    Palette,
+    Sun,
+    Moon,
+    Contrast,
+    Minus,
+    Compass,
+    Hand,
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    Button,
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+  },
+  setup() {
+    const { currentTheme, setTheme } = useTheme();
+    const {
+      currentFilters,
+      hasActiveFilters,
+      setFilter,
+      resetFilters,
+      applyToAllPages,
+      setCurrentPage: setAdjustmentPage
+    } = useImageAdjustments();
+    return {
+      currentTheme,
+      setTheme,
+      currentFilters,
+      hasActiveFilters,
+      setFilter,
+      resetFilters,
+      applyToAllPages,
+      setAdjustmentPage
+    };
+  },
   props: {
     source: { type: String, required: true },
   },
@@ -1212,6 +1213,8 @@ export default {
 
       // UI
       showClearDropdown: false,
+      showThemeDropdown: false,
+      showAdjustmentsPanel: false,
       showClearConfirmation: false,
       toolMessage: "",
 
@@ -1222,11 +1225,20 @@ export default {
       moveStartPos: null,
       currentMoveDelta: { x: 0, y: 0 },
 
-      // Zoom & Pan
+      // OpenSeadragon state
+      osdViewer: null,       // OpenSeadragon instance
+      osdReady: false,       // Viewer initialized and image loaded
+      osdImageWidth: 0,      // Image natural width from OSD
+      osdImageHeight: 0,     // Image natural height from OSD
+      osdViewportBounds: null, // For triggering overlay updates
+      _overlayUpdatePending: false, // RAF throttle flag for overlay updates
+      isOperationInProgress: false, // Lock to prevent tool switching during drawing
+
+      // Legacy Zoom & Pan (kept for NavigationBar display, will be synced from OSD)
       zoomLevel: 1,
       zoomStep: 0.10,
-      minZoom: 1,
-      maxZoom: 3,
+      minZoom: 0.5,
+      maxZoom: 15,
       _holdTimer: null,      // for long-press reset
       panX: 0,
       panY: 0,
@@ -1275,22 +1287,106 @@ export default {
     zoomedWidth() { return this.baseFitWidth  * (this.zoomLevel || 1); },
     zoomedHeight(){ return this.baseFitHeight * (this.zoomLevel || 1); },
 
-    // Stage cursor: when zoomed, show grab/grabbing; otherwise use your existing logic
+    // Stage cursor: show crosshair for tool modes, let OSD handle default cursor
     stageCursor() {
-      if (this.isPanning) return 'grabbing';
-      if (this.zoomLevel > 1) return 'grab';
-      // Fallback to tool cursors
-      return (this.traceModeActive || this.highlightModeActive || this.underlineModeActive || this.measureModeActive || this.isMeasuring || this.moveModeActive)
-        ? 'crosshair'
-        : 'default';
+      // Show crosshair when a tool is active
+      if (this.isAnyToolActive) {
+        return 'crosshair';
+      }
+      // Let OSD handle cursor for pan/zoom (default, grab, grabbing)
+      return 'default';
+    },
+
+    // Returns true if any annotation tool is active (used for event intercept layer)
+    isAnyToolActive() {
+      return this.traceModeActive || this.highlightModeActive || this.underlineModeActive ||
+             this.measureModeActive || this.isMeasuring || this.moveModeActive ||
+             this.lengthMeasurementActive || this.croppingStarted || this.commentModeActive;
     },
 
     imageReady() {
-      return this.imageLoaded && this.baseFitWidth > 0 && this.baseFitHeight > 0;
+      // Use OSD state when available, fall back to legacy for cropped popup
+      return (this.osdReady && this.osdImageWidth > 0 && this.osdImageHeight > 0) ||
+             (this.imageLoaded && this.baseFitWidth > 0 && this.baseFitHeight > 0);
+    },
+
+    // SVG fill color that adapts to theme (for angle labels in cropped preview)
+    svgLabelFill() {
+      // Read the primary color from CSS variables
+      const style = getComputedStyle(document.documentElement);
+      const primary = style.getPropertyValue('--primary').trim();
+      if (primary) {
+        // Convert HSL values to hsl() format
+        return `hsl(${primary})`;
+      }
+      return '#3d8bfa'; // Fallback blue
+    },
+
+    // Annotation overlay positioning - syncs with OpenSeadragon viewport
+    annotationOverlayStyle() {
+      // Force reactivity on viewport changes
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+
+      if (!this.osdViewer || !this.osdReady) {
+        return { display: 'none' };
+      }
+
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) {
+        return { display: 'none' };
+      }
+
+      // Convert image corners to window (pixel) coordinates
+      // Use Point objects for proper API usage
+      const topLeft = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+      );
+      const bottomRight = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight))
+      );
+
+      const width = bottomRight.x - topLeft.x;
+      const height = bottomRight.y - topLeft.y;
+
+      return {
+        position: 'absolute',
+        left: `${topLeft.x}px`,
+        top: `${topLeft.y}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+        pointerEvents: 'none',
+        overflow: 'visible',
+        zIndex: 10
+      };
     },
 
     anchorBoxInViewer() {
-      // Page rect in viewer-coordinates after zoom/pan (NOT the image's natural size)
+      // Force reactivity on viewport changes
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+
+      // Page rect in viewer-coordinates after zoom/pan
+      // Use OSD viewport when available
+      if (this.osdViewer && this.osdReady) {
+        const tiledImage = this.osdViewer.world.getItemAt(0);
+        if (tiledImage) {
+          // Use Point objects for proper API usage
+          const topLeft = this.osdViewer.viewport.pixelFromPoint(
+            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+          );
+          const bottomRight = this.osdViewer.viewport.pixelFromPoint(
+            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight))
+          );
+          const left = topLeft.x;
+          const top = topLeft.y;
+          const w = bottomRight.x - topLeft.x;
+          const h = bottomRight.y - topLeft.y;
+          return { left, top, width: w, height: h, right: left + w, bottom: top + h };
+        }
+      }
+
+      // Fallback for legacy or cropped popup
       const w = this.zoomedWidth;
       const h = this.zoomedHeight;
       const left = (this.viewerWidth / 2) - (w / 2) + this.panX;
@@ -1299,7 +1395,7 @@ export default {
     },
 
     composerStyle() {
-      if (!this.imageReady) return {};
+      if (!this.imageReady || !this.composerTarget) return {};
       const box = this.anchorBoxInViewer;
       const pad = 12;             // gap outside page
       const width = 260;          // composer width
@@ -1604,7 +1700,25 @@ export default {
       this.pageInput = n + 1;
       // Clear bank selections when page changes
       this.bankSelectedKeys = [];
+      // Update adjustment page for per-page filters
+      this.setAdjustmentPage(n);
     },
+    // Initialize OpenSeadragon when image changes
+    currentImage: {
+      handler(newImage) {
+        if (newImage && !this.croppedImage) {
+          this.initOpenSeadragon(newImage);
+        }
+      },
+      immediate: true
+    },
+    // Watch for filter changes and apply to OSD
+    currentFilters: {
+      handler() {
+        this.applyFiltersToOsd();
+      },
+      deep: true
+    }
   },
   async created() {
     if (!this.source) {
@@ -1655,18 +1769,45 @@ export default {
     document.addEventListener('selectstart', this._preventSelection, true);
     document.addEventListener('dragstart', this._preventSelection, true);
     document.addEventListener('contextmenu', this._preventSelection, true);
+
+    // Global mouseup handler to complete operations when mouse is released outside viewer
+    this._globalMouseUp = (e) => {
+      if (this.isAnyToolActive) {
+        this.endTrace(e);
+      }
+    };
+    window.addEventListener('mouseup', this._globalMouseUp);
   },
 
   beforeUnmount() {
     window.removeEventListener('resize', this.computeBaseFit);
-    
+
+    // Clean up OpenSeadragon
+    if (this.osdViewer) {
+      // Remove all event handlers before destroying
+      this.osdViewer.removeAllHandlers('open');
+      this.osdViewer.removeAllHandlers('open-failed');
+      this.osdViewer.removeAllHandlers('animation');
+      this.osdViewer.removeAllHandlers('animation-finish');
+      this.osdViewer.removeAllHandlers('resize');
+      this.osdViewer.removeAllHandlers('zoom');
+      this.osdViewer.removeAllHandlers('pan');
+      this.osdViewer.destroy();
+      this.osdViewer = null;
+    }
+
     // Clean up global selection prevention
     if (this._preventSelection) {
       document.removeEventListener('selectstart', this._preventSelection, true);
       document.removeEventListener('dragstart', this._preventSelection, true);
       document.removeEventListener('contextmenu', this._preventSelection, true);
     }
-    
+
+    // Clean up global mouseup handler
+    if (this._globalMouseUp) {
+      window.removeEventListener('mouseup', this._globalMouseUp);
+    }
+
     // Clean up body class if component is destroyed while popup is open
     document.body.classList.remove('cropped-popup-active');
   },
@@ -1704,22 +1845,18 @@ export default {
     },
 
     zoomIn() {
-      if (!this.imageReady) return;
-      this.zoomLevel = Math.min(this.maxZoom, +(this.zoomLevel + this.zoomStep).toFixed(2));
-      this.clampPan();
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.zoomBy(1.2);
+      this.osdViewer.viewport.applyConstraints();
     },
     zoomOut() {
-      if (!this.imageReady) return;
-      // Regular click: step down, but not below min
-      this.zoomLevel = Math.max(this.minZoom, +(this.zoomLevel - this.zoomStep).toFixed(2));
-      // Optional: clamp pan so content stays reachable
-      this.clampPan();
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.zoomBy(0.83);
+      this.osdViewer.viewport.applyConstraints();
     },
     resetZoom() {
-      if (!this.imageReady) return;
-      this.zoomLevel = 1;
-      this.panX = 0;
-      this.panY = 0;
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.goHome();
     },
     startHoldReset() {
       // Long press (3s) to reset to 100%
@@ -1734,6 +1871,204 @@ export default {
         this._holdTimer = null;
       }
     },
+
+    /* ---------- OpenSeadragon Methods ---------- */
+    async initOpenSeadragon(imageUrl) {
+      if (!imageUrl) return;
+
+      // Destroy previous viewer if exists
+      if (this.osdViewer) {
+        // Remove all event handlers before destroying
+        this.osdViewer.removeAllHandlers('open');
+        this.osdViewer.removeAllHandlers('open-failed');
+        this.osdViewer.removeAllHandlers('animation');
+        this.osdViewer.removeAllHandlers('animation-finish');
+        this.osdViewer.removeAllHandlers('resize');
+        this.osdViewer.removeAllHandlers('zoom');
+        this.osdViewer.removeAllHandlers('pan');
+        this.osdViewer.destroy();
+        this.osdViewer = null;
+        this.osdReady = false;
+      }
+
+      // Get tile source from IIIF service
+      const serviceId = extractServiceId(imageUrl);
+      let tileSource;
+
+      if (serviceId) {
+        const imageInfo = await fetchImageInfo(serviceId);
+        tileSource = buildTileSource(serviceId, imageInfo);
+      } else {
+        // Fallback for non-IIIF images
+        tileSource = { type: 'image', url: imageUrl };
+      }
+
+      // Create OpenSeadragon viewer
+      this.osdViewer = OpenSeadragon({
+        element: this.$refs.osdContainer,
+        tileSources: tileSource,
+        showNavigationControl: false,
+        showNavigator: false,
+        gestureSettingsMouse: {
+          clickToZoom: false,
+          dblClickToZoom: false,
+          scrollToZoom: true
+        },
+        gestureSettingsTouch: {
+          pinchToZoom: true
+        },
+        minZoomLevel: 0.5,
+        maxZoomLevel: 15,
+        visibilityRatio: 0.8,
+        constrainDuringPan: true,
+        immediateRender: true,
+        crossOriginPolicy: 'Anonymous',
+        // Canvas drawer required for openseadragon-filtering plugin
+        drawer: 'canvas'
+      });
+
+      // Event handlers
+      this.osdViewer.addHandler('open', this.onOsdOpen);
+      this.osdViewer.addHandler('open-failed', this.onOsdOpenFailed);
+      this.osdViewer.addHandler('animation', this.updateOverlayPosition);
+      this.osdViewer.addHandler('animation-finish', this.updateOverlayPosition);
+      this.osdViewer.addHandler('resize', this.updateOverlayPosition);
+      this.osdViewer.addHandler('zoom', this.onOsdZoom);
+      this.osdViewer.addHandler('pan', this.updateOverlayPosition);
+    },
+
+    onOsdOpen() {
+      this.osdReady = true;
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (tiledImage) {
+        const size = tiledImage.getContentSize();
+        this.osdImageWidth = size.x;
+        this.osdImageHeight = size.y;
+
+        // Also update legacy dimensions for compatibility
+        this.baseFitWidth = size.x;
+        this.baseFitHeight = size.y;
+      }
+      this.imageLoaded = true;
+
+      // Apply current filters
+      this.applyFiltersToOsd();
+
+      // Initial overlay position update
+      this.$nextTick(() => {
+        this.updateOverlayPosition();
+      });
+    },
+
+    onOsdOpenFailed(event) {
+      console.error('Failed to load image in OpenSeadragon:', event.message);
+      alert('Failed to load image. Please try again.');
+    },
+
+    onOsdZoom(event) {
+      // Sync legacy zoom level for UI display
+      this.zoomLevel = event.zoom;
+      this.updateOverlayPosition();
+    },
+
+    updateOverlayPosition() {
+      // RAF throttle: prevent multiple updates per frame for smooth performance
+      if (this._overlayUpdatePending) return;
+
+      this._overlayUpdatePending = true;
+      requestAnimationFrame(() => {
+        this._overlayUpdatePending = false;
+        // Force Vue to re-compute annotationOverlayStyle by updating reactive property
+        this.osdViewportBounds = Date.now();
+      });
+    },
+
+    applyFiltersToOsd() {
+      // Use openseadragon-filtering plugin with correct API structure
+      if (!this.osdViewer || !this.osdReady) return;
+
+      const filters = this.currentFilters;
+      const processors = [];
+
+      // Brightness: plugin expects -255 to 255, our slider is -100 to 100
+      if (filters.brightness !== 0) {
+        const adjustment = (filters.brightness / 100) * 255;
+        processors.push(OpenSeadragon.Filters.BRIGHTNESS(adjustment));
+      }
+
+      // Contrast: plugin expects adjustment value, our slider is 0-3
+      if (filters.contrast !== 1) {
+        processors.push(OpenSeadragon.Filters.CONTRAST(filters.contrast));
+      }
+
+      // Saturation: custom filter (plugin doesn't have one)
+      if (filters.saturation !== undefined && filters.saturation !== 1) {
+        const saturation = filters.saturation;
+        processors.push(function(context, callback) {
+          const imgData = context.getImageData(0, 0, context.canvas.width, context.canvas.height);
+          const pixels = imgData.data;
+          for (let i = 0; i < pixels.length; i += 4) {
+            const r = pixels[i];
+            const g = pixels[i + 1];
+            const b = pixels[i + 2];
+            const gray = 0.2989 * r + 0.587 * g + 0.114 * b;
+            pixels[i] = gray + (r - gray) * saturation;
+            pixels[i + 1] = gray + (g - gray) * saturation;
+            pixels[i + 2] = gray + (b - gray) * saturation;
+          }
+          context.putImageData(imgData, 0, 0);
+          callback();
+        });
+      }
+
+      // Invert
+      if (filters.invert) {
+        processors.push(OpenSeadragon.Filters.INVERT());
+      }
+
+      // Grayscale
+      if (filters.grayscale) {
+        processors.push(OpenSeadragon.Filters.GREYSCALE());
+      }
+
+      // Threshold: Convert to binary black/white (great for faded manuscripts)
+      if (filters.threshold !== null && filters.threshold !== undefined) {
+        const threshold = filters.threshold;
+        processors.push(OpenSeadragon.Filters.THRESHOLDING(threshold));
+      }
+
+      // Sharpen: Enhance edges for blurry scans
+      if (filters.sharpen) {
+        processors.push(OpenSeadragon.Filters.CONVOLUTION([
+           0, -1,  0,
+          -1,  5, -1,
+           0, -1,  0
+        ]));
+      }
+
+      // Edge Detection: Highlight text strokes (Laplacian kernel)
+      if (filters.edgeDetect) {
+        processors.push(OpenSeadragon.Filters.CONVOLUTION([
+          -1, -1, -1,
+          -1,  8, -1,
+          -1, -1, -1
+        ]));
+      }
+
+      // Apply using correct API: filters is an OBJECT with processors property
+      // Use sync mode for better performance during zoom/pan
+      this.osdViewer.setFilterOptions({
+        filters: processors.length > 0 ? { processors: processors } : null,
+        loadMode: 'sync'
+      });
+    },
+
+    setOsdMouseNavEnabled(enabled) {
+      if (this.osdViewer) {
+        this.osdViewer.setMouseNavEnabled(enabled);
+      }
+    },
+    /* ---------- End OpenSeadragon Methods ---------- */
 
     async fetchIIIFImages(manifestUrl) {
       try {
@@ -1760,6 +2095,52 @@ export default {
 
     /* ---------- Helpers ---------- */
     getMousePosition(event) {
+      // Extract coordinates from mouse or touch event
+      let clientX, clientY;
+
+      if (event.touches && event.touches.length > 0) {
+        // touchstart, touchmove - use first touch
+        clientX = event.touches[0].clientX;
+        clientY = event.touches[0].clientY;
+      } else if (event.changedTouches && event.changedTouches.length > 0) {
+        // touchend - no active touches, use changedTouches
+        clientX = event.changedTouches[0].clientX;
+        clientY = event.changedTouches[0].clientY;
+      } else {
+        // Regular mouse event
+        clientX = event.clientX;
+        clientY = event.clientY;
+      }
+
+      // Use OpenSeadragon coordinate translation if available
+      if (this.osdViewer && this.osdReady) {
+        const tiledImage = this.osdViewer.world.getItemAt(0);
+        if (tiledImage) {
+          // Get the container element for coordinate calculation
+          const container = this.osdViewer.container;
+          const rect = container.getBoundingClientRect();
+
+          // Create a point in window coordinates relative to the container
+          const containerPoint = new OpenSeadragon.Point(
+            clientX - rect.left,
+            clientY - rect.top
+          );
+
+          // Convert from window to viewport coordinates
+          const viewportPoint = this.osdViewer.viewport.pointFromPixel(containerPoint);
+
+          // Convert from viewport to image coordinates
+          const imagePoint = tiledImage.viewportToImageCoordinates(viewportPoint);
+
+          // Clamp to image bounds
+          return {
+            x: Math.round(Math.max(0, Math.min(this.osdImageWidth, imagePoint.x))),
+            y: Math.round(Math.max(0, Math.min(this.osdImageHeight, imagePoint.y)))
+          };
+        }
+      }
+
+      // Fallback to legacy calculation for cropped popup or when OSD not ready
       const viewer = this.$refs.viewer;
       const rect = viewer.getBoundingClientRect();
 
@@ -1768,8 +2149,8 @@ export default {
       const centerY = rect.top + rect.height / 2;
 
       // Pointer delta from stage center in screen px
-      const dxScreen = event.clientX - centerX;
-      const dyScreen = event.clientY - centerY;
+      const dxScreen = clientX - centerX;
+      const dyScreen = clientY - centerY;
 
       // Undo pan & zoom to get into anchor local space (0,0 at anchor center)
       const z = this.zoomLevel || 1;
@@ -1944,6 +2325,12 @@ export default {
     selectTool(tool) {
       if (!this.currentImage) return;
 
+      // Prevent tool switching during active operation
+      if (this.isOperationInProgress) {
+        console.warn('Cannot switch tools during active operation');
+        return;
+      }
+
       // reset non-related modes
       const resetAll = () => {
         this.traceModeActive = false;
@@ -2080,6 +2467,34 @@ export default {
       this.activeBandGroup = this.pendingBandGroup || this.activeBandGroup || 'horizontal';
       const groupLabel = this.activeBandGroup === 'vertical' ? 'Vertical' : 'Horizontal';
       this.showToolMessage(`${groupLabel} "${type}" measuring is ACTIVE. Click the ${groupLabel} Bands button again to exit.`);
+    },
+
+    // Handler for horizontal measurement popup confirm
+    onHorizontalConfirm(type) {
+      this.pendingBandGroup = 'horizontal';
+      this.beginLength(type);
+    },
+
+    // Handler for vertical measurement popup confirm
+    onVerticalConfirm(type) {
+      this.pendingBandGroup = 'vertical';
+      this.beginLength(type);
+    },
+
+    // Handler for angle label popup confirm
+    onAngleLabelConfirm(label) {
+      if (!label) {
+        this.showToolMessage("Choose or create a label first.");
+        return;
+      }
+      // Add to labels if new
+      if (!this.angleLabels.includes(label)) {
+        this.angleLabels.push(label);
+      }
+      this.activeAngleLabel = label;
+      this.showAngleLabelPopup = false;
+      this.measureModeActive = true;
+      this.showToolMessage(`Angle measure: label "${label}". Click 3 points (A, vertex, B).`);
     },
 
     /* ---------- Angle label popup ---------- */
@@ -2267,6 +2682,15 @@ cancelPenSelection() {
       this.draggingCommentIndex = null;
     },
 
+    /* ---------- Theme dropdown ---------- */
+    toggleThemeDropdown() {
+      this.showThemeDropdown = !this.showThemeDropdown;
+    },
+    setThemeAndClose(theme) {
+      this.setTheme(theme);
+      this.showThemeDropdown = false;
+    },
+
     /* ---------- Clear dropdown ---------- */
     toggleClearDropdown() {
       this.showClearDropdown = !this.showClearDropdown;
@@ -2360,12 +2784,14 @@ cancelPenSelection() {
       if (this.currentPage < this.totalPages - 1) {
         this.currentPage++;
         if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
+        this.setAdjustmentPage(this.currentPage); // sync with image adjustments
       }
     },
     prevPage() {
       if (this.currentPage > 0) {
         this.currentPage--;
         if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
+        this.setAdjustmentPage(this.currentPage); // sync with image adjustments
       }
     },
     goToPage(pageNumber = null) {
@@ -2373,24 +2799,40 @@ cancelPenSelection() {
       const newPage = Math.max(1, Math.min(targetPage, this.totalPages)) - 1;
       this.currentPage = newPage;
       this.pageInput = newPage + 1; // keep pageInput in sync
+      this.setAdjustmentPage(newPage); // sync with image adjustments
+    },
+
+    /* ---------- Image Adjustments ---------- */
+    toggleAdjustmentsPanel() {
+      this.showAdjustmentsPanel = !this.showAdjustmentsPanel;
+    },
+    handleApplyFiltersToAll() {
+      this.applyToAllPages(this.totalPages);
+    },
+    onFiltersChanged() {
+      // Filters are applied via applyFiltersToOsd() which is triggered by the watcher
+      // This handler can be used for additional side effects if needed
     },
 
     /* ---------- Stage interactions (DROP-IN versions) ---------- */
     startTrace(event) {
-      // PAN START: when zoomed and user isn't starting another tool action, start panning
-      if (this.zoomLevel > 1) {
-        const noToolActive = !(
-          this.traceModeActive || this.measureModeActive || this.highlightModeActive ||
-          this.underlineModeActive || this.lengthMeasurementActive || this.croppingStarted ||
-          this.commentModeActive || this.moveModeActive
-        );
-        // If no tool is active, use drag to pan
-        if (noToolActive) {
-          this.isPanning = true;
-          this._panStart = { x: event.clientX, y: event.clientY, panX: this.panX, panY: this.panY };
-          return; // don't trigger drawing if we're panning
-        }
+      // Check if any tool is active
+      const toolActive = (
+        this.traceModeActive || this.measureModeActive || this.highlightModeActive ||
+        this.underlineModeActive || this.lengthMeasurementActive || this.croppingStarted ||
+        this.commentModeActive || this.moveModeActive
+      );
+
+      // If no tool is active, let OpenSeadragon handle pan/zoom natively
+      if (!toolActive) {
+        return;
       }
+
+      // Mark operation as in progress to prevent tool switching
+      this.isOperationInProgress = true;
+
+      // Tool is active - disable OSD mouse navigation while drawing/annotating
+      this.setOsdMouseNavEnabled(false);
 
       // MOVE MODE
       if (this.moveModeActive && this.bankSelectedKeys.length > 0) {
@@ -2507,16 +2949,6 @@ cancelPenSelection() {
     },
 
     trace(event) {
-      // PAN MOVE
-      if (this.isPanning && this._panStart) {
-        const dx = event.clientX - this._panStart.x;
-        const dy = event.clientY - this._panStart.y;
-        this.panX = this._panStart.panX + dx;
-        this.panY = this._panStart.panY + dy;
-        this.clampPan();
-        return; // swallow draw events while panning
-      }
-
       // MOVE MODE: show live movement preview
       if (this.moveModeActive && this.bankSelectedKeys.length > 0 && this.moveStartPos) {
         const currentPos = this.getMousePosition(event);
@@ -2611,12 +3043,11 @@ cancelPenSelection() {
     },
 
     endTrace(event) {
-      // PAN END
-      if (this.isPanning) {
-        this.isPanning = false;
-        this._panStart = null;
-        return; // end pan, do not create artifacts
-      }
+      // Re-enable OSD mouse navigation after tool operation completes
+      this.setOsdMouseNavEnabled(true);
+
+      // Mark operation as complete to allow tool switching
+      this.isOperationInProgress = false;
 
       // MOVE MODE: apply delta
       if (this.moveModeActive && this.bankSelectedKeys.length > 0 && this.moveStartPos) {
@@ -2657,6 +3088,15 @@ cancelPenSelection() {
         this.cropButtonClicked = false;
         this.currentSquare = null;
         this.startPoint = null;
+      }
+    },
+
+    // Handle mouse leaving the viewer during an active operation
+    handleMouseLeave(event) {
+      // If actively drawing/cropping/highlighting, complete the operation
+      if (this.currentStroke || this.currentSquare || this.currentUnderline ||
+          this.currentHighlight || this.moveStartPos) {
+        this.endTrace(event);
       }
     },
 
@@ -2889,49 +3329,81 @@ cancelPenSelection() {
       this.showToolMessage("Click and drag to crop.");
     },
     async generateCroppedFromCurrentSquare() {
-      const { x, y, width, height } = this.currentSquare;
-      const imageElement = this.$refs.image;
-      const naturalWidth = imageElement.naturalWidth;
-      const naturalHeight = imageElement.naturalHeight;
-      const rect = imageElement.getBoundingClientRect();
-      const scaleX = naturalWidth / rect.width;
-      const scaleY = naturalHeight / rect.height;
+      if (!this.currentSquare || !this.osdViewer) return;
 
-      const scaledX = (x - 0) * scaleX; // since x,y already relative to viewer
-      const scaledY = y * scaleY;
-      const scaledWidth = width * scaleX;
-      const scaledHeight = height * scaleY;
+      // Validate and clamp coordinates to image bounds
+      const rawX = this.currentSquare.x;
+      const rawY = this.currentSquare.y;
+      const rawW = this.currentSquare.width;
+      const rawH = this.currentSquare.height;
 
-      const canvas = document.createElement("canvas");
-      canvas.width = scaledWidth;
-      canvas.height = scaledHeight;
-      const ctx = canvas.getContext("2d");
+      const x = Math.max(0, Math.min(rawX, this.osdImageWidth));
+      const y = Math.max(0, Math.min(rawY, this.osdImageHeight));
+      const width = Math.min(rawW, this.osdImageWidth - x);
+      const height = Math.min(rawH, this.osdImageHeight - y);
 
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = this.currentImage;
-      await new Promise((resolve, reject) => {
-        img.onload = () => {
-          ctx.drawImage(
-            img,
-            scaledX,
-            scaledY,
-            scaledWidth,
-            scaledHeight,
-            0,
-            0,
-            scaledWidth,
-            scaledHeight
-          );
-          this.croppedImage = canvas.toDataURL("image/png");
-          
-          // Add class to body for proper z-index management
-          document.body.classList.add('cropped-popup-active');
-          
-          resolve();
-        };
-        img.onerror = reject;
-      });
+      // Validate crop has valid dimensions
+      if (width <= 10 || height <= 10) {
+        this.toolMessage = 'Crop region too small';
+        setTimeout(() => { this.toolMessage = ''; }, 2000);
+        return;
+      }
+
+      // Helper: Canvas-based crop (works with any image)
+      const cropViaCanvas = async (imageUrl) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width);
+        canvas.height = Math.round(height);
+        const ctx = canvas.getContext('2d');
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        return new Promise((resolve, reject) => {
+          img.onload = () => {
+            ctx.drawImage(
+              img,
+              Math.round(x), Math.round(y), Math.round(width), Math.round(height),
+              0, 0, Math.round(width), Math.round(height)
+            );
+            resolve(canvas.toDataURL('image/png'));
+          };
+          img.onerror = () => reject(new Error('Failed to load image for cropping'));
+          img.src = imageUrl;
+        });
+      };
+
+      try {
+        // Try IIIF region URL first (more efficient for large images)
+        const serviceId = extractServiceId(this.currentImage);
+        if (serviceId) {
+          const regionUrl = `${serviceId}/${Math.round(x)},${Math.round(y)},${Math.round(width)},${Math.round(height)}/full/0/default.jpg`;
+
+          // Verify IIIF server supports region requests
+          try {
+            const testResponse = await fetch(regionUrl, { method: 'HEAD' });
+            if (testResponse.ok) {
+              this.croppedImage = regionUrl;
+              // Add class to body for proper z-index management
+              document.body.classList.add('cropped-popup-active');
+              return;
+            }
+          } catch (e) {
+            console.warn('IIIF region request failed, using canvas fallback');
+          }
+        }
+
+        // Fallback: Canvas-based crop
+        this.croppedImage = await cropViaCanvas(this.currentImage);
+
+        // Add class to body for proper z-index management
+        document.body.classList.add('cropped-popup-active');
+
+      } catch (error) {
+        console.error('Crop failed:', error);
+        this.toolMessage = 'Failed to crop image. Please try again.';
+        setTimeout(() => { this.toolMessage = ''; }, 3000);
+      }
     },
     saveCroppedImageAsPNG() {
       const link = document.createElement("a");
@@ -2959,6 +3431,11 @@ cancelPenSelection() {
       this.angleStatistics = stats;
       this.angleStatisticsContext = "Cropped image";
       this.showAngleStatistics = true;
+    },
+    handleCropDialogChange(open) {
+      if (!open) {
+        this.closeCroppedPopup();
+      }
     },
     closeCroppedPopup() {
       // Clear cropped annotations (temporary labels will be removed)
@@ -3600,25 +4077,36 @@ cancelPenSelection() {
 </script>
 
 <style scoped>
-* { font-family: "Arial", "Helvetica", sans-serif !important; }
+* { font-family: var(--font-sans, "Arial", "Helvetica", sans-serif) !important; }
 .viewer-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-  background: #f1f1f1; /* gray canvas behind the manuscript */
+  background: hsl(var(--canvas)); /* dark canvas behind the manuscript */
 }
-/* Full-bleed blue bars with clean layout */
+/* Full-bleed bars with clean layout */
 .top-bar {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 16px;
-  background: #e7f0ff;
-  border-bottom: 1px solid #c9d8ff;
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
   padding: 12px 24px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.05);
+  position: relative;
+  z-index: 100;
 }
-.logo { height: 60px; cursor: pointer; }
+.dark .top-bar {
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+}
+.logo {
+  height: 60px;
+  cursor: pointer;
+  border-radius: 12px;
+  overflow: hidden;
+}
 
 .toolbar {
   display: grid;
@@ -3633,38 +4121,61 @@ cancelPenSelection() {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  color: #222;
+  color: hsl(var(--foreground));
   cursor: pointer;
   padding: 6px 4px;
   user-select: none;
   position: relative;
+  border-radius: var(--radius-md, 8px);
+  transition: all 0.2s ease;
 }
-.toolbar-item:hover { color: #2b6fde; }
-.toolbar-item i { font-size: 22px; line-height: 1; }
-.toolbar-item span { font-size: 12px; }
+.toolbar-item:hover {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.1);
+  transform: translateY(-1px);
+}
+.toolbar-item:active {
+  transform: translateY(0);
+}
+.toolbar-item.active {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  border: 1px solid hsl(var(--primary) / 0.25);
+}
+.toolbar-item svg { width: 22px; height: 22px; }
+.toolbar-item span { font-size: 11px; text-align: center; line-height: 1.2; }
 
 .toolbar-divider {
   width: 1px;
   height: 32px;
-  background: #c9d8ff;
+  background: hsl(var(--border));
   margin: 0 8px;
 }
 
 .tool-message {
   position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
-  background-color: #007bff; color: white; padding: 8px 14px; border-radius: 6px; z-index: 1200; font-size: 12px;
+  background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); padding: 8px 14px; border-radius: 6px; z-index: 1200; font-size: 12px;
 }
 
-.workspace { display: block; height: calc(100vh - 110px); }
-.stage {    
-  position: relative;   
-  background: #f1f1f1;
+.workspace {
+  display: flex;
+  height: calc(100vh - 110px);
+  width: 100%;
+  background: hsl(var(--canvas));
+}
+.stage {
+  position: relative;
+  background: hsl(var(--canvas));
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 0.15);
   user-select: none !important;
   -webkit-user-select: none !important;
   -moz-user-select: none !important;
   -ms-user-select: none !important;
   -webkit-touch-callout: none !important;
   -webkit-tap-highlight-color: transparent !important;
+}
+.dark .stage {
+  box-shadow: inset 0 2px 12px rgb(0 0 0 / 0.35);
 }
 
 .stage *,
@@ -3689,7 +4200,57 @@ cancelPenSelection() {
   background: transparent !important;
   color: inherit !important;
 }
-.bank { width: 300px; min-width: 300px; border-left: 1px solid #e5e7eb; }
+
+/* OpenSeadragon Container */
+.osd-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Event Intercept Layer - captures events when tools are active */
+.event-intercept-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* Annotation Overlay - positioned over OSD */
+.annotation-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+  overflow: visible;
+}
+
+.annotation-overlay > * {
+  pointer-events: auto;
+}
+
+.annotation-overlay .drawing-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.annotation-overlay .drawing-layer * {
+  pointer-events: auto;
+}
+
+.bank { width: 300px; min-width: 300px; border-left: 1px solid hsl(var(--border)); }
 
 .navigation-bar {
   display: flex;
@@ -3698,19 +4259,27 @@ cancelPenSelection() {
   margin: 0;
   padding: 0 24px 10px 24px;
   gap: 10px;
-  background: #e7f0ff;
-  border-bottom: 1px solid #c9d8ff;
+  background: hsl(var(--background));
+  border-bottom: 1px solid hsl(var(--border));
 }
 .page-input-container { display: flex; align-items: center; gap: 4px; }
 .page-input-container input { width: 45px; text-align: center; }
 
 .navigation-bar .btn {
-  background: #2b6fde;
-  color: #fff;
-  border: 1px solid #235acc;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: 1px solid hsl(var(--primary));
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 12px;
+  transition: all 0.15s ease;
+}
+.navigation-bar .btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: scale(1.02);
+}
+.navigation-bar .btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 .navigation-bar .btn:disabled {
   opacity: .45;
@@ -3719,8 +4288,10 @@ cancelPenSelection() {
 .navigation-bar input {
   height: 28px;
   padding: 0 8px;
-  border: 1px solid #c9d8ff;
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 /* === Base stacking for stage and annotations === */
@@ -3772,7 +4343,7 @@ cancelPenSelection() {
 .cropped-popup-content {
   position: relative;
   z-index: 1;
-  background: #fff;          /* Ensure solid background */
+  background: hsl(var(--card));          /* Ensure solid background */
   isolation: isolate;        /* Prevent blur inheritance */
 }
 
@@ -3784,7 +4355,8 @@ cancelPenSelection() {
   justify-content: center;
   align-items: center;
   overflow: hidden;
-  background: #f1f1f1; /* gray behind manuscript */
+  background: hsl(var(--canvas)); /* dark canvas behind manuscript */
+  box-shadow: inset 0 2px 8px rgb(0 0 0 / 0.15);
 }
 .pdf-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 
@@ -3795,7 +4367,7 @@ cancelPenSelection() {
 .length-measurement { position: absolute; border: 2px solid rgba(0, 0, 0, 0.5); pointer-events: none; }
 .length-label {
   position: absolute; left: 15px; top: 15px; transform: translateY(0);
-  color: black; font-size: 12px; background-color: white; padding: 2px 5px; border-radius: 3px;
+  color: hsl(var(--foreground)); font-size: 12px; background-color: hsl(var(--card)); padding: 2px 5px; border-radius: 3px;
 }
 .draggable-label { cursor: grab; user-select: none; }
 .draggable-label:active { cursor: grabbing; }
@@ -3819,8 +4391,8 @@ cancelPenSelection() {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: #ffffff;
-  border: 2px solid #ccc;
+  background: hsl(var(--card));
+  border: 2px solid hsl(var(--border));
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   z-index: var(--z-modal-top);
@@ -3858,8 +4430,8 @@ body.cropped-popup-active *::-moz-selection {
   background: transparent !important;
 }
 .cropped-popup-content img { max-width: 100%; max-height: 300px; margin-bottom: 20px; }
-.cropped-popup-content button { margin-top: 10px; padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-.cropped-popup-content button:hover { background-color: #0056b3; }
+.cropped-popup-content button { margin-top: 10px; padding: 8px 16px; background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border: none; border-radius: 4px; cursor: pointer; }
+.cropped-popup-content button:hover { filter: brightness(0.9); }
 
 /* Comment card */
 .comment-card {
@@ -3877,50 +4449,52 @@ body.cropped-popup-active *::-moz-selection {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #e7f0ff;       /* light blue */
-  color: #2b6fde;            /* blue icon */
-  border: 1px solid #c9d8ff;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary) / 0.3);
   font-size: 14px;
   flex: 0 0 auto;
 }
 
 .comment-bubble {
   flex: 1 1 auto;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   box-shadow: 0 4px 14px rgba(0,0,0,0.08);
   padding: 8px 10px;
 }
 .comment-text {
   font-size: 13px;
-  color: #111827;
+  color: hsl(var(--foreground));
   line-height: 1.35;
 }
 
 /* Composer */
 .comment-composer {
   width: 260px;
-  background: #ffffff;
-  border: 1px solid #c9d8ff;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(43, 111, 222, 0.18);
+  box-shadow: var(--shadow-lg, 0 10px 24px rgba(0, 0, 0, 0.18));
   padding: 10px;
 }
 
 .composer-textarea {
   width: 100%;
   min-height: 86px;
-  border: 1px solid #dbe4ff;
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 13px;
   resize: vertical;
   outline: none;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 .composer-textarea:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
 }
 
 .composer-actions {
@@ -3931,9 +4505,9 @@ body.cropped-popup-active *::-moz-selection {
 }
 
 .btn-blue {
-  border: 1px solid #2563eb;
-  background: #3b82f6;
-  color: #fff;
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   padding: 6px 10px;
   font-size: 13px;
   border-radius: 8px;
@@ -3944,9 +4518,9 @@ body.cropped-popup-active *::-moz-selection {
 .btn-blue:active { transform: translateY(1px); }
 
 .btn-gray {
-  border: 1px solid #c7c9d1;
-  background: #eef0f5;
-  color: #374151;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
   padding: 6px 10px;
   font-size: 13px;
   border-radius: 8px;
@@ -3957,10 +4531,36 @@ body.cropped-popup-active *::-moz-selection {
 .btn-gray:active { transform: translateY(1px); }
 
 .clear-dropdown {
-  position: absolute; top: 100%; left: 0; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1100; min-width: 160px;
+  position: absolute; top: 100%; left: 0; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); border: 1px solid hsl(var(--border)); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; min-width: 160px; padding: 4px 0; margin-top: 4px;
 }
-.clear-dropdown div { padding: 8px 12px; cursor: pointer; }
-.clear-dropdown div:hover { background: #f5f5f5; }
+.clear-dropdown div { padding: 8px 12px; cursor: pointer; transition: background-color 0.15s; }
+.clear-dropdown div:hover { background: hsl(var(--accent) / 0.1); }
+
+/* Theme dropdown */
+.theme-container { position: relative; z-index: 200; }
+.theme-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  background: hsl(var(--popover, 0 0% 100%));
+  color: hsl(var(--popover-foreground, 0 0% 20%));
+  border: 1px solid hsl(var(--border, 220 13% 91%)); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 300; min-width: 160px;
+  padding: 4px 0;
+}
+.theme-dropdown div {
+  padding: 8px 16px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  transition: background-color 0.15s;
+  white-space: nowrap;
+}
+.theme-dropdown div:hover { background: hsl(var(--accent, 215 100% 50%) / 0.1); }
+.theme-dropdown div.active {
+  background: hsl(var(--primary, 217 91% 60%));
+  color: hsl(var(--primary-foreground, 0 0% 100%));
+}
 
 .length-popup {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -3969,49 +4569,59 @@ body.cropped-popup-active *::-moz-selection {
   isolation: isolate;
 }
 .length-popup-content {
-  background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center; width: 520px; max-width: calc(100% - 24px);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  padding: 20px;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid hsl(var(--border));
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
+  text-align: center;
+  width: 520px;
+  max-width: calc(100% - 24px);
   position: relative;
   z-index: 1;
   isolation: isolate;
 }
+
+.length-popup-content h3 {
+  color: hsl(var(--foreground));
+  margin-bottom: 16px;
+}
 .btn-grid, .label-grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
 .grid-btn {
-  border: 2px solid #2563eb;
-  background: #3b82f6;         /* primary blue */
-  color: #fff;
+  border: 2px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
-.grid-btn:hover { 
-  background: #60a5fa; 
-  border-color: #3b82f6;
+.grid-btn:hover {
+  filter: brightness(0.9);
 }
 .grid-btn:active { transform: translateY(1px); }
 .grid-btn.active {
-  background: #2563eb;
-  border: 3px solid #00d0ff;
-  box-shadow: 0 0 0 3px #00ff87, 0 0 16px rgba(0,255,135,.6);
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3);
 }
 .grid-btn.confirm-btn {
-  background: #3b82f6;
-  border-color: #2563eb;
-  color: white;
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 .grid-btn.confirm-btn:hover {
-  background: #2563eb;
-  border-color: #1d4ed8;
+  filter: brightness(0.9);
 }
 .grid-btn.cancel-btn {
-  background: #6b7280;
-  border-color: #4b5563;
-  color: white;
+  background: hsl(var(--muted));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
 }
 .grid-btn.cancel-btn:hover {
-  background: #4b5563;
-  border-color: #374151;
+  filter: brightness(0.95);
 }
 .swatch {
   display:inline-block;
@@ -4025,9 +4635,20 @@ body.cropped-popup-active *::-moz-selection {
 .popup-actions { display: flex; justify-content: center; gap: 10px; }
 
 .row { margin: 12px 0; text-align: left; }
-.row label { display: inline-block; width: 80px; font-size: 13px; color: #333; }
+.row label { display: inline-block; width: 80px; font-size: 13px; color: hsl(var(--foreground)); }
 .new-label-row { display: flex; gap: 8px; justify-content: center; margin: 8px 0 0; }
-.new-label-row input { flex: 1; min-width: 240px; border: 1px solid #ddd; border-radius: 6px; padding: 6px 8px; }
+.new-label-row input {
+  flex: 1;
+  min-width: 240px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 6px);
+  padding: 6px 8px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+.new-label-row input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
 
 /* Overlay for stats panel */
 .stats-panel {
@@ -4041,9 +4662,11 @@ body.cropped-popup-active *::-moz-selection {
 
 /* Card look & feel */
 .panel-card.stats-card {
-  background: #ffffff;
-  border-radius: 14px;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
   width: min(680px, calc(100% - 32px));
   padding: 22px 24px 24px;
   text-align: center;
@@ -4054,6 +4677,7 @@ body.cropped-popup-active *::-moz-selection {
   margin: 0 0 14px;
   font-size: 26px;
   font-weight: 700;
+  color: hsl(var(--foreground));
 }
 
 /* Button layout inside the stats card */
@@ -4065,19 +4689,18 @@ body.cropped-popup-active *::-moz-selection {
   margin-top: 6px;
 }
 
-/* Reuse the blue 'grid-btn' look but add a little breathing room */
+/* Reuse the themed 'grid-btn' look but add a little breathing room */
 .panel-actions .grid-btn {
   min-width: 230px;
   padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid #2f60e3;
-  background: #3f6eea;
-  color: #fff;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-weight: 600;
-  box-shadow: 0 2px 0 rgba(0,0,0,0.06) inset;
 }
 .panel-actions .grid-btn:hover {
-  filter: brightness(0.97);
+  filter: brightness(0.9);
 }
 .panel-actions .grid-btn:active {
   transform: translateY(1px);
@@ -4089,15 +4712,41 @@ body.cropped-popup-active *::-moz-selection {
   isolation: isolate;
 }
 .statistics-popup-content {
-  background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-  max-width: 600px; width: 100%;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  padding: 20px;
+  border-radius: var(--radius-lg, 8px);
+  border: 1px solid hsl(var(--border));
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
+  max-width: 600px;
+  width: 100%;
   position: relative;
   z-index: 1;
   isolation: isolate;
 }
-.statistics-popup-content table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-.statistics-popup-content th, .statistics-popup-content td { border: 1px solid #ddd; padding: 8px; text-align: center; }
-.statistics-popup-content th { background: #f2f2f2; }
+.statistics-popup-content h3,
+.statistics-popup-content h4 {
+  color: hsl(var(--foreground));
+}
+.statistics-popup-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+.statistics-popup-content th,
+.statistics-popup-content td {
+  border: 1px solid hsl(var(--border));
+  padding: 10px 12px;
+  text-align: center;
+}
+.statistics-popup-content th {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+.statistics-popup-content td {
+  color: hsl(var(--foreground));
+}
 .statistics-popup-content h4 { margin-top: 12px; margin-bottom: 8px; }
 .angle-stats-context { margin: 4px 0 12px; color: #4b5563; font-size: 13px; }
 
@@ -4301,39 +4950,31 @@ body.cropped-popup-active *::-moz-selection {
   z-index: 2000;
 }
 
-/* Enhanced Cropped Popup Styles */
-.cropped-popup {
-  position: fixed;
-  top: 50%; left: 50%;
-  transform: translate(-50%,-50%);
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0,0,0,.2);
-  z-index: 2000;
-  width: min(1100px, calc(100vw - 48px));
-  max-height: calc(100vh - 120px);
-  overflow: hidden;
-}
-
-.cropped-popup-content {
-  padding: 16px 18px 12px;
-}
-
+/* Cropped Image Dialog Styles */
 .crop-header {
-  display:flex; align-items:center; justify-content:space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
-.crop-header h3 { margin: 0; font-size: 22px; font-weight: 700; }
-.crop-actions { display:flex; gap:8px; }
+
+.crop-actions {
+  display: flex;
+  gap: 8px;
+}
 
 .crop-stage {
   position: relative;
-  height: 520px;              /* feel free to tune */
-  background: #f7f9ff;
-  border: 1px solid #e6ecff;
-  border-radius: 12px;
+  height: 480px;
+  min-height: 300px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 12px);
   overflow: hidden;
-  margin: 12px 0 10px;
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .crop-anchor {
@@ -4357,8 +4998,8 @@ body.cropped-popup-active *::-moz-selection {
   width: 36px; height: 36px;
   border-radius: 50%;
   border: none;
-  background: #3b82f6;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   font-size: 20px;
   line-height: 36px;
   text-align: center;
@@ -4366,15 +5007,19 @@ body.cropped-popup-active *::-moz-selection {
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 .zoom-btn:disabled { opacity:.45; cursor:not-allowed; }
-.zoom-btn:hover { filter: brightness(.95); }
+.zoom-btn:hover { filter: brightness(.9); }
 
 .mini-bank {
-  margin-top: 10px;
-  border-top: 1px dashed #e5e7eb;
+  margin-top: 12px;
+  border-top: 1px dashed hsl(var(--border));
   padding-top: 10px;
+  flex-shrink: 0;
 }
 .mini-bank-title {
-  font-weight: 700; font-size: 14px; color: #334155; margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 14px;
+  color: hsl(var(--foreground));
+  margin-bottom: 6px;
 }
 .mini-bank-grid {
   display: grid;
@@ -4383,9 +5028,12 @@ body.cropped-popup-active *::-moz-selection {
 }
 .mini-bank-item {
   display:flex; align-items:center; gap:8px;
-  background:#f8fafc; border:1px solid #e5e7eb;
-  padding:6px 8px; border-radius:8px;
-  font-size:12px; color:#0f172a;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  padding:6px 8px;
+  border-radius: var(--radius-md, 8px);
+  font-size:12px;
+  color: hsl(var(--foreground));
 }
 .mini-bank-item .dot {
   width:10px; height:10px; border-radius:50%;
@@ -4445,10 +5093,10 @@ div.statistics-popup,
   transform: translate(-50%,-50%);
   width: min(1100px, calc(100vw - 48px));
   max-height: calc(100vh - 96px);
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0,0,0,.2);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-modal, 0 25px 50px -12px rgba(0, 0, 0, 0.25));
   overflow: hidden;
   z-index: var(--z-modal);
 }
@@ -4464,15 +5112,15 @@ div.statistics-popup,
 .left-spacer { min-height: 1px; }
 
 .zoom-cluster {
-  display: flex; 
-  align-items: center; 
+  display: flex;
+  align-items: center;
   justify-content: space-evenly;
   gap: var(--space-phi);
-  background: linear-gradient(135deg, #f8faff 0%, #eef3ff 100%); 
-  border: 1px solid #d8e1ff; 
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 28px;
   padding: var(--space-phi) calc(var(--space-2phi) + 2px);
-  box-shadow: 0 2px 8px rgba(47, 96, 227, 0.1);
+  box-shadow: 0 2px 8px hsl(var(--primary) / 0.1);
   justify-self: center;
   min-height: 52px;
   min-width: 180px;
@@ -4489,51 +5137,50 @@ div.statistics-popup,
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px; 
+  min-width: 36px;
   width: 36px;
-  height: 36px; 
-  border-radius: 10px; 
-  border: 10px solid #2f60e3;
-  background: linear-gradient(135deg, #4a7aed 0%, #3f6eea 100%); 
-  color: #fff; 
-  font-weight: 700; 
+  height: 36px;
+  border-radius: 10px;
+  border: 2px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 700;
   font-size: 18px;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(47, 96, 227, 0.2);
+  box-shadow: 0 2px 4px hsl(var(--primary) / 0.2);
   flex-shrink: 10;
-  margin-top: -30px;
 }
-.zoom-pill:hover:not(:disabled) { 
-  background: linear-gradient(135deg, #2f60e3 0%, #2856d6 100%); 
+.zoom-pill:hover:not(:disabled) {
+  filter: brightness(0.9);
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(47, 96, 227, 0.3);
+  box-shadow: 0 4px 8px hsl(var(--primary) / 0.3);
 }
 .zoom-pill:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(47, 96, 227, 0.3);
+  box-shadow: 0 1px 2px hsl(var(--primary) / 0.3);
 }
-.zoom-pill:disabled { 
-  opacity: .45; 
-  cursor: not-allowed; 
+.zoom-pill:disabled {
+  opacity: .45;
+  cursor: not-allowed;
   transform: none;
   box-shadow: none;
 }
-.zoom-readout { 
+.zoom-readout {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px; 
-  color: #2856d6; 
+  font-size: 14px;
+  color: hsl(var(--primary));
   font-weight: 600;
   min-width: 60px;
   height: 36px;
   padding: 0 12px;
-  background: rgba(255, 255, 255, 0.9);
+  background: hsl(var(--card));
   border-radius: 18px;
   margin: 0;
   flex-shrink: 0;
-  border: 1px solid rgba(216, 225, 255, 0.6);
+  border: 1px solid hsl(var(--border));
 }
 
 /* Mini Toolbar for cropped popup */
@@ -4541,35 +5188,36 @@ div.statistics-popup,
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: var(--space-phi);
-  padding: var(--space-phi) var(--space-2phi);
-  background: #f8faff;
-  border-top: 1px solid #e1e7f0;
-  border-bottom: 1px solid #e1e7f0;
-  margin-top: var(--space-phi);
+  gap: var(--space-phi, 13px);
+  padding: 10px 16px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 8px);
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .crop-tool {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: var(--space-1) var(--space-phi);
+  gap: 6px;
+  padding: 10px 14px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   transition: all 0.2s ease;
-  color: #555;
-  min-width: 60px;
+  color: hsl(var(--muted-foreground));
+  min-width: 64px;
 }
 
 .crop-tool:hover {
-  background: #e8f0ff;
-  color: #2f60e3;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
 }
 
 .crop-tool.active {
-  background: #3f6eea;
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 .crop-tool i {
@@ -4584,16 +5232,16 @@ div.statistics-popup,
 .crop-tool-divider {
   width: 1px;
   height: 32px;
-  background: #d0d7e0;
+  background: hsl(var(--border));
 }
 
 .crop-stage {
   position: relative;
   height: 520px;
   margin-top: var(--space-phi);
-  background: #f7f9ff;
-  border: 1px solid #e6ecff;
-  border-radius: 12px;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 12px);
   overflow: hidden;
   user-select: none !important;
   -webkit-user-select: none !important;

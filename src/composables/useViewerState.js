@@ -1,4 +1,4 @@
-import { reactive, computed, ref } from "vue";
+import { computed, ref } from "vue";
 
 export function useViewerState() {
   const images = ref([]);               // string[]
