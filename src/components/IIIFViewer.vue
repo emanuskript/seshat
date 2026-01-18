@@ -43,6 +43,17 @@
             <span>Crop</span>
           </div>
 
+          <!-- Image Adjustments -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <div class="toolbar-item" :class="{ active: showAdjustmentsPanel || hasActiveFilters }" @click="toggleAdjustmentsPanel">
+                <SlidersHorizontal :size="22" />
+                <span>Adjust</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Adjust Image (Brightness, Contrast, etc.)</TooltipContent>
+          </Tooltip>
+
           <!-- divider -->
           <div class="toolbar-divider" aria-hidden="true"></div>
 
@@ -161,9 +172,6 @@
         class="pdf-viewer stage"
         ref="viewer"
         :style="{ cursor: stageCursor }"
-        @mousedown="startTrace($event)"
-        @mousemove="trace($event)"
-        @mouseup="endTrace($event)"
         @selectstart.prevent.stop
         @dragstart.prevent.stop
         @contextmenu.prevent.stop
@@ -172,53 +180,31 @@
         oncontextmenu="return false"
         unselectable="on"
       >
-        <!-- NEW: zoom anchor -->
-        <div v-show="imageReady" class="zoom-anchor" :style="anchorStyle">
-          <!-- ⬇️ keep your existing <img>, <svg>, rectangles, comments, etc. here ⬇️ -->
-        
-        <!-- NUCLEAR OPTION: Replace img with div background -->
+        <!-- OpenSeadragon Container -->
+        <div ref="osdContainer" class="osd-container"></div>
+
+        <!-- Event Intercept Layer - captures events when tools are active -->
         <div
-          v-if="croppedImage || currentImage"
-          class="image-viewer-background"
-          :style="{
-            backgroundImage: `url(${croppedImage || currentImage})`,
-            backgroundSize: 'contain',
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'center',
-            width: '100%',
-            height: '100%'
-          }"
-          draggable="false"
-          unselectable="on"
-          @selectstart.prevent.stop
-          @dragstart.prevent.stop
-          @mousedown.prevent.stop="handleMainImageMouseDown"
-          @contextmenu.prevent.stop
-          ondragstart="return false"
-          onselectstart="return false"
-          oncontextmenu="return false"
-          onmousedown="return false"
-          onmouseup="return false"
-          onmousemove="return false"
-          onclick="return false"
+          v-show="isAnyToolActive"
+          class="event-intercept-layer"
+          @mousedown="startTrace($event)"
+          @mousemove="trace($event)"
+          @mouseup="endTrace($event)"
+          @mouseleave="handleMouseLeave($event)"
+          @touchstart.prevent="startTrace($event)"
+          @touchmove.prevent="trace($event)"
+          @touchend.prevent="endTrace($event)"
         ></div>
-        
-        <!-- Invisible image for size calculations positioned correctly -->
-        <img
-          v-if="croppedImage || currentImage"
-          :src="croppedImage || currentImage"
-          ref="image"
-          class="calculation-image"
-          @load="handleImageLoad"
-          style="width: 100% !important; height: 100% !important; object-fit: contain !important; opacity: 0 !important; pointer-events: none !important; user-select: none !important; position: absolute !important; top: 0 !important; left: 0 !important; z-index: -1 !important;"
-        />
+
+        <!-- Annotation Overlay - positioned to match OSD viewport -->
+        <div v-show="osdReady && osdImageWidth > 0" class="annotation-overlay" :style="annotationOverlayStyle">
 
         <!-- SVG drawing layer -->
         <svg
           v-if="showTraces"
           class="drawing-layer"
-          :width="baseFitWidth"
-          :height="baseFitHeight"
+          :viewBox="`0 0 ${osdImageWidth || baseFitWidth} ${osdImageHeight || baseFitHeight}`"
+          preserveAspectRatio="xMidYMid meet"
         >
           <!-- existing traces -->
           <polyline
@@ -385,15 +371,15 @@
           />
         </svg>
 
-        <!-- Dynamic Crop / Highlight / Length rectangles -->
+        <!-- Dynamic Crop / Highlight / Length rectangles - use percentage positioning -->
         <div
           v-if="(isMeasuring && currentSquare) || (highlightModeActive && currentSquare) || (croppingStarted && currentSquare)"
           class="length-measurement"
           :style="{
-            left: `${currentSquare.x}px`,
-            top: `${currentSquare.y}px`,
-            width: `${currentSquare.width}px`,
-            height: `${currentSquare.height}px`,
+            left: `${(currentSquare.x / osdImageWidth) * 100}%`,
+            top: `${(currentSquare.y / osdImageHeight) * 100}%`,
+            width: `${(currentSquare.width / osdImageWidth) * 100}%`,
+            height: `${(currentSquare.height / osdImageHeight) * 100}%`,
             backgroundColor: currentSquare.color || 'rgba(0,0,0,0.1)',
             position: 'absolute',
           }"
@@ -422,16 +408,16 @@
           </div>
         </div>
 
-        <!-- Finalized Lengths -->
+        <!-- Finalized Lengths - use percentage positioning -->
         <div
           v-for="(measurement, index) in currentPageLengthMeasurements"
           :key="'length-' + index"
           class="length-measurement"
           :style="{
-            left: `${measurement.x}px`,
-            top: `${measurement.y}px`,
-            width: `${measurement.width}px`,
-            height: `${measurement.height}px`,
+            left: `${(measurement.x / osdImageWidth) * 100}%`,
+            top: `${(measurement.y / osdImageHeight) * 100}%`,
+            width: `${(measurement.width / osdImageWidth) * 100}%`,
+            height: `${(measurement.height / osdImageHeight) * 100}%`,
             backgroundColor: measurement.color,
             position: 'absolute',
             border: '1px solid #000',
@@ -460,58 +446,58 @@
           </div>
         </div>
 
-        <!-- Highlights -->
+        <!-- Highlights - use percentage positioning relative to overlay -->
         <div
           v-for="(annotation, index) in currentPageHighlights"
           :key="'highlight-' + index"
           class="highlight-rectangle"
           :style="{
-            left: `${annotation.x}px`,
-            top: `${annotation.y}px`,
-            width: `${annotation.width}px`,
-            height: `${annotation.height}px`,
+            left: `${(annotation.x / osdImageWidth) * 100}%`,
+            top: `${(annotation.y / osdImageHeight) * 100}%`,
+            width: `${(annotation.width / osdImageWidth) * 100}%`,
+            height: `${(annotation.height / osdImageHeight) * 100}%`,
             position: 'absolute',
           }"
         ></div>
 
-        <!-- Dynamic Underline -->
+        <!-- Dynamic Underline - use percentage positioning -->
         <div
           v-if="underlineModeActive && currentUnderline"
           class="underline-line"
           :style="{
             position: 'absolute',
-            left: `${currentUnderline.x}px`,
-            top: `${currentUnderline.y}px`,
-            width: `${currentUnderline.width}px`,
+            left: `${(currentUnderline.x / osdImageWidth) * 100}%`,
+            top: `${(currentUnderline.y / osdImageHeight) * 100}%`,
+            width: `${(currentUnderline.width / osdImageWidth) * 100}%`,
             height: '2px',
             backgroundColor: 'blue',
           }"
         ></div>
 
-        <!-- Saved Underlines -->
+        <!-- Saved Underlines - use percentage positioning -->
         <div
           v-for="(annotation, index) in currentPageUnderlines"
           :key="'underline-' + index"
           class="underline-line"
           :style="{
             position: 'absolute',
-            left: `${annotation.x}px`,
-            top: `${annotation.y}px`,
-            width: `${annotation.width}px`,
+            left: `${(annotation.x / osdImageWidth) * 100}%`,
+            top: `${(annotation.y / osdImageHeight) * 100}%`,
+            width: `${(annotation.width / osdImageWidth) * 100}%`,
             height: '2px',
             backgroundColor: 'red',
           }"
         ></div>
 
-        <!-- Cropping rectangle -->
+        <!-- Cropping rectangle - use percentage positioning -->
         <div
           v-if="croppingStarted && currentSquare"
           class="cropping-rectangle"
           :style="{
-            left: `${currentSquare.x}px`,
-            top: `${currentSquare.y}px`,
-            width: `${currentSquare.width}px`,
-            height: `${currentSquare.height}px`,
+            left: `${(currentSquare.x / osdImageWidth) * 100}%`,
+            top: `${(currentSquare.y / osdImageHeight) * 100}%`,
+            width: `${(currentSquare.width / osdImageWidth) * 100}%`,
+            height: `${(currentSquare.height / osdImageHeight) * 100}%`,
             position: 'absolute',
           }"
         ></div>
@@ -710,6 +696,15 @@
       :horizontal="horizontalStatistics"
       :vertical="verticalStatistics"
       @close="closeStatisticsPopup"
+    />
+
+    <!-- Image Adjustments Panel -->
+    <ImageAdjustmentsPanel
+      v-if="showAdjustmentsPanel"
+      :total-pages="totalPages"
+      @close="showAdjustmentsPanel = false"
+      @apply-to-all="handleApplyFiltersToAll"
+      @filters-changed="onFiltersChanged"
     />
 
     <!-- Clear Confirmation Popup -->
@@ -978,8 +973,14 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useTheme } from "@/composables/useTheme";
+import { useImageAdjustments } from "@/composables/useImageAdjustments";
+import ImageAdjustmentsPanel from "@/components/viewer/ImageAdjustmentsPanel.vue";
+import OpenSeadragon from "openseadragon";
+import "openseadragon-filtering";
+import { extractServiceId, fetchImageInfo, buildTileSource } from "@/services/iiifService";
 import {
   MessageSquare,
+  SlidersHorizontal,
   Highlighter,
   Underline,
   Pencil,
@@ -1012,7 +1013,9 @@ export default {
     AngleStatsPickerPopup,
     StatisticsPopup,
     TracePopup,
+    ImageAdjustmentsPanel,
     MessageSquare,
+    SlidersHorizontal,
     Highlighter,
     Underline,
     Pencil,
@@ -1043,7 +1046,24 @@ export default {
   },
   setup() {
     const { currentTheme, setTheme } = useTheme();
-    return { currentTheme, setTheme };
+    const {
+      currentFilters,
+      hasActiveFilters,
+      setFilter,
+      resetFilters,
+      applyToAllPages,
+      setCurrentPage: setAdjustmentPage
+    } = useImageAdjustments();
+    return {
+      currentTheme,
+      setTheme,
+      currentFilters,
+      hasActiveFilters,
+      setFilter,
+      resetFilters,
+      applyToAllPages,
+      setAdjustmentPage
+    };
   },
   props: {
     source: { type: String, required: true },
@@ -1194,6 +1214,7 @@ export default {
       // UI
       showClearDropdown: false,
       showThemeDropdown: false,
+      showAdjustmentsPanel: false,
       showClearConfirmation: false,
       toolMessage: "",
 
@@ -1204,11 +1225,20 @@ export default {
       moveStartPos: null,
       currentMoveDelta: { x: 0, y: 0 },
 
-      // Zoom & Pan
+      // OpenSeadragon state
+      osdViewer: null,       // OpenSeadragon instance
+      osdReady: false,       // Viewer initialized and image loaded
+      osdImageWidth: 0,      // Image natural width from OSD
+      osdImageHeight: 0,     // Image natural height from OSD
+      osdViewportBounds: null, // For triggering overlay updates
+      _overlayUpdatePending: false, // RAF throttle flag for overlay updates
+      isOperationInProgress: false, // Lock to prevent tool switching during drawing
+
+      // Legacy Zoom & Pan (kept for NavigationBar display, will be synced from OSD)
       zoomLevel: 1,
       zoomStep: 0.10,
-      minZoom: 1,
-      maxZoom: 3,
+      minZoom: 0.5,
+      maxZoom: 15,
       _holdTimer: null,      // for long-press reset
       panX: 0,
       panY: 0,
@@ -1257,18 +1287,27 @@ export default {
     zoomedWidth() { return this.baseFitWidth  * (this.zoomLevel || 1); },
     zoomedHeight(){ return this.baseFitHeight * (this.zoomLevel || 1); },
 
-    // Stage cursor: when zoomed, show grab/grabbing; otherwise use your existing logic
+    // Stage cursor: show crosshair for tool modes, let OSD handle default cursor
     stageCursor() {
-      if (this.isPanning) return 'grabbing';
-      if (this.zoomLevel > 1) return 'grab';
-      // Fallback to tool cursors
-      return (this.traceModeActive || this.highlightModeActive || this.underlineModeActive || this.measureModeActive || this.isMeasuring || this.moveModeActive)
-        ? 'crosshair'
-        : 'default';
+      // Show crosshair when a tool is active
+      if (this.isAnyToolActive) {
+        return 'crosshair';
+      }
+      // Let OSD handle cursor for pan/zoom (default, grab, grabbing)
+      return 'default';
+    },
+
+    // Returns true if any annotation tool is active (used for event intercept layer)
+    isAnyToolActive() {
+      return this.traceModeActive || this.highlightModeActive || this.underlineModeActive ||
+             this.measureModeActive || this.isMeasuring || this.moveModeActive ||
+             this.lengthMeasurementActive || this.croppingStarted || this.commentModeActive;
     },
 
     imageReady() {
-      return this.imageLoaded && this.baseFitWidth > 0 && this.baseFitHeight > 0;
+      // Use OSD state when available, fall back to legacy for cropped popup
+      return (this.osdReady && this.osdImageWidth > 0 && this.osdImageHeight > 0) ||
+             (this.imageLoaded && this.baseFitWidth > 0 && this.baseFitHeight > 0);
     },
 
     // SVG fill color that adapts to theme (for angle labels in cropped preview)
@@ -1283,8 +1322,71 @@ export default {
       return '#3d8bfa'; // Fallback blue
     },
 
+    // Annotation overlay positioning - syncs with OpenSeadragon viewport
+    annotationOverlayStyle() {
+      // Force reactivity on viewport changes
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+
+      if (!this.osdViewer || !this.osdReady) {
+        return { display: 'none' };
+      }
+
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) {
+        return { display: 'none' };
+      }
+
+      // Convert image corners to window (pixel) coordinates
+      // Use Point objects for proper API usage
+      const topLeft = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+      );
+      const bottomRight = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight))
+      );
+
+      const width = bottomRight.x - topLeft.x;
+      const height = bottomRight.y - topLeft.y;
+
+      return {
+        position: 'absolute',
+        left: `${topLeft.x}px`,
+        top: `${topLeft.y}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+        pointerEvents: 'none',
+        overflow: 'visible',
+        zIndex: 10
+      };
+    },
+
     anchorBoxInViewer() {
-      // Page rect in viewer-coordinates after zoom/pan (NOT the image's natural size)
+      // Force reactivity on viewport changes
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+
+      // Page rect in viewer-coordinates after zoom/pan
+      // Use OSD viewport when available
+      if (this.osdViewer && this.osdReady) {
+        const tiledImage = this.osdViewer.world.getItemAt(0);
+        if (tiledImage) {
+          // Use Point objects for proper API usage
+          const topLeft = this.osdViewer.viewport.pixelFromPoint(
+            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+          );
+          const bottomRight = this.osdViewer.viewport.pixelFromPoint(
+            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight))
+          );
+          const left = topLeft.x;
+          const top = topLeft.y;
+          const w = bottomRight.x - topLeft.x;
+          const h = bottomRight.y - topLeft.y;
+          return { left, top, width: w, height: h, right: left + w, bottom: top + h };
+        }
+      }
+
+      // Fallback for legacy or cropped popup
       const w = this.zoomedWidth;
       const h = this.zoomedHeight;
       const left = (this.viewerWidth / 2) - (w / 2) + this.panX;
@@ -1293,7 +1395,7 @@ export default {
     },
 
     composerStyle() {
-      if (!this.imageReady) return {};
+      if (!this.imageReady || !this.composerTarget) return {};
       const box = this.anchorBoxInViewer;
       const pad = 12;             // gap outside page
       const width = 260;          // composer width
@@ -1598,7 +1700,25 @@ export default {
       this.pageInput = n + 1;
       // Clear bank selections when page changes
       this.bankSelectedKeys = [];
+      // Update adjustment page for per-page filters
+      this.setAdjustmentPage(n);
     },
+    // Initialize OpenSeadragon when image changes
+    currentImage: {
+      handler(newImage) {
+        if (newImage && !this.croppedImage) {
+          this.initOpenSeadragon(newImage);
+        }
+      },
+      immediate: true
+    },
+    // Watch for filter changes and apply to OSD
+    currentFilters: {
+      handler() {
+        this.applyFiltersToOsd();
+      },
+      deep: true
+    }
   },
   async created() {
     if (!this.source) {
@@ -1649,18 +1769,45 @@ export default {
     document.addEventListener('selectstart', this._preventSelection, true);
     document.addEventListener('dragstart', this._preventSelection, true);
     document.addEventListener('contextmenu', this._preventSelection, true);
+
+    // Global mouseup handler to complete operations when mouse is released outside viewer
+    this._globalMouseUp = (e) => {
+      if (this.isAnyToolActive) {
+        this.endTrace(e);
+      }
+    };
+    window.addEventListener('mouseup', this._globalMouseUp);
   },
 
   beforeUnmount() {
     window.removeEventListener('resize', this.computeBaseFit);
-    
+
+    // Clean up OpenSeadragon
+    if (this.osdViewer) {
+      // Remove all event handlers before destroying
+      this.osdViewer.removeAllHandlers('open');
+      this.osdViewer.removeAllHandlers('open-failed');
+      this.osdViewer.removeAllHandlers('animation');
+      this.osdViewer.removeAllHandlers('animation-finish');
+      this.osdViewer.removeAllHandlers('resize');
+      this.osdViewer.removeAllHandlers('zoom');
+      this.osdViewer.removeAllHandlers('pan');
+      this.osdViewer.destroy();
+      this.osdViewer = null;
+    }
+
     // Clean up global selection prevention
     if (this._preventSelection) {
       document.removeEventListener('selectstart', this._preventSelection, true);
       document.removeEventListener('dragstart', this._preventSelection, true);
       document.removeEventListener('contextmenu', this._preventSelection, true);
     }
-    
+
+    // Clean up global mouseup handler
+    if (this._globalMouseUp) {
+      window.removeEventListener('mouseup', this._globalMouseUp);
+    }
+
     // Clean up body class if component is destroyed while popup is open
     document.body.classList.remove('cropped-popup-active');
   },
@@ -1698,22 +1845,18 @@ export default {
     },
 
     zoomIn() {
-      if (!this.imageReady) return;
-      this.zoomLevel = Math.min(this.maxZoom, +(this.zoomLevel + this.zoomStep).toFixed(2));
-      this.clampPan();
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.zoomBy(1.2);
+      this.osdViewer.viewport.applyConstraints();
     },
     zoomOut() {
-      if (!this.imageReady) return;
-      // Regular click: step down, but not below min
-      this.zoomLevel = Math.max(this.minZoom, +(this.zoomLevel - this.zoomStep).toFixed(2));
-      // Optional: clamp pan so content stays reachable
-      this.clampPan();
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.zoomBy(0.83);
+      this.osdViewer.viewport.applyConstraints();
     },
     resetZoom() {
-      if (!this.imageReady) return;
-      this.zoomLevel = 1;
-      this.panX = 0;
-      this.panY = 0;
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.goHome();
     },
     startHoldReset() {
       // Long press (3s) to reset to 100%
@@ -1728,6 +1871,204 @@ export default {
         this._holdTimer = null;
       }
     },
+
+    /* ---------- OpenSeadragon Methods ---------- */
+    async initOpenSeadragon(imageUrl) {
+      if (!imageUrl) return;
+
+      // Destroy previous viewer if exists
+      if (this.osdViewer) {
+        // Remove all event handlers before destroying
+        this.osdViewer.removeAllHandlers('open');
+        this.osdViewer.removeAllHandlers('open-failed');
+        this.osdViewer.removeAllHandlers('animation');
+        this.osdViewer.removeAllHandlers('animation-finish');
+        this.osdViewer.removeAllHandlers('resize');
+        this.osdViewer.removeAllHandlers('zoom');
+        this.osdViewer.removeAllHandlers('pan');
+        this.osdViewer.destroy();
+        this.osdViewer = null;
+        this.osdReady = false;
+      }
+
+      // Get tile source from IIIF service
+      const serviceId = extractServiceId(imageUrl);
+      let tileSource;
+
+      if (serviceId) {
+        const imageInfo = await fetchImageInfo(serviceId);
+        tileSource = buildTileSource(serviceId, imageInfo);
+      } else {
+        // Fallback for non-IIIF images
+        tileSource = { type: 'image', url: imageUrl };
+      }
+
+      // Create OpenSeadragon viewer
+      this.osdViewer = OpenSeadragon({
+        element: this.$refs.osdContainer,
+        tileSources: tileSource,
+        showNavigationControl: false,
+        showNavigator: false,
+        gestureSettingsMouse: {
+          clickToZoom: false,
+          dblClickToZoom: false,
+          scrollToZoom: true
+        },
+        gestureSettingsTouch: {
+          pinchToZoom: true
+        },
+        minZoomLevel: 0.5,
+        maxZoomLevel: 15,
+        visibilityRatio: 0.8,
+        constrainDuringPan: true,
+        immediateRender: true,
+        crossOriginPolicy: 'Anonymous',
+        // Canvas drawer required for openseadragon-filtering plugin
+        drawer: 'canvas'
+      });
+
+      // Event handlers
+      this.osdViewer.addHandler('open', this.onOsdOpen);
+      this.osdViewer.addHandler('open-failed', this.onOsdOpenFailed);
+      this.osdViewer.addHandler('animation', this.updateOverlayPosition);
+      this.osdViewer.addHandler('animation-finish', this.updateOverlayPosition);
+      this.osdViewer.addHandler('resize', this.updateOverlayPosition);
+      this.osdViewer.addHandler('zoom', this.onOsdZoom);
+      this.osdViewer.addHandler('pan', this.updateOverlayPosition);
+    },
+
+    onOsdOpen() {
+      this.osdReady = true;
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (tiledImage) {
+        const size = tiledImage.getContentSize();
+        this.osdImageWidth = size.x;
+        this.osdImageHeight = size.y;
+
+        // Also update legacy dimensions for compatibility
+        this.baseFitWidth = size.x;
+        this.baseFitHeight = size.y;
+      }
+      this.imageLoaded = true;
+
+      // Apply current filters
+      this.applyFiltersToOsd();
+
+      // Initial overlay position update
+      this.$nextTick(() => {
+        this.updateOverlayPosition();
+      });
+    },
+
+    onOsdOpenFailed(event) {
+      console.error('Failed to load image in OpenSeadragon:', event.message);
+      alert('Failed to load image. Please try again.');
+    },
+
+    onOsdZoom(event) {
+      // Sync legacy zoom level for UI display
+      this.zoomLevel = event.zoom;
+      this.updateOverlayPosition();
+    },
+
+    updateOverlayPosition() {
+      // RAF throttle: prevent multiple updates per frame for smooth performance
+      if (this._overlayUpdatePending) return;
+
+      this._overlayUpdatePending = true;
+      requestAnimationFrame(() => {
+        this._overlayUpdatePending = false;
+        // Force Vue to re-compute annotationOverlayStyle by updating reactive property
+        this.osdViewportBounds = Date.now();
+      });
+    },
+
+    applyFiltersToOsd() {
+      // Use openseadragon-filtering plugin with correct API structure
+      if (!this.osdViewer || !this.osdReady) return;
+
+      const filters = this.currentFilters;
+      const processors = [];
+
+      // Brightness: plugin expects -255 to 255, our slider is -100 to 100
+      if (filters.brightness !== 0) {
+        const adjustment = (filters.brightness / 100) * 255;
+        processors.push(OpenSeadragon.Filters.BRIGHTNESS(adjustment));
+      }
+
+      // Contrast: plugin expects adjustment value, our slider is 0-3
+      if (filters.contrast !== 1) {
+        processors.push(OpenSeadragon.Filters.CONTRAST(filters.contrast));
+      }
+
+      // Saturation: custom filter (plugin doesn't have one)
+      if (filters.saturation !== undefined && filters.saturation !== 1) {
+        const saturation = filters.saturation;
+        processors.push(function(context, callback) {
+          const imgData = context.getImageData(0, 0, context.canvas.width, context.canvas.height);
+          const pixels = imgData.data;
+          for (let i = 0; i < pixels.length; i += 4) {
+            const r = pixels[i];
+            const g = pixels[i + 1];
+            const b = pixels[i + 2];
+            const gray = 0.2989 * r + 0.587 * g + 0.114 * b;
+            pixels[i] = gray + (r - gray) * saturation;
+            pixels[i + 1] = gray + (g - gray) * saturation;
+            pixels[i + 2] = gray + (b - gray) * saturation;
+          }
+          context.putImageData(imgData, 0, 0);
+          callback();
+        });
+      }
+
+      // Invert
+      if (filters.invert) {
+        processors.push(OpenSeadragon.Filters.INVERT());
+      }
+
+      // Grayscale
+      if (filters.grayscale) {
+        processors.push(OpenSeadragon.Filters.GREYSCALE());
+      }
+
+      // Threshold: Convert to binary black/white (great for faded manuscripts)
+      if (filters.threshold !== null && filters.threshold !== undefined) {
+        const threshold = filters.threshold;
+        processors.push(OpenSeadragon.Filters.THRESHOLDING(threshold));
+      }
+
+      // Sharpen: Enhance edges for blurry scans
+      if (filters.sharpen) {
+        processors.push(OpenSeadragon.Filters.CONVOLUTION([
+           0, -1,  0,
+          -1,  5, -1,
+           0, -1,  0
+        ]));
+      }
+
+      // Edge Detection: Highlight text strokes (Laplacian kernel)
+      if (filters.edgeDetect) {
+        processors.push(OpenSeadragon.Filters.CONVOLUTION([
+          -1, -1, -1,
+          -1,  8, -1,
+          -1, -1, -1
+        ]));
+      }
+
+      // Apply using correct API: filters is an OBJECT with processors property
+      // Use sync mode for better performance during zoom/pan
+      this.osdViewer.setFilterOptions({
+        filters: processors.length > 0 ? { processors: processors } : null,
+        loadMode: 'sync'
+      });
+    },
+
+    setOsdMouseNavEnabled(enabled) {
+      if (this.osdViewer) {
+        this.osdViewer.setMouseNavEnabled(enabled);
+      }
+    },
+    /* ---------- End OpenSeadragon Methods ---------- */
 
     async fetchIIIFImages(manifestUrl) {
       try {
@@ -1754,6 +2095,52 @@ export default {
 
     /* ---------- Helpers ---------- */
     getMousePosition(event) {
+      // Extract coordinates from mouse or touch event
+      let clientX, clientY;
+
+      if (event.touches && event.touches.length > 0) {
+        // touchstart, touchmove - use first touch
+        clientX = event.touches[0].clientX;
+        clientY = event.touches[0].clientY;
+      } else if (event.changedTouches && event.changedTouches.length > 0) {
+        // touchend - no active touches, use changedTouches
+        clientX = event.changedTouches[0].clientX;
+        clientY = event.changedTouches[0].clientY;
+      } else {
+        // Regular mouse event
+        clientX = event.clientX;
+        clientY = event.clientY;
+      }
+
+      // Use OpenSeadragon coordinate translation if available
+      if (this.osdViewer && this.osdReady) {
+        const tiledImage = this.osdViewer.world.getItemAt(0);
+        if (tiledImage) {
+          // Get the container element for coordinate calculation
+          const container = this.osdViewer.container;
+          const rect = container.getBoundingClientRect();
+
+          // Create a point in window coordinates relative to the container
+          const containerPoint = new OpenSeadragon.Point(
+            clientX - rect.left,
+            clientY - rect.top
+          );
+
+          // Convert from window to viewport coordinates
+          const viewportPoint = this.osdViewer.viewport.pointFromPixel(containerPoint);
+
+          // Convert from viewport to image coordinates
+          const imagePoint = tiledImage.viewportToImageCoordinates(viewportPoint);
+
+          // Clamp to image bounds
+          return {
+            x: Math.round(Math.max(0, Math.min(this.osdImageWidth, imagePoint.x))),
+            y: Math.round(Math.max(0, Math.min(this.osdImageHeight, imagePoint.y)))
+          };
+        }
+      }
+
+      // Fallback to legacy calculation for cropped popup or when OSD not ready
       const viewer = this.$refs.viewer;
       const rect = viewer.getBoundingClientRect();
 
@@ -1762,8 +2149,8 @@ export default {
       const centerY = rect.top + rect.height / 2;
 
       // Pointer delta from stage center in screen px
-      const dxScreen = event.clientX - centerX;
-      const dyScreen = event.clientY - centerY;
+      const dxScreen = clientX - centerX;
+      const dyScreen = clientY - centerY;
 
       // Undo pan & zoom to get into anchor local space (0,0 at anchor center)
       const z = this.zoomLevel || 1;
@@ -1937,6 +2324,12 @@ export default {
     /* ---------- Toolbar ---------- */
     selectTool(tool) {
       if (!this.currentImage) return;
+
+      // Prevent tool switching during active operation
+      if (this.isOperationInProgress) {
+        console.warn('Cannot switch tools during active operation');
+        return;
+      }
 
       // reset non-related modes
       const resetAll = () => {
@@ -2391,12 +2784,14 @@ cancelPenSelection() {
       if (this.currentPage < this.totalPages - 1) {
         this.currentPage++;
         if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
+        this.setAdjustmentPage(this.currentPage); // sync with image adjustments
       }
     },
     prevPage() {
       if (this.currentPage > 0) {
         this.currentPage--;
         if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
+        this.setAdjustmentPage(this.currentPage); // sync with image adjustments
       }
     },
     goToPage(pageNumber = null) {
@@ -2404,24 +2799,40 @@ cancelPenSelection() {
       const newPage = Math.max(1, Math.min(targetPage, this.totalPages)) - 1;
       this.currentPage = newPage;
       this.pageInput = newPage + 1; // keep pageInput in sync
+      this.setAdjustmentPage(newPage); // sync with image adjustments
+    },
+
+    /* ---------- Image Adjustments ---------- */
+    toggleAdjustmentsPanel() {
+      this.showAdjustmentsPanel = !this.showAdjustmentsPanel;
+    },
+    handleApplyFiltersToAll() {
+      this.applyToAllPages(this.totalPages);
+    },
+    onFiltersChanged() {
+      // Filters are applied via applyFiltersToOsd() which is triggered by the watcher
+      // This handler can be used for additional side effects if needed
     },
 
     /* ---------- Stage interactions (DROP-IN versions) ---------- */
     startTrace(event) {
-      // PAN START: when zoomed and user isn't starting another tool action, start panning
-      if (this.zoomLevel > 1) {
-        const noToolActive = !(
-          this.traceModeActive || this.measureModeActive || this.highlightModeActive ||
-          this.underlineModeActive || this.lengthMeasurementActive || this.croppingStarted ||
-          this.commentModeActive || this.moveModeActive
-        );
-        // If no tool is active, use drag to pan
-        if (noToolActive) {
-          this.isPanning = true;
-          this._panStart = { x: event.clientX, y: event.clientY, panX: this.panX, panY: this.panY };
-          return; // don't trigger drawing if we're panning
-        }
+      // Check if any tool is active
+      const toolActive = (
+        this.traceModeActive || this.measureModeActive || this.highlightModeActive ||
+        this.underlineModeActive || this.lengthMeasurementActive || this.croppingStarted ||
+        this.commentModeActive || this.moveModeActive
+      );
+
+      // If no tool is active, let OpenSeadragon handle pan/zoom natively
+      if (!toolActive) {
+        return;
       }
+
+      // Mark operation as in progress to prevent tool switching
+      this.isOperationInProgress = true;
+
+      // Tool is active - disable OSD mouse navigation while drawing/annotating
+      this.setOsdMouseNavEnabled(false);
 
       // MOVE MODE
       if (this.moveModeActive && this.bankSelectedKeys.length > 0) {
@@ -2538,16 +2949,6 @@ cancelPenSelection() {
     },
 
     trace(event) {
-      // PAN MOVE
-      if (this.isPanning && this._panStart) {
-        const dx = event.clientX - this._panStart.x;
-        const dy = event.clientY - this._panStart.y;
-        this.panX = this._panStart.panX + dx;
-        this.panY = this._panStart.panY + dy;
-        this.clampPan();
-        return; // swallow draw events while panning
-      }
-
       // MOVE MODE: show live movement preview
       if (this.moveModeActive && this.bankSelectedKeys.length > 0 && this.moveStartPos) {
         const currentPos = this.getMousePosition(event);
@@ -2642,12 +3043,11 @@ cancelPenSelection() {
     },
 
     endTrace(event) {
-      // PAN END
-      if (this.isPanning) {
-        this.isPanning = false;
-        this._panStart = null;
-        return; // end pan, do not create artifacts
-      }
+      // Re-enable OSD mouse navigation after tool operation completes
+      this.setOsdMouseNavEnabled(true);
+
+      // Mark operation as complete to allow tool switching
+      this.isOperationInProgress = false;
 
       // MOVE MODE: apply delta
       if (this.moveModeActive && this.bankSelectedKeys.length > 0 && this.moveStartPos) {
@@ -2688,6 +3088,15 @@ cancelPenSelection() {
         this.cropButtonClicked = false;
         this.currentSquare = null;
         this.startPoint = null;
+      }
+    },
+
+    // Handle mouse leaving the viewer during an active operation
+    handleMouseLeave(event) {
+      // If actively drawing/cropping/highlighting, complete the operation
+      if (this.currentStroke || this.currentSquare || this.currentUnderline ||
+          this.currentHighlight || this.moveStartPos) {
+        this.endTrace(event);
       }
     },
 
@@ -2920,49 +3329,81 @@ cancelPenSelection() {
       this.showToolMessage("Click and drag to crop.");
     },
     async generateCroppedFromCurrentSquare() {
-      const { x, y, width, height } = this.currentSquare;
-      const imageElement = this.$refs.image;
-      const naturalWidth = imageElement.naturalWidth;
-      const naturalHeight = imageElement.naturalHeight;
-      const rect = imageElement.getBoundingClientRect();
-      const scaleX = naturalWidth / rect.width;
-      const scaleY = naturalHeight / rect.height;
+      if (!this.currentSquare || !this.osdViewer) return;
 
-      const scaledX = (x - 0) * scaleX; // since x,y already relative to viewer
-      const scaledY = y * scaleY;
-      const scaledWidth = width * scaleX;
-      const scaledHeight = height * scaleY;
+      // Validate and clamp coordinates to image bounds
+      const rawX = this.currentSquare.x;
+      const rawY = this.currentSquare.y;
+      const rawW = this.currentSquare.width;
+      const rawH = this.currentSquare.height;
 
-      const canvas = document.createElement("canvas");
-      canvas.width = scaledWidth;
-      canvas.height = scaledHeight;
-      const ctx = canvas.getContext("2d");
+      const x = Math.max(0, Math.min(rawX, this.osdImageWidth));
+      const y = Math.max(0, Math.min(rawY, this.osdImageHeight));
+      const width = Math.min(rawW, this.osdImageWidth - x);
+      const height = Math.min(rawH, this.osdImageHeight - y);
 
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = this.currentImage;
-      await new Promise((resolve, reject) => {
-        img.onload = () => {
-          ctx.drawImage(
-            img,
-            scaledX,
-            scaledY,
-            scaledWidth,
-            scaledHeight,
-            0,
-            0,
-            scaledWidth,
-            scaledHeight
-          );
-          this.croppedImage = canvas.toDataURL("image/png");
-          
-          // Add class to body for proper z-index management
-          document.body.classList.add('cropped-popup-active');
-          
-          resolve();
-        };
-        img.onerror = reject;
-      });
+      // Validate crop has valid dimensions
+      if (width <= 10 || height <= 10) {
+        this.toolMessage = 'Crop region too small';
+        setTimeout(() => { this.toolMessage = ''; }, 2000);
+        return;
+      }
+
+      // Helper: Canvas-based crop (works with any image)
+      const cropViaCanvas = async (imageUrl) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width);
+        canvas.height = Math.round(height);
+        const ctx = canvas.getContext('2d');
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        return new Promise((resolve, reject) => {
+          img.onload = () => {
+            ctx.drawImage(
+              img,
+              Math.round(x), Math.round(y), Math.round(width), Math.round(height),
+              0, 0, Math.round(width), Math.round(height)
+            );
+            resolve(canvas.toDataURL('image/png'));
+          };
+          img.onerror = () => reject(new Error('Failed to load image for cropping'));
+          img.src = imageUrl;
+        });
+      };
+
+      try {
+        // Try IIIF region URL first (more efficient for large images)
+        const serviceId = extractServiceId(this.currentImage);
+        if (serviceId) {
+          const regionUrl = `${serviceId}/${Math.round(x)},${Math.round(y)},${Math.round(width)},${Math.round(height)}/full/0/default.jpg`;
+
+          // Verify IIIF server supports region requests
+          try {
+            const testResponse = await fetch(regionUrl, { method: 'HEAD' });
+            if (testResponse.ok) {
+              this.croppedImage = regionUrl;
+              // Add class to body for proper z-index management
+              document.body.classList.add('cropped-popup-active');
+              return;
+            }
+          } catch (e) {
+            console.warn('IIIF region request failed, using canvas fallback');
+          }
+        }
+
+        // Fallback: Canvas-based crop
+        this.croppedImage = await cropViaCanvas(this.currentImage);
+
+        // Add class to body for proper z-index management
+        document.body.classList.add('cropped-popup-active');
+
+      } catch (error) {
+        console.error('Crop failed:', error);
+        this.toolMessage = 'Failed to crop image. Please try again.';
+        setTimeout(() => { this.toolMessage = ''; }, 3000);
+      }
     },
     saveCroppedImageAsPNG() {
       const link = document.createElement("a");
@@ -3759,6 +4200,56 @@ cancelPenSelection() {
   background: transparent !important;
   color: inherit !important;
 }
+
+/* OpenSeadragon Container */
+.osd-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Event Intercept Layer - captures events when tools are active */
+.event-intercept-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* Annotation Overlay - positioned over OSD */
+.annotation-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+  overflow: visible;
+}
+
+.annotation-overlay > * {
+  pointer-events: auto;
+}
+
+.annotation-overlay .drawing-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.annotation-overlay .drawing-layer * {
+  pointer-events: auto;
+}
+
 .bank { width: 300px; min-width: 300px; border-left: 1px solid hsl(var(--border)); }
 
 .navigation-bar {
