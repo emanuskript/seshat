@@ -1,175 +1,65 @@
 <!-- /src/components/IIIFViewer.vue -->
-<!-- Main IIIF viewer component -->
+<!-- Main IIIF viewer component with CSS Grid layout -->
 <template>
-  <div class="viewer-container">
+  <div
+    class="grid h-screen w-screen bg-background overflow-hidden"
+    :class="{
+      'grid-cols-[0_1fr_280px]': leftPanelCollapsed && !rightPanelCollapsed,
+      'grid-cols-[48px_1fr_0]': !leftPanelCollapsed && rightPanelCollapsed,
+      'grid-cols-[0_1fr_0]': leftPanelCollapsed && rightPanelCollapsed,
+      'grid-cols-[48px_1fr_280px]': !leftPanelCollapsed && !rightPanelCollapsed
+    }"
+    style="grid-template-rows: 48px 1fr 40px; grid-template-areas: 'topbar topbar topbar' 'left canvas right' 'bottom bottom bottom';"
+  >
     <!-- Top Bar -->
-    <div class="top-bar">
-      <img
-        src="@/assets/logo.png"
-        alt="Logo"
-        class="logo"
-        @click="goHome"
+    <header style="grid-area: topbar;" class="relative z-50">
+      <ViewerTopBar
+        :document-name="documentName"
+        :left-collapsed="leftPanelCollapsed"
+        :right-collapsed="rightPanelCollapsed"
+        @toggle-left="leftPanelCollapsed = !leftPanelCollapsed"
+        @toggle-right="rightPanelCollapsed = !rightPanelCollapsed"
+        @save="saveAnnotations"
+        @go-home="goHome"
+        @clear-highlights="clearHighlights"
+        @clear-underlines="clearUnderlines"
+        @clear-comments="clearComments"
+        @clear-traces="clearTraces"
+        @clear-angles="clearAngles"
+        @clear-horizontal="clearHorizontalLengths"
+        @clear-vertical="clearVerticalLengths"
+        @clear-all="showClearConfirmation = true"
       />
+    </header>
 
-      <TooltipProvider :delay-duration="300">
-        <div class="toolbar">
-          <!-- Comment -->
-          <div class="toolbar-item" @click="selectTool('comment')">
-            <MessageSquare :size="22" />
-            <span>Comment</span>
-          </div>
+    <!-- Left Toolbar -->
+    <aside v-show="!leftPanelCollapsed" style="grid-area: left;">
+      <ViewerToolbar
+        :active-tool="currentActiveTool"
+        :has-active-filters="hasActiveFilters"
+        :is-operation-in-progress="isOperationInProgress"
+        @select-tool="selectTool"
+        @toggle-adjustments="toggleAdjustmentsPanel"
+        @open-horizontal="openHorizontalPopup"
+        @open-vertical="openVerticalPopup"
+        @open-statistics="showStatsPanel = true"
+        @start-crop="startCrop"
+      />
+    </aside>
 
-          <!-- Highlight -->
-          <div class="toolbar-item" @click="selectTool('highlight')">
-            <Highlighter :size="22" />
-            <span>Highlight</span>
-          </div>
-
-          <!-- Underline -->
-          <div class="toolbar-item" @click="selectTool('underline')">
-            <Underline :size="22" />
-            <span>Underline</span>
-          </div>
-
-          <!-- Trace -->
-          <div class="toolbar-item" @click="selectTool('trace')">
-            <Pencil :size="22" />
-            <span>Trace</span>
-          </div>
-
-          <!-- Crop -->
-          <div class="toolbar-item" @click="startCrop">
-            <Scissors :size="22" />
-            <span>Crop</span>
-          </div>
-
-          <!-- Image Adjustments -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" :class="{ active: showAdjustmentsPanel || hasActiveFilters }" @click="toggleAdjustmentsPanel">
-                <SlidersHorizontal :size="22" />
-                <span>Adjust</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Adjust Image (Brightness, Contrast, etc.)</TooltipContent>
-          </Tooltip>
-
-          <!-- divider -->
-          <div class="toolbar-divider" aria-hidden="true"></div>
-
-          <!-- Measure Angle -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="selectTool('measure')">
-                <ChevronUp :size="22" />
-                <span>Angle</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Measure Angle</TooltipContent>
-          </Tooltip>
-
-          <!-- Horizontal Bands -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="openHorizontalPopup">
-                <Ruler :size="22" />
-                <span>Horizontal</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Measure Horizontal Bands</TooltipContent>
-          </Tooltip>
-
-          <!-- Vertical Bands -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="openVerticalPopup">
-                <RulerDimensionLine :size="22" />
-                <span>Vertical</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Measure Vertical Bands</TooltipContent>
-          </Tooltip>
-
-          <!-- Generate Statistics -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
-                <Calculator :size="22" />
-                <span>Statistics</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Generate Statistics</TooltipContent>
-          </Tooltip>
-
-        <!-- divider -->
-        <div class="toolbar-divider" aria-hidden="true"></div>
-
-        <!-- Save -->
-        <div class="toolbar-item" @click="saveAnnotations">
-          <Save :size="22" />
-          <span>Save</span>
-        </div>
-
-        <!-- Clear -->
-        <div class="toolbar-item" @click="toggleClearDropdown">
-          <Trash2 :size="22" />
-          <span>Clear</span>
-          <div v-if="showClearDropdown" class="clear-dropdown">
-            <div @click.stop="clearHighlights">Clear Highlights</div>
-            <div @click.stop="clearUnderlines">Clear Underlines</div>
-            <div @click.stop="clearComments">Clear Comments</div>
-            <div @click.stop="clearTraces">Clear Traces</div>
-            <div @click.stop="clearAngles">Clear Angles</div>
-            <div @click.stop="clearHorizontalLengths">Clear Horizontal Lengths</div>
-            <div @click.stop="clearVerticalLengths">Clear Vertical Lengths</div>
-            <div @click.stop="clearAll">Clear All</div>
-          </div>
-        </div>
-
-        <!-- Theme Toggle -->
-        <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
-          <Palette :size="22" />
-          <span>Theme</span>
-          <div v-if="showThemeDropdown" class="theme-dropdown">
-            <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
-              <Sun :size="16" /> Light
-            </div>
-            <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
-              <Moon :size="16" /> Dark
-            </div>
-            <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
-              <Contrast :size="16" /> High Contrast
-            </div>
-          </div>
-        </div>
+    <!-- Main Canvas Area -->
+    <main style="grid-area: canvas;" class="relative overflow-hidden bg-muted">
+      <!-- Tool message -->
+      <div
+        v-if="toolMessage"
+        class="absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-card border border-border rounded-md shadow-lg text-sm"
+      >
+        {{ toolMessage }}
       </div>
-      </TooltipProvider>
-    </div>
-    <!-- Page Navigation (now right under the toolbar, at the top) -->
-    <NavigationBar
-      :currentPage="currentPage"
-      :totalPages="totalPages"
-      :pageInput="pageInput"
-      :imageReady="imageReady"
-      :zoomLevel="zoomLevel"
-      :minZoom="minZoom"
-      @prev="prevPage"
-      @next="nextPage"
-      @go-to="goToPage"
-      @zoom-in="zoomIn"
-      @zoom-out="zoomOut"
-      @start-hold-reset="startHoldReset"
-      @cancel-hold-reset="cancelHoldReset"
-    />
 
-    <!-- Tool tip message -->
-    <div class="tool-message" v-if="toolMessage">{{ toolMessage }}</div>
-
-    <!-- Workspace: stage + annotations bank -->
-    <div class="workspace">
       <!-- Image Stage -->
       <div
-        class="pdf-viewer stage"
+        class="absolute inset-0"
         ref="viewer"
         :style="{ cursor: stageCursor }"
         @selectstart.prevent.stop
@@ -181,12 +71,13 @@
         unselectable="on"
       >
         <!-- OpenSeadragon Container -->
-        <div ref="osdContainer" class="osd-container"></div>
+        <div ref="osdContainer" class="absolute inset-0"></div>
 
         <!-- Event Intercept Layer - captures events when tools are active -->
         <div
           v-show="isAnyToolActive"
-          class="event-intercept-layer"
+          class="absolute inset-0 z-10"
+          :class="{ 'cursor-crosshair': isAnyToolActive }"
           @mousedown="startTrace($event)"
           @mousemove="trace($event)"
           @mouseup="endTrace($event)"
@@ -543,32 +434,58 @@
 
       </div>
 
-<!-- Compact Bank Panel (anchored, not affecting layout) -->
-   <AnnotationsBank
-     class="bank-panel"
-     :class="{ 'annotations-bank--hidden': croppedImage }"
-    :page="currentPage"
-     :items="bankItems"
-     :selectedKeys="bankSelectedKeys"
-     :multiSelect="bankMultiSelect"
-     :moveActive="moveModeActive"
-     :zoomLevel="zoomLevel"
-     :showInCm="showMeasurementsInCm"
-     :pixelsPerCm="pixelsPerCm"
-     :isBlurred="isAnyPopupOpen"
-     @update:selected="(keys) => bankSelectedKeys = keys"
-     @toggle-multi="bankMultiSelect = !bankMultiSelect"
-     @request-move="enableMoveMode"
-     @cancel-move="disableMoveMode"
-     @request-delete="deleteSelectedFromBank"
-     @toggle-units="toggleMeasurementUnits"
-   />
+      <!-- Floating Scribe Detection Button -->
+      <div
+        class="absolute bottom-4 right-4 z-40 cursor-pointer hover:scale-110 transition-transform"
+        @click="openScribeDetection"
+      >
+        <img
+          :src="require('@/assets/pharosight_icon_no_text.png')"
+          alt="PharoSight"
+          class="h-10 w-10 rounded-full shadow-lg"
+        />
+      </div>
+    </main>
 
-   <!-- Floating Scribe Detection Button -->
-   <div class="floating-scribe-button" @click="openScribeDetection">
-     <img :src="require('@/assets/pharosight_icon_no_text.png')" alt="PharoSight" class="scribe-button-icon" />
-   </div>
-    </div>
+    <!-- Right Panel -->
+    <aside v-show="!rightPanelCollapsed" style="grid-area: right;">
+      <ViewerRightPanel
+        :annotations="currentPageAnnotationsList"
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :zoom-level="zoomLevel"
+        :show-in-cm="showMeasurementsInCm"
+        :selected-annotation="selectedAnnotationItem"
+        @select-annotation="handleSelectAnnotation"
+        @delete-annotation="handleDeleteAnnotation"
+        @generate-bands-page="calculateCurrentPage"
+        @generate-bands-doc="calculateEntireDocument"
+        @generate-angles="openAnglesFilterFromStats"
+      />
+    </aside>
+
+    <!-- Bottom Bar -->
+    <footer style="grid-area: bottom;">
+      <ViewerBottomBar
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :zoom-level="zoomLevel"
+        :min-zoom="minZoom"
+        :max-zoom="maxZoom"
+        :show-in-cm="showMeasurementsInCm"
+        :image-ready="imageReady"
+        @prev-page="prevPage"
+        @next-page="nextPage"
+        @go-to-page="goToPage"
+        @zoom-in="zoomIn"
+        @zoom-out="zoomOut"
+        @zoom-to="zoomTo"
+        @reset-zoom="resetZoom"
+        @toggle-units="toggleMeasurementUnits"
+        @start-hold-reset="startHoldReset"
+        @cancel-hold-reset="cancelHoldReset"
+      />
+    </footer>
 
     <!-- Angle Label Picker Popup -->
     <!-- Angle Label Popup -->
@@ -949,7 +866,6 @@
 import { PDFDocument } from "pdf-lib";
 import html2canvas from "html2canvas";
 import AnnotationsBank from "@/components/viewer/AnnotationsBank.vue";
-import NavigationBar from "@/components/viewer/NavigationBar.vue";
 import ScribeDetectionPopup from "@/components/popups/ScribeDetectionPopup.vue";
 import AngleLabelPopup from "@/components/popups/AngleLabelPopup.vue";
 import LengthPopupHorizontal from "@/components/popups/LengthPopupHorizontal.vue";
@@ -975,6 +891,10 @@ import {
 import { useTheme } from "@/composables/useTheme";
 import { useImageAdjustments } from "@/composables/useImageAdjustments";
 import ImageAdjustmentsPanel from "@/components/viewer/ImageAdjustmentsPanel.vue";
+import ViewerTopBar from "@/components/viewer/ViewerTopBar.vue";
+import ViewerToolbar from "@/components/viewer/ViewerToolbar.vue";
+import ViewerBottomBar from "@/components/viewer/ViewerBottomBar.vue";
+import ViewerRightPanel from "@/components/viewer/ViewerRightPanel.vue";
 import OpenSeadragon from "openseadragon";
 import "openseadragon-filtering";
 import { extractServiceId, fetchImageInfo, buildTileSource } from "@/services/iiifService";
@@ -1004,7 +924,10 @@ export default {
   name: "IIIFViewer",
   components: {
     AnnotationsBank,
-    NavigationBar,
+    ViewerTopBar,
+    ViewerToolbar,
+    ViewerBottomBar,
+    ViewerRightPanel,
     ScribeDetectionPopup,
     AngleLabelPopup,
     LengthPopupHorizontal,
@@ -1070,6 +993,12 @@ export default {
   },
   data() {
     return {
+      // Layout state
+      leftPanelCollapsed: false,
+      rightPanelCollapsed: false,
+      selectedAnnotationItem: null,
+      documentName: 'IIIF Document',
+
       annotationsByPage: [],
       // Pen config
       penWidth: 3,
@@ -1234,11 +1163,11 @@ export default {
       _overlayUpdatePending: false, // RAF throttle flag for overlay updates
       isOperationInProgress: false, // Lock to prevent tool switching during drawing
 
-      // Legacy Zoom & Pan (kept for NavigationBar display, will be synced from OSD)
+      // Legacy Zoom & Pan (kept for compatibility, synced from OSD)
       zoomLevel: 1,
       zoomStep: 0.10,
-      minZoom: 0.5,
-      maxZoom: 15,
+      minZoom: 0.25,
+      maxZoom: 25,
       _holdTimer: null,      // for long-press reset
       panX: 0,
       panY: 0,
@@ -1302,6 +1231,88 @@ export default {
       return this.traceModeActive || this.highlightModeActive || this.underlineModeActive ||
              this.measureModeActive || this.isMeasuring || this.moveModeActive ||
              this.lengthMeasurementActive || this.croppingStarted || this.commentModeActive;
+    },
+
+    // Active tool for toolbar highlighting
+    currentActiveTool() {
+      if (this.traceModeActive) return 'trace';
+      if (this.highlightModeActive) return 'highlight';
+      if (this.underlineModeActive) return 'underline';
+      if (this.commentModeActive) return 'comment';
+      if (this.measureModeActive) return 'measure';
+      if (this.lengthMeasurementActive || this.isMeasuring) {
+        const label = this.selectedMeasurement || '';
+        const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'].includes(label);
+        return isHorizontal ? 'horizontal' : 'vertical';
+      }
+      if (this.croppingStarted) return 'crop';
+      return '';
+    },
+
+    // All annotations for right panel
+    currentPageAnnotationsList() {
+      const list = [];
+
+      // Highlights
+      if (this.currentPageHighlights) {
+        this.currentPageHighlights.forEach((h, i) => {
+          list.push({ type: 'highlight', label: `Highlight ${i + 1}`, data: h, index: i });
+        });
+      }
+
+      // Underlines
+      if (this.currentPageUnderlines) {
+        this.currentPageUnderlines.forEach((u, i) => {
+          list.push({ type: 'underline', label: `Underline ${i + 1}`, data: u, index: i });
+        });
+      }
+
+      // Traces
+      if (this.currentPageStrokes) {
+        this.currentPageStrokes.forEach((s, i) => {
+          list.push({ type: 'trace', label: `Trace ${i + 1}`, data: s, index: i });
+        });
+      }
+
+      // Comments
+      if (this.currentPageComments) {
+        this.currentPageComments.forEach((c, i) => {
+          const text = c.text || '';
+          list.push({
+            type: 'comment',
+            label: text.substring(0, 25) + (text.length > 25 ? '...' : '') || `Comment ${i + 1}`,
+            data: c,
+            index: i
+          });
+        });
+      }
+
+      // Angles
+      if (this.currentPageAngles) {
+        this.currentPageAngles.forEach((a, i) => {
+          list.push({
+            type: 'angle',
+            label: `${a.angle}°${a.label ? ' - ' + a.label : ''}`,
+            data: a,
+            index: i
+          });
+        });
+      }
+
+      // Length measurements
+      if (this.currentPageLengthMeasurements) {
+        this.currentPageLengthMeasurements.forEach((m) => {
+          const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'].includes(m.label);
+          list.push({
+            type: isHorizontal ? 'length-h' : 'length-v',
+            label: m.label,
+            data: m,
+            id: m.id
+          });
+        });
+      }
+
+      return list;
     },
 
     imageReady() {
@@ -1409,7 +1420,7 @@ export default {
         top: `${Math.round(y)}px`,
         left: `${Math.round(x)}px`,
         transform: 'translateY(-50%)',
-        zIndex: 1600
+        zIndex: 40
       };
     },
 
@@ -1429,7 +1440,7 @@ export default {
           top: `${Math.round(y)}px`,
           left: `${Math.round(x)}px`,
           transform: 'translateY(-50%)',
-          zIndex: 1400,
+          zIndex: 30,
           width: `${width}px`
         };
       };
@@ -1858,6 +1869,68 @@ export default {
       if (!this.osdViewer || !this.osdReady) return;
       this.osdViewer.viewport.goHome();
     },
+    zoomTo(level) {
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.zoomTo(level);
+    },
+
+    // Right panel handlers
+    handleSelectAnnotation(annotation) {
+      this.selectedAnnotationItem = annotation;
+      // Future enhancement: scroll viewport to annotation location
+    },
+
+    handleDeleteAnnotation(annotation) {
+      const pageAnnotations = this.annotationsByPage[this.currentPage] || [];
+
+      switch (annotation.type) {
+        case 'highlight': {
+          // Find highlights in annotationsByPage with type 'highlight', delete by index
+          const highlights = pageAnnotations.filter(a => a.type === 'highlight');
+          if (highlights[annotation.index]) {
+            const idx = pageAnnotations.indexOf(highlights[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'underline': {
+          const underlines = pageAnnotations.filter(a => a.type === 'underline');
+          if (underlines[annotation.index]) {
+            const idx = pageAnnotations.indexOf(underlines[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'trace': {
+          const traces = pageAnnotations.filter(a => a.type === 'trace');
+          if (traces[annotation.index]) {
+            const idx = pageAnnotations.indexOf(traces[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'comment':
+          if (this.comments[this.currentPage]) {
+            this.comments[this.currentPage].splice(annotation.index, 1);
+          }
+          break;
+        case 'angle': {
+          const angles = pageAnnotations.filter(a => a.type === 'measure');
+          if (angles[annotation.index]) {
+            const idx = pageAnnotations.indexOf(angles[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'length-h':
+        case 'length-v':
+          this.deleteLengthMeasurement(annotation.id);
+          break;
+      }
+      this.selectedAnnotationItem = null;
+      this.showToolMessage("Annotation deleted.");
+    },
+
     startHoldReset() {
       // Long press (3s) to reset to 100%
       this._holdTimer = setTimeout(() => {
@@ -1917,8 +1990,9 @@ export default {
         gestureSettingsTouch: {
           pinchToZoom: true
         },
-        minZoomLevel: 0.5,
-        maxZoomLevel: 15,
+        minZoomLevel: 0.25,
+        maxZoomLevel: 25,
+        animationTime: 0,
         visibilityRatio: 0.8,
         constrainDuringPan: true,
         immediateRender: true,
@@ -2737,6 +2811,20 @@ cancelPenSelection() {
       });
       this.showToolMessage("Vertical lengths cleared.");
       this.showClearDropdown = false;
+    },
+    deleteLengthMeasurement(id) {
+      // Find and delete measurement by id across all labels
+      for (const label in this.lengthMeasurements) {
+        const pageArr = this.lengthMeasurements[label]?.[this.currentPage];
+        if (pageArr) {
+          const idx = pageArr.findIndex(m => String(m.id) === String(id));
+          if (idx !== -1) {
+            pageArr.splice(idx, 1);
+            this.showToolMessage("Measurement deleted.");
+            return;
+          }
+        }
+      }
     },
     clearAll() {
       this.showClearDropdown = false;
