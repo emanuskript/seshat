@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, inject } from 'vue'
 import { Button } from '@/components/ui/button'
 import Icon from '@/components/ui/icon/Icon.vue'
 import {
@@ -16,6 +16,9 @@ import {
   TooltipTrigger
 } from '@/components/ui/tooltip'
 import { useTheme } from '@/composables/useTheme'
+
+// Get restartTour function from TourProvider
+const restartTour = inject('restartTour', () => {})
 
 defineProps({
   documentName: { type: String, default: 'IIIF Document' },
@@ -83,7 +86,7 @@ function handleThemeSelect(theme) {
         <!-- Save -->
         <Tooltip>
           <TooltipTrigger as-child>
-            <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Save as PDF" @click="emit('save')">
+            <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Save as PDF" data-tour="save-button" @click="emit('save')">
               <Icon name="save" :size="18" />
             </Button>
           </TooltipTrigger>
@@ -131,6 +134,16 @@ function handleThemeSelect(theme) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <!-- Help / Tour -->
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Help & Tour" @click="restartTour">
+              <Icon name="help-circle" :size="18" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Help & Tour</TooltipContent>
+        </Tooltip>
 
         <!-- Toggle Right Panel -->
         <Tooltip>

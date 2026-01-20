@@ -1,17 +1,22 @@
 <template>
   <div v-if="isVisible" class="scribe-modal" @click.self="closePopup">
     <div class="scribe-card">
-      <header class="scribe-header">
+      <header class="scribe-header" data-scribe-tour="header">
         <div class="header-left">
           <img :src="logo" alt="PharoSight" class="pharaonic-icon" />
           <span class="pharosight-text">PharoSight</span>
           <h3>Scribe Detection</h3>
         </div>
-        <button class="icon-btn" @click="closePopup" aria-label="Close">✕</button>
+        <div class="header-right">
+          <button class="icon-btn help-btn" @click="startScribeTour" aria-label="Help" title="Tour Guide">
+            <Icon name="help-circle" :size="18" />
+          </button>
+          <button class="icon-btn" @click="closePopup" aria-label="Close">✕</button>
+        </div>
       </header>
 
       <!-- STEP TABS -->
-      <div class="steps">
+      <div class="steps" data-scribe-tour="steps">
         <div class="step" :class="{active: step===1}"><span>1</span> Segmentation</div>
         <div class="line"></div>
         <div class="step" :class="{active: step===2}"><span>2</span> Tune & Run</div>
@@ -21,7 +26,7 @@
       <section v-if="step===1" class="step-pane">
         <p class="helper">How should we pick the lines to compare?</p>
 
-        <div class="method-grid">
+        <div class="method-grid" data-scribe-tour="method-grid">
           <!-- Option 1 -->
           <button class="method-card"
                   :class="{selected: mode==='auto'}"
@@ -49,7 +54,7 @@
 
         <!-- Manual drawing canvas (visible only when manual is chosen) -->
         <div v-if="mode==='manual'" class="draw-wrap">
-          <div class="draw-toolbar">
+          <div class="draw-toolbar" data-scribe-tour="draw-toolbar">
             <div>Boxes selected: <strong>{{ regions.length }}</strong></div>
             <div class="spacer"></div>
             <button class="pill" @click="clearRegions" :disabled="regions.length===0">Clear</button>
@@ -59,7 +64,7 @@
           </div>
 
           <!-- The same image you show in the viewer popup; use a fitted container -->
-          <div class="draw-stage" ref="drawStage">
+          <div class="draw-stage" ref="drawStage" data-scribe-tour="draw-stage">
             <img v-if="drawImageSrc" :src="drawImageSrc" :key="drawImageSrc" alt="Manuscript page"
                  class="draw-img" draggable="false"
                  @load="onDrawImgLoad"
@@ -85,7 +90,7 @@
           <p class="helper">Upload the manuscript image and its annotation JSON file</p>
           
           <!-- Image Upload -->
-          <div class="upload-section">
+          <div class="upload-section" data-scribe-tour="image-upload">
             <label class="upload-label">1. Manuscript Image</label>
             <div class="upload-area" :class="{dragover: isDraggingImage}">
               <input type="file" ref="imageFileInput" accept="image/*"
@@ -104,7 +109,7 @@
           </div>
 
           <!-- JSON Upload -->
-          <div class="upload-section">
+          <div class="upload-section" data-scribe-tour="json-upload">
             <label class="upload-label">2. Annotation JSON</label>
             <div class="upload-area" :class="{dragover: isDraggingFile}">
               <input type="file" ref="jsonFileInput" accept=".json,application/json"
@@ -133,7 +138,7 @@
           </div>
 
           <!-- Show preview of page with detected regions -->
-          <div v-if="uploadedJsonFile && !jsonParseError && jsonImagePreview" class="json-preview-wrap">
+          <div v-if="uploadedJsonFile && !jsonParseError && jsonImagePreview" class="json-preview-wrap" data-scribe-tour="json-preview">
             <p class="preview-label">Preview: Detected line regions</p>
             <div class="draw-stage">
               <img :src="jsonImagePreview" alt="Manuscript page"
@@ -145,7 +150,7 @@
           </div>
         </div>
 
-        <footer class="actions">
+        <footer class="actions" data-scribe-tour="actions">
           <button class="ghost" @click="closePopup">Cancel</button>
           <button class="primary"
                   :disabled="mode===null || (mode==='json' && (!uploadedJsonFile || !uploadedImageFile))"
@@ -171,7 +176,7 @@
 
         <!-- Results Display -->
         <div v-else-if="hasResults" class="results-section">
-          <div class="results-header">
+          <div class="results-header" data-scribe-tour="results-header">
             <h4>Analysis Complete</h4>
             <div class="results-summary">
               <div class="metric">
@@ -188,7 +193,7 @@
           <!-- Export wrapper includes analyzed page + results for PDF -->
           <div class="pdf-layout" ref="exportWrapper">
             <div class="pdf-left" v-if="currentPageImage">
-              <div class="analyzed-card">
+              <div class="analyzed-card" data-scribe-tour="analyzed-card">
                 <div class="analyzed-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
                   <span>Analyzed Page</span>
                   <label class="param-label" style="display:flex;align-items:center;gap:6px;font-size:12px;">
@@ -211,7 +216,7 @@
 
             <div class="pdf-right">
               <!-- Results content -->
-              <div class="scribe-results">
+              <div class="scribe-results" data-scribe-tour="results-accordion">
                 <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
                   <h5>Detected Scribes</h5>
                   <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item">
@@ -357,7 +362,7 @@
           </div>
         </div>
 
-        <footer class="actions">
+        <footer class="actions" data-scribe-tour="step2-actions">
           <button class="ghost" @click="goStep(1)">← Back</button>
           <div class="action-right">
             <button v-if="hasResults" class="secondary" @click="exportPDF">Export PDF</button>
@@ -370,6 +375,9 @@
           </div>
         </footer>
       </section>
+
+      <!-- Scribe Tour Overlay -->
+      <ScribeTourOverlay />
     </div>
   </div>
 </template>
@@ -377,13 +385,28 @@
 <script>
 /* eslint-disable no-console */
 import logo from '@/assets/pharosight_icon_no_text.png'
+import Icon from '@/components/ui/icon/Icon.vue'
+import ScribeTourOverlay from '@/components/tour/ScribeTourOverlay.vue'
+import { useScribeTour } from '@/composables/useScribeTour'
 
 export default {
   name: 'ScribeDetectionPopup',
+  components: {
+    Icon,
+    ScribeTourOverlay
+  },
   props: {
     currentPage: { type: Number, default: 1 },
     totalPages:  { type: Number, default: 1 },
     currentPageImage: { type: String, default: null }
+  },
+  setup() {
+    const scribeTour = useScribeTour()
+    return {
+      scribeTour,
+      startScribeTour: scribeTour.startScribeTour,
+      hasSeenScribeTour: scribeTour.hasSeenScribeTour
+    }
   },
   data() {
     return {
@@ -439,6 +462,27 @@ export default {
     }
   },
   watch: {
+    // Tour integration: update branch when mode changes
+    mode(newMode) {
+      if (newMode && this.scribeTour.isActive.value) {
+        this.scribeTour.setBranch(newMode)
+      }
+    },
+    // Tour integration: enter step2 when workflow step changes
+    step(newStep) {
+      if (newStep === 2 && this.scribeTour.isActive.value) {
+        this.scribeTour.enterStep2()
+      }
+    },
+    // Tour integration: auto-start tour for first-time users
+    isVisible(visible) {
+      if (visible && !this.hasSeenScribeTour) {
+        // Delay to let the popup render
+        setTimeout(() => {
+          this.startScribeTour()
+        }, 600)
+      }
+    },
     results: {
       handler(newResults) {
         if (newResults && newResults.scribe_changes) {
@@ -1663,6 +1707,7 @@ export default {
   z-index: var(--z-modal, 500);
 }
 .scribe-card{
+  position: relative;
   width: min(980px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
   overflow: auto;
@@ -1706,6 +1751,18 @@ export default {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.help-btn {
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+.help-btn:hover {
+  opacity: 1;
 }
 .pharaonic-icon {
   width: 32px;

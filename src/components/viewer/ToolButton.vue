@@ -7,7 +7,8 @@ defineProps({
   label: { type: String, required: true },
   shortcut: { type: String, default: '' },
   active: { type: Boolean, default: false },
-  disabled: { type: Boolean, default: false }
+  disabled: { type: Boolean, default: false },
+  dataTourTool: { type: String, default: '' }
 })
 
 const emit = defineEmits(['click'])
@@ -25,6 +26,7 @@ const emit = defineEmits(['click'])
         }"
         :aria-label="shortcut ? `${label} (${shortcut})` : label"
         :disabled="disabled"
+        :data-tour-tool="dataTourTool || undefined"
         @click="!disabled && emit('click')"
       >
         <Icon :name="icon" :size="20" />

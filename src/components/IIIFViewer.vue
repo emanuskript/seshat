@@ -33,7 +33,7 @@
     </header>
 
     <!-- Left Toolbar -->
-    <aside v-show="!leftPanelCollapsed" style="grid-area: left;">
+    <aside v-show="!leftPanelCollapsed" style="grid-area: left;" data-tour="toolbar">
       <ViewerToolbar
         :active-tool="currentActiveTool"
         :has-active-filters="hasActiveFilters"
@@ -48,7 +48,7 @@
     </aside>
 
     <!-- Main Canvas Area -->
-    <main style="grid-area: canvas;" class="relative overflow-hidden bg-muted">
+    <main style="grid-area: canvas;" class="relative overflow-hidden bg-muted" data-tour="canvas">
       <!-- Tool message -->
       <div
         v-if="toolMessage"
@@ -437,6 +437,7 @@
       <!-- Floating Scribe Detection Button -->
       <div
         class="absolute bottom-4 right-4 z-40 cursor-pointer hover:scale-110 transition-transform"
+        data-tour="scribe-button"
         @click="openScribeDetection"
       >
         <img
@@ -448,7 +449,7 @@
     </main>
 
     <!-- Right Panel -->
-    <aside v-show="!rightPanelCollapsed" style="grid-area: right;">
+    <aside v-show="!rightPanelCollapsed" style="grid-area: right;" data-tour="right-panel">
       <ViewerRightPanel
         :annotations="currentPageAnnotationsList"
         :current-page="currentPage"
@@ -465,7 +466,7 @@
     </aside>
 
     <!-- Bottom Bar -->
-    <footer style="grid-area: bottom;">
+    <footer style="grid-area: bottom;" data-tour="bottom-bar">
       <ViewerBottomBar
         :current-page="currentPage"
         :total-pages="totalPages"

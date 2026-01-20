@@ -99,6 +99,7 @@ function isToolActive(toolId) {
           :shortcut="tool.shortcut"
           :active="isToolActive(tool.id)"
           :disabled="isOperationInProgress && tool.id !== activeTool"
+          :data-tour-tool="tool.id"
           @click="handleToolClick(tool.id)"
         />
       </template>
