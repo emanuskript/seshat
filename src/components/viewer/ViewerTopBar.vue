@@ -16,14 +16,21 @@ import {
   TooltipTrigger
 } from '@/components/ui/tooltip'
 import { useTheme } from '@/composables/useTheme'
+import { useSession } from '@/composables/useSession'
+import ParticipantsList from '@/components/collaboration/ParticipantsList.vue'
+import FollowIndicator from '@/components/collaboration/FollowIndicator.vue'
 
 // Get restartTour function from TourProvider
 const restartTour = inject('restartTour', () => {})
 
+// Session composable for collaboration state
+const { sessionId, isConnected } = useSession()
+
 defineProps({
   documentName: { type: String, default: 'IIIF Document' },
   leftCollapsed: { type: Boolean, default: false },
-  rightCollapsed: { type: Boolean, default: false }
+  rightCollapsed: { type: Boolean, default: false },
+  sessionActive: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -38,7 +45,10 @@ const emit = defineEmits([
   'clear-angles',
   'clear-horizontal',
   'clear-vertical',
-  'clear-all'
+  'clear-all',
+  'start-session',
+  'open-share',
+  'open-history'
 ])
 
 const { currentTheme, setTheme, themes } = useTheme()
@@ -81,8 +91,57 @@ function handleThemeSelect(theme) {
         </div>
       </div>
 
+      <!-- Center: Participants + Follow Indicator (when in session) -->
+      <div class="flex items-center gap-4">
+        <ParticipantsList v-if="sessionActive || isConnected" />
+        <FollowIndicator v-if="sessionActive || isConnected" />
+      </div>
+
       <!-- Right: Actions -->
       <div class="flex items-center gap-1">
+        <!-- Session Controls: Start Session OR Share + History -->
+        <template v-if="sessionActive || sessionId">
+          <!-- Share -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Share session" @click="emit('open-share')">
+                <Icon name="share-2" :size="18" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Share Session</TooltipContent>
+          </Tooltip>
+
+          <!-- Version History -->
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8"
+                aria-label="Version history"
+                @click="emit('open-history')"
+              >
+                <Icon name="history" :size="18" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Version History</TooltipContent>
+          </Tooltip>
+        </template>
+
+        <!-- Start Session (when no active session) -->
+        <Tooltip v-else>
+          <TooltipTrigger as-child>
+            <Button variant="ghost" size="sm" class="h-8 gap-1.5" @click="emit('start-session')">
+              <Icon name="users" :size="16" />
+              <span class="text-xs">Start Session</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Start a collaboration session</TooltipContent>
+        </Tooltip>
+
+        <!-- Divider -->
+        <div class="w-px h-6 bg-border mx-1" />
+
         <!-- Save -->
         <Tooltip>
           <TooltipTrigger as-child>

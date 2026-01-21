@@ -1,0 +1,45 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id              String    @id @default(uuid())
+  iiifManifest    String    @map("iiif_manifest")
+  documentName    String?   @map("document_name") @db.VarChar(255)
+  annotations     Json      @default("{}")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  lastActiveAt    DateTime  @default(now()) @map("last_active_at")
+  creatorDeviceId String?   @map("creator_device_id") @db.Uuid
+
+  versions        Version[]
+
+  @@index([lastActiveAt])
+  @@index([creatorDeviceId])
+  @@map("sessions")
+}
+
+model Version {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  name          String   @db.VarChar(255)
+  description   String?
+  createdBy     String?  @map("created_by") @db.VarChar(100)
+  annotations   Json
+  createdAt     DateTime @default(now()) @map("created_at")
+  versionNumber Int      @map("version_number")
+
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, versionNumber])
+  @@index([sessionId, versionNumber(sort: Desc)])
+  @@map("versions")
+}

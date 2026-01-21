@@ -17,6 +17,7 @@
         :document-name="documentName"
         :left-collapsed="leftPanelCollapsed"
         :right-collapsed="rightPanelCollapsed"
+        :session-active="sessionActive"
         @toggle-left="leftPanelCollapsed = !leftPanelCollapsed"
         @toggle-right="rightPanelCollapsed = !rightPanelCollapsed"
         @save="saveAnnotations"
@@ -29,6 +30,9 @@
         @clear-horizontal="clearHorizontalLengths"
         @clear-vertical="clearVerticalLengths"
         @clear-all="showClearConfirmation = true"
+        @start-session="showShareDialog = true"
+        @open-share="showShareDialog = true"
+        @open-history="showVersionHistory = true"
       />
     </header>
 
@@ -65,6 +69,7 @@
         @selectstart.prevent.stop
         @dragstart.prevent.stop
         @contextmenu.prevent.stop
+        @mousemove="trackCursorForCollaboration($event)"
         ondragstart="return false"
         onselectstart="return false"
         oncontextmenu="return false"
@@ -859,6 +864,40 @@
       :totalPages="totalPages"
       :currentPageImage="currentImage"
     />
+
+    <!-- Share Dialog -->
+    <ShareDialog
+      v-model:open="showShareDialog"
+      :iiif-manifest="iiifManifest"
+      :document-name="documentName"
+      :current-annotations="getAllAnnotations()"
+      @session-created="handleSessionCreated"
+    />
+
+    <!-- Join Dialog (for shared links) -->
+    <JoinDialog
+      v-model:open="showJoinDialog"
+      :document-name="documentName"
+      @join="handleJoinSession"
+    />
+
+    <!-- Version History Panel -->
+    <VersionHistory
+      v-model:open="showVersionHistory"
+      @version-restored="handleVersionRestored"
+    />
+
+    <!-- Remote Participant Cursors -->
+    <template v-if="sessionConnected && remoteCursorData.length > 0">
+      <ParticipantCursor
+        v-for="cursor in currentPageCursors"
+        :key="cursor.participantId"
+        :x="cursorToScreenX(cursor.x)"
+        :y="cursorToScreenY(cursor.y)"
+        :display-name="cursor.displayName"
+        :color="cursor.color"
+      />
+    </template>
   </div>
 </template>
 
@@ -893,6 +932,13 @@ import { useTheme } from "@/composables/useTheme";
 import { useImageAdjustments } from "@/composables/useImageAdjustments";
 import ImageAdjustmentsPanel from "@/components/viewer/ImageAdjustmentsPanel.vue";
 import ViewerTopBar from "@/components/viewer/ViewerTopBar.vue";
+import ShareDialog from "@/components/collaboration/ShareDialog.vue";
+import JoinDialog from "@/components/collaboration/JoinDialog.vue";
+import VersionHistory from "@/components/collaboration/VersionHistory.vue";
+import ParticipantCursor from "@/components/collaboration/ParticipantCursor.vue";
+import { useSession } from "@/composables/useSession";
+import { usePresence } from "@/composables/usePresence";
+import { useFollow } from "@/composables/useFollow";
 import ViewerToolbar from "@/components/viewer/ViewerToolbar.vue";
 import ViewerBottomBar from "@/components/viewer/ViewerBottomBar.vue";
 import ViewerRightPanel from "@/components/viewer/ViewerRightPanel.vue";
@@ -930,6 +976,10 @@ export default {
     ViewerBottomBar,
     ViewerRightPanel,
     ScribeDetectionPopup,
+    ShareDialog,
+    JoinDialog,
+    VersionHistory,
+    ParticipantCursor,
     AngleLabelPopup,
     LengthPopupHorizontal,
     LengthPopupVertical,
@@ -978,6 +1028,48 @@ export default {
       applyToAllPages,
       setCurrentPage: setAdjustmentPage
     } = useImageAdjustments();
+
+    // Session collaboration
+    const {
+      sessionId: activeSessionId,
+      isConnected: sessionConnected,
+      annotations: sessionAnnotations,
+      addAnnotation: syncAddAnnotation,
+      updateAnnotation: syncUpdateAnnotation,
+      deleteAnnotation: syncDeleteAnnotation,
+      joinSession,
+      leaveSession,
+      onMessage: onSessionMessage,
+      localParticipant
+    } = useSession();
+
+    // Presence tracking
+    const {
+      participants,
+      otherParticipants,
+      cursors: remoteCursorData,
+      init: initPresence,
+      throttledCursorUpdate
+    } = usePresence();
+
+    // Follow mode
+    const {
+      isFollowing,
+      followingId,
+      followersCount,
+      startFollowing,
+      stopFollowing,
+      broadcastViewport,
+      broadcastViewportImmediate,
+      broadcastFilters,
+      init: initFollow,
+      cleanup: cleanupFollow,
+      onViewportSync,
+      onFiltersSync,
+      isFollowingParticipant,
+      getParticipantPage
+    } = useFollow();
+
     return {
       currentTheme,
       setTheme,
@@ -986,11 +1078,44 @@ export default {
       setFilter,
       resetFilters,
       applyToAllPages,
-      setAdjustmentPage
+      setAdjustmentPage,
+      // Session
+      activeSessionId,
+      sessionConnected,
+      sessionAnnotations,
+      syncAddAnnotation,
+      syncUpdateAnnotation,
+      syncDeleteAnnotation,
+      joinSession,
+      leaveSession,
+      onSessionMessage,
+      localParticipant,
+      // Presence
+      participants,
+      otherParticipants,
+      remoteCursorData,
+      initPresence,
+      throttledCursorUpdate,
+      // Follow mode
+      isFollowing,
+      followingId,
+      followersCount,
+      startFollowing,
+      stopFollowing,
+      broadcastViewport,
+      broadcastViewportImmediate,
+      broadcastFilters,
+      initFollow,
+      cleanupFollow,
+      onViewportSync,
+      onFiltersSync,
+      isFollowingParticipant,
+      getParticipantPage
     };
   },
   props: {
-    source: { type: String, required: true },
+    source: { type: String, default: '' },
+    sessionId: { type: String, default: '' },
   },
   data() {
     return {
@@ -999,6 +1124,20 @@ export default {
       rightPanelCollapsed: false,
       selectedAnnotationItem: null,
       documentName: 'IIIF Document',
+
+      // Collaboration state
+      showShareDialog: false,
+      showVersionHistory: false,
+      showJoinDialog: false,
+      pendingSessionId: null,
+      sessionActive: false,
+      annotationSyncUnsubscribe: null,
+      versionRestoredUnsubscribe: null,
+      iiifManifest: '',
+      remoteCursors: [],
+      // Follow mode state
+      followSyncUnsubscribers: [],
+      isApplyingFollowSync: false,
 
       annotationsByPage: [],
       // Pen config
@@ -1482,6 +1621,10 @@ export default {
     totalPages() {
       return this.images.length;
     },
+    currentPageCursors() {
+      // Filter cursors to only show those on the current page
+      return (this.remoteCursorData || []).filter(cursor => cursor.pageIndex === this.currentPage);
+    },
     currentPageHighlights() {
       return (this.annotationsByPage[this.currentPage] || []).filter(a => a.type === "highlight");
     },
@@ -1714,6 +1857,18 @@ export default {
       this.bankSelectedKeys = [];
       // Update adjustment page for per-page filters
       this.setAdjustmentPage(n);
+
+      // Broadcast page change for follow mode (immediate, not throttled)
+      if (this.sessionConnected && !this.isApplyingFollowSync && this.osdViewer) {
+        const bounds = this.osdViewer.viewport.getBounds();
+        const zoom = this.osdViewer.viewport.getZoom();
+        this.broadcastViewportImmediate(n, zoom, {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height
+        });
+      }
     },
     // Initialize OpenSeadragon when image changes
     currentImage: {
@@ -1728,17 +1883,41 @@ export default {
     currentFilters: {
       handler() {
         this.applyFiltersToOsd();
+
+        // Broadcast filter changes for follow mode
+        if (this.sessionConnected && !this.isApplyingFollowSync) {
+          this.broadcastCurrentFilters();
+        }
+      },
+      deep: true
+    },
+    // Watch for incoming annotation changes from session
+    sessionAnnotations: {
+      handler(newAnnotations) {
+        if (!newAnnotations || !this.sessionConnected) return;
+        // Apply comments from session
+        if (newAnnotations.comments) {
+          this.applySessionComments(newAnnotations.comments);
+        }
       },
       deep: true
     }
   },
   async created() {
+    // Handle session route - load from session API
+    if (this.sessionId) {
+      await this.loadFromSession(this.sessionId);
+      return;
+    }
+
+    // Handle regular IIIF source route
     if (!this.source) {
       alert("Invalid source. Returning to input.");
       this.$router.push({ name: "IIIFInput" });
       return;
     }
     this.annotationsByPage = []; // init
+    this.iiifManifest = this.source; // Store for sharing
     if (this.source.endsWith("manifest.json")) {
       await this.fetchIIIFImages(this.source);
     } else {
@@ -1793,6 +1972,22 @@ export default {
 
   beforeUnmount() {
     window.removeEventListener('resize', this.computeBaseFit);
+
+    // Clean up annotation sync subscription
+    if (this.annotationSyncUnsubscribe) {
+      this.annotationSyncUnsubscribe();
+      this.annotationSyncUnsubscribe = null;
+    }
+
+    // Clean up version restored subscription
+    if (this.versionRestoredUnsubscribe) {
+      this.versionRestoredUnsubscribe();
+      this.versionRestoredUnsubscribe = null;
+    }
+
+    // Clean up follow mode
+    this.cleanupFollowSyncHandlers();
+    this.cleanupFollow();
 
     // Clean up OpenSeadragon
     if (this.osdViewer) {
@@ -2009,7 +2204,7 @@ export default {
       this.osdViewer.addHandler('animation-finish', this.updateOverlayPosition);
       this.osdViewer.addHandler('resize', this.updateOverlayPosition);
       this.osdViewer.addHandler('zoom', this.onOsdZoom);
-      this.osdViewer.addHandler('pan', this.updateOverlayPosition);
+      this.osdViewer.addHandler('pan', this.onOsdPan);
     },
 
     onOsdOpen() {
@@ -2044,6 +2239,20 @@ export default {
       // Sync legacy zoom level for UI display
       this.zoomLevel = event.zoom;
       this.updateOverlayPosition();
+
+      // Broadcast viewport for follow mode
+      if (!this.isApplyingFollowSync) {
+        this.broadcastCurrentViewport();
+      }
+    },
+
+    onOsdPan() {
+      this.updateOverlayPosition();
+
+      // Broadcast viewport for follow mode
+      if (!this.isApplyingFollowSync) {
+        this.broadcastCurrentViewport();
+      }
     },
 
     updateOverlayPosition() {
@@ -2238,6 +2447,20 @@ export default {
 
       return { x, y };
     },
+
+    // Convert percentage coordinates to screen coordinates for remote cursor display
+    cursorToScreenX(xPercent) {
+      if (!this.$refs.viewer) return 0;
+      const rect = this.$refs.viewer.getBoundingClientRect();
+      return rect.left + (xPercent / 100) * rect.width;
+    },
+
+    cursorToScreenY(yPercent) {
+      if (!this.$refs.viewer) return 0;
+      const rect = this.$refs.viewer.getBoundingClientRect();
+      return rect.top + (yPercent / 100) * rect.height;
+    },
+
     formatPoints(points) {
       return points.map(({ x, y }) => `${x},${y}`).join(" ");
     },
@@ -2696,11 +2919,20 @@ cancelPenSelection() {
       if (!this.currentCommentText.trim()) return;
       if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
 
-      this.comments[this.currentPage].push({
+      const comment = {
+        id: crypto.randomUUID(),
+        pageIndex: this.currentPage,
         side: this.composerTarget.side,
         t: Math.max(0, Math.min(1, this.composerTarget.t)),
         text: this.currentCommentText.trim(),
-      });
+      };
+
+      this.comments[this.currentPage].push(comment);
+
+      // Sync to session if connected
+      if (this.sessionConnected) {
+        this.syncAddAnnotation('comments', comment);
+      }
 
       this.currentCommentText = "";
       this.showCommentInput = false;
@@ -2848,6 +3080,413 @@ cancelPenSelection() {
       this.showClearConfirmation = false;
     },
 
+    /* ---------- Collaboration ---------- */
+    getAllAnnotations() {
+      // Gather all annotations for session sharing
+      const annotationsByPage = this.annotationsByPage || [];
+      const comments = this.comments || [];
+      const strokes = this.strokes || [];
+
+      // Collect bands from lengthMeasurements
+      const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'];
+      const verticalLabels = ['upperMargin', 'lowerMargin', 'internalMargin', 'intercolumnSpaces', 'externalMargin'];
+
+      const horizontalBands = [];
+      const verticalBands = [];
+
+      horizontalLabels.forEach(label => {
+        const measurements = this.lengthMeasurements[label] || {};
+        Object.entries(measurements).forEach(([pageIndex, bands]) => {
+          (bands || []).forEach(b => {
+            horizontalBands.push({ ...b, pageIndex: parseInt(pageIndex), label });
+          });
+        });
+      });
+
+      verticalLabels.forEach(label => {
+        const measurements = this.lengthMeasurements[label] || {};
+        Object.entries(measurements).forEach(([pageIndex, bands]) => {
+          (bands || []).forEach(b => {
+            verticalBands.push({ ...b, pageIndex: parseInt(pageIndex), label });
+          });
+        });
+      });
+
+      return {
+        highlights: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'highlight').map(a => ({ ...a, pageIndex }))
+        ),
+        underlines: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'underline').map(a => ({ ...a, pageIndex }))
+        ),
+        comments: comments.flatMap((pageComments, pageIndex) =>
+          (pageComments || []).map(c => ({ ...c, pageIndex }))
+        ),
+        traces: strokes.flatMap((pageStrokes, pageIndex) =>
+          (pageStrokes || []).map(s => ({ ...s, pageIndex }))
+        ),
+        angles: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'measure').map(a => ({ ...a, pageIndex }))
+        ),
+        horizontalBands,
+        verticalBands
+      };
+    },
+
+    handleSessionCreated(session) {
+      this.sessionActive = true;
+      this.showToolMessage('Session created! Share the link to collaborate.');
+
+      // Update URL to session route without page reload
+      const newUrl = `/session/${session.id}`;
+      window.history.pushState({ sessionId: session.id }, '', newUrl);
+
+      // Initialize presence tracking (joinSession was called in ShareDialog)
+      this.initPresence();
+
+      // Initialize follow mode
+      this.initFollow();
+      this.setupFollowSyncHandlers();
+    },
+
+    applySessionComments(sessionComments) {
+      // Merge incoming comments with local state
+      // Group by pageIndex
+      sessionComments.forEach(comment => {
+        const pageIdx = comment.pageIndex || 0;
+        if (!this.comments[pageIdx]) {
+          this.comments[pageIdx] = [];
+        }
+        // Check if comment already exists locally
+        const exists = this.comments[pageIdx].some(c => c.id === comment.id);
+        if (!exists) {
+          this.comments[pageIdx].push(comment);
+        }
+      });
+    },
+
+    async loadFromSession(sessionId) {
+      try {
+        // Import the sessions API
+        const { sessionsApi } = await import('@/services/api');
+
+        // Fetch session data
+        const session = await sessionsApi.get(sessionId);
+
+        // Store session info
+        this.sessionActive = true;
+        this.iiifManifest = session.iiifManifest;
+        this.documentName = session.documentName || 'IIIF Document';
+
+        // Load the IIIF manifest
+        if (session.iiifManifest.endsWith("manifest.json")) {
+          await this.fetchIIIFImages(session.iiifManifest);
+        } else {
+          this.images = [session.iiifManifest];
+          this.annotationsByPage = [ [] ];
+          this.comments = [ [] ];
+        }
+
+        // Load annotations from session
+        if (session.annotations) {
+          this.loadAnnotationsFromSession(session.annotations);
+        }
+
+        // Store session ID and show join dialog to ask for name
+        this.pendingSessionId = sessionId;
+        this.showJoinDialog = true;
+      } catch (error) {
+        console.error('Failed to load session:', error);
+        alert('Failed to load session. The session may not exist or has expired.');
+        this.$router.push({ name: 'IIIFInput' });
+      }
+    },
+
+    async handleJoinSession(displayName) {
+      if (!this.pendingSessionId) return;
+
+      try {
+        // Join session for real-time sync
+        await this.joinSession(this.pendingSessionId, displayName);
+
+        // Initialize presence tracking for cursors
+        this.initPresence();
+
+        // Initialize follow mode
+        this.initFollow();
+        this.setupFollowSyncHandlers();
+
+        // Subscribe to remote annotation changes
+        this.annotationSyncUnsubscribe = this.onSessionMessage('annotation:sync', (payload) => {
+          this.handleRemoteAnnotationSync(payload);
+        });
+
+        // Subscribe to version restored events (from other participants)
+        this.versionRestoredUnsubscribe = this.onSessionMessage('version:restored', (payload) => {
+          if (payload.annotations) {
+            this.loadAnnotationsFromSession(payload.annotations);
+          }
+        });
+
+        this.sessionActive = true;
+        this.pendingSessionId = null;
+        this.showToolMessage('Joined session successfully');
+      } catch (error) {
+        console.error('Failed to join session:', error);
+        this.showToolMessage('Failed to join session');
+      }
+    },
+
+    handleRemoteAnnotationSync(payload) {
+      const { action, annotationType, annotation, annotationId, updates, participantId } = payload;
+
+      // Skip if this is our own change (we already applied it locally)
+      if (participantId === this.localParticipant?.id) return;
+
+      const pageIndex = annotation?.pageIndex || 0;
+
+      // Ensure page array exists
+      if (!this.annotationsByPage[pageIndex]) {
+        this.annotationsByPage[pageIndex] = [];
+      }
+      if (!this.comments[pageIndex]) {
+        this.comments[pageIndex] = [];
+      }
+
+      // Helper for band operations
+      const handleBand = (band) => {
+        const label = band.label;
+        if (!label) return;
+        if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
+        if (!this.lengthMeasurements[label][pageIndex]) this.lengthMeasurements[label][pageIndex] = [];
+        return this.lengthMeasurements[label][pageIndex];
+      };
+
+      switch (action) {
+        case 'add':
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures') {
+            this.annotationsByPage[pageIndex].push(annotation);
+          } else if (annotationType === 'comments') {
+            this.comments[pageIndex].push(annotation);
+          } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
+            const arr = handleBand(annotation);
+            if (arr) arr.push(annotation);
+          }
+          break;
+
+        case 'update':
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures') {
+            const idx = this.annotationsByPage[pageIndex].findIndex(a => a.id === annotationId);
+            if (idx !== -1) {
+              this.annotationsByPage[pageIndex][idx] = {
+                ...this.annotationsByPage[pageIndex][idx],
+                ...updates
+              };
+            }
+          } else if (annotationType === 'comments') {
+            const idx = this.comments[pageIndex].findIndex(a => a.id === annotationId);
+            if (idx !== -1) {
+              this.comments[pageIndex][idx] = {
+                ...this.comments[pageIndex][idx],
+                ...updates
+              };
+            }
+          } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
+            // Find band by id across all labels
+            for (const label in this.lengthMeasurements) {
+              const arr = this.lengthMeasurements[label]?.[pageIndex];
+              if (arr) {
+                const idx = arr.findIndex(b => b.id === annotationId);
+                if (idx !== -1) {
+                  arr[idx] = { ...arr[idx], ...updates };
+                  break;
+                }
+              }
+            }
+          }
+          break;
+
+        case 'delete':
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures') {
+            this.annotationsByPage[pageIndex] = this.annotationsByPage[pageIndex].filter(a => a.id !== annotationId);
+          } else if (annotationType === 'comments') {
+            this.comments[pageIndex] = this.comments[pageIndex].filter(a => a.id !== annotationId);
+          } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
+            // Find and remove band by id across all labels
+            for (const label in this.lengthMeasurements) {
+              const arr = this.lengthMeasurements[label]?.[pageIndex];
+              if (arr) {
+                const idx = arr.findIndex(b => b.id === annotationId);
+                if (idx !== -1) {
+                  arr.splice(idx, 1);
+                  break;
+                }
+              }
+            }
+          }
+          break;
+      }
+    },
+
+    // ==================== FOLLOW MODE SYNC ====================
+
+    setupFollowSyncHandlers() {
+      this.cleanupFollowSyncHandlers();
+
+      this.followSyncUnsubscribers.push(
+        this.onViewportSync((payload) => this.applyViewportSync(payload)),
+        this.onFiltersSync((payload) => this.applyFiltersSync(payload))
+      );
+    },
+
+    cleanupFollowSyncHandlers() {
+      this.followSyncUnsubscribers.forEach(unsub => unsub());
+      this.followSyncUnsubscribers = [];
+    },
+
+    applyViewportSync(payload) {
+      const { pageIndex, zoom, bounds } = payload;
+
+      this.isApplyingFollowSync = true;
+
+      // Navigate to page if different
+      if (pageIndex !== this.currentPage) {
+        this.goToPage(pageIndex + 1);
+      }
+
+      // Apply zoom/pan using OpenSeadragon
+      if (this.osdViewer && bounds) {
+        const rect = new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height);
+        this.osdViewer.viewport.fitBounds(rect, true); // animated
+      } else if (this.osdViewer && zoom) {
+        this.osdViewer.viewport.zoomTo(zoom, null, true);
+      }
+
+      // Reset flag after animation
+      setTimeout(() => {
+        this.isApplyingFollowSync = false;
+      }, 300);
+    },
+
+    applyFiltersSync(payload) {
+      const { pageIndex, filters } = payload;
+
+      this.isApplyingFollowSync = true;
+
+      // Navigate to page if different
+      if (pageIndex !== this.currentPage) {
+        this.goToPage(pageIndex + 1);
+      }
+
+      // Apply all filters
+      if (filters) {
+        Object.entries(filters).forEach(([key, value]) => {
+          this.setFilter(key, value);
+        });
+      }
+
+      this.isApplyingFollowSync = false;
+    },
+
+    broadcastCurrentViewport() {
+      if (!this.sessionConnected || this.isApplyingFollowSync) return;
+      if (!this.osdViewer) return;
+
+      const bounds = this.osdViewer.viewport.getBounds();
+      const zoom = this.osdViewer.viewport.getZoom();
+
+      this.broadcastViewport(this.currentPage, zoom, {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height
+      });
+    },
+
+    broadcastCurrentFilters() {
+      if (!this.sessionConnected || this.isApplyingFollowSync) return;
+
+      this.broadcastFilters(this.currentPage, { ...this.currentFilters });
+    },
+
+    handleVersionRestored(result) {
+      // Restore annotations from version
+      if (result.annotations) {
+        this.loadAnnotationsFromSession(result.annotations);
+      }
+      this.showToolMessage(`Restored to version: ${result.restoredFrom.name}`);
+    },
+
+    loadAnnotationsFromSession(annotations) {
+      // Clear current annotations
+      this.annotationsByPage = [];
+      this.comments = [];
+      this.strokes = [];
+      this.annotations = [];
+      // Reset lengthMeasurements
+      for (const label in this.lengthMeasurements) {
+        this.lengthMeasurements[label] = {};
+      }
+
+      // Load highlights and underlines into annotationsByPage
+      if (annotations.highlights) {
+        annotations.highlights.forEach(h => {
+          const pageIndex = h.pageIndex || 0;
+          if (!this.annotationsByPage[pageIndex]) this.annotationsByPage[pageIndex] = [];
+          this.annotationsByPage[pageIndex].push({ ...h, type: 'highlight' });
+        });
+      }
+      if (annotations.underlines) {
+        annotations.underlines.forEach(u => {
+          const pageIndex = u.pageIndex || 0;
+          if (!this.annotationsByPage[pageIndex]) this.annotationsByPage[pageIndex] = [];
+          this.annotationsByPage[pageIndex].push({ ...u, type: 'underline' });
+        });
+      }
+
+      // Load comments
+      if (annotations.comments) {
+        annotations.comments.forEach(c => {
+          const pageIndex = c.pageIndex || 0;
+          if (!this.comments[pageIndex]) this.comments[pageIndex] = [];
+          this.comments[pageIndex].push(c);
+        });
+      }
+
+      // Load traces
+      if (annotations.traces) {
+        annotations.traces.forEach(t => {
+          const pageIndex = t.pageIndex || 0;
+          if (!this.strokes[pageIndex]) this.strokes[pageIndex] = [];
+          this.strokes[pageIndex].push(t);
+        });
+      }
+
+      // Load angles
+      if (annotations.angles) {
+        annotations.angles.forEach(a => {
+          const pageIndex = a.pageIndex || 0;
+          if (!this.annotations[pageIndex]) this.annotations[pageIndex] = [];
+          this.annotations[pageIndex].push(a);
+        });
+      }
+
+      // Load bands into lengthMeasurements
+      const loadBands = (bands) => {
+        if (!bands) return;
+        bands.forEach(b => {
+          const pageIndex = b.pageIndex || 0;
+          const label = b.label;
+          if (!label) return;
+          if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
+          if (!this.lengthMeasurements[label][pageIndex]) this.lengthMeasurements[label][pageIndex] = [];
+          this.lengthMeasurements[label][pageIndex].push(b);
+        });
+      };
+      loadBands(annotations.horizontalBands);
+      loadBands(annotations.verticalBands);
+    },
+
     /* ---------- Label drag for length badges ---------- */
     startLabelDrag(id, event) {
       this.draggedLabelIndex = id;
@@ -2950,11 +3589,25 @@ cancelPenSelection() {
           const label = this.selectedMeasurement;
           if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
           if (!this.lengthMeasurements[label][this.currentPage]) this.lengthMeasurements[label][this.currentPage] = [];
-          this.lengthMeasurements[label][this.currentPage].push({
+
+          const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'];
+          const isHorizontal = horizontalLabels.includes(label);
+
+          const band = {
             ...this.currentSquare,
             type: "length",
-            id: Date.now() + Math.random(),
-          });
+            id: crypto.randomUUID(),
+            pageIndex: this.currentPage,
+            label
+          };
+
+          this.lengthMeasurements[label][this.currentPage].push(band);
+
+          // Sync to session if connected
+          if (this.sessionConnected) {
+            this.syncAddAnnotation(isHorizontal ? 'horizontalBands' : 'verticalBands', band);
+          }
+
           this.startPoint = null;
           this.currentSquare = null;
           return;
@@ -2978,11 +3631,35 @@ cancelPenSelection() {
           else this.currentUnderline = { x, y, width: 0, height: 2 };
           return;
         } else {
+          // Ensure array exists for current page
+          if (!this.annotationsByPage[this.currentPage]) {
+            this.annotationsByPage[this.currentPage] = [];
+          }
           if (this.highlightModeActive && this.currentSquare) {
-            this.annotationsByPage[this.currentPage].push({ type: "highlight", ...this.currentSquare });
+            const highlight = {
+              id: crypto.randomUUID(),
+              type: "highlight",
+              pageIndex: this.currentPage,
+              ...this.currentSquare
+            };
+            this.annotationsByPage[this.currentPage].push(highlight);
+            // Sync to session if connected
+            if (this.sessionConnected) {
+              this.syncAddAnnotation('highlights', highlight);
+            }
             this.currentSquare = null;
           } else if (this.underlineModeActive && this.currentUnderline) {
-            this.annotationsByPage[this.currentPage].push({ type: "underline", ...this.currentUnderline });
+            const underline = {
+              id: crypto.randomUUID(),
+              type: "underline",
+              pageIndex: this.currentPage,
+              ...this.currentUnderline
+            };
+            this.annotationsByPage[this.currentPage].push(underline);
+            // Sync to session if connected
+            if (this.sessionConnected) {
+              this.syncAddAnnotation('underlines', underline);
+            }
             this.currentUnderline = null;
           }
           this.startPoint = null;
@@ -3019,12 +3696,22 @@ cancelPenSelection() {
         this.measurePoints.push({ x, y });
         if (this.measurePoints.length === 3) {
           this.calculatedAngle = this.calculateAngle(this.measurePoints[0], this.measurePoints[1], this.measurePoints[2]);
-          this.annotationsByPage[this.currentPage].push({
+          if (!this.annotationsByPage[this.currentPage]) {
+            this.annotationsByPage[this.currentPage] = [];
+          }
+          const measure = {
+            id: crypto.randomUUID(),
             type: "measure",
+            pageIndex: this.currentPage,
             points: [...this.measurePoints],
             angle: this.calculatedAngle,
             label: this.activeAngleLabel || "Unlabeled",
-          });
+          };
+          this.annotationsByPage[this.currentPage].push(measure);
+          // Sync to session if connected
+          if (this.sessionConnected) {
+            this.syncAddAnnotation('measures', measure);
+          }
           // add label to list if new
           if (this.activeAngleLabel && !this.angleLabels.includes(this.activeAngleLabel)) {
             this.angleLabels.push(this.activeAngleLabel);
@@ -3034,6 +3721,18 @@ cancelPenSelection() {
           this.angleSnapGuide = null;
         }
         return;
+      }
+    },
+
+    // Track cursor for collaboration (runs on all mouse movement)
+    // Uses viewport-relative coordinates (percentage) so cursor shows across entire canvas
+    trackCursorForCollaboration(event) {
+      if (this.sessionConnected && this.$refs.viewer) {
+        const rect = this.$refs.viewer.getBoundingClientRect();
+        // Calculate percentage position within the viewer container
+        const xPercent = ((event.clientX - rect.left) / rect.width) * 100;
+        const yPercent = ((event.clientY - rect.top) / rect.height) * 100;
+        this.throttledCursorUpdate(xPercent, yPercent, this.currentPage);
       }
     },
 
@@ -3152,6 +3851,9 @@ cancelPenSelection() {
 
       // TRACE finalize
       if (this.traceModeActive && this.currentStroke) {
+        if (!this.annotationsByPage[this.currentPage]) {
+          this.annotationsByPage[this.currentPage] = [];
+        }
         this.annotationsByPage[this.currentPage].push({
           type: "trace",
           points: this.currentStroke.points,
