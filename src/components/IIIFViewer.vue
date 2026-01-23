@@ -33,6 +33,11 @@
         @start-session="showShareDialog = true"
         @open-share="showShareDialog = true"
         @open-history="showVersionHistory = true"
+        @export-json="handleExportJson"
+        @export-tei="handleExportTei"
+        @export-text="handleExportPlainText"
+        @export-w3c="handleExportWebAnnotation"
+        @import-json="showImportDialog = true"
       />
     </header>
 
@@ -887,6 +892,15 @@
       @version-restored="handleVersionRestored"
     />
 
+    <!-- Import Annotations Dialog -->
+    <ImportAnnotationsDialog
+      v-model:open="showImportDialog"
+      :has-existing-annotations="hasAnyAnnotations"
+      :current-manifest="iiifManifest"
+      :current-page-count="images.length"
+      @import="handleImportJson"
+    />
+
     <!-- Remote Participant Cursors -->
     <template v-if="sessionConnected && remoteCursorData.length > 0">
       <ParticipantCursor
@@ -936,6 +950,13 @@ import ShareDialog from "@/components/collaboration/ShareDialog.vue";
 import JoinDialog from "@/components/collaboration/JoinDialog.vue";
 import VersionHistory from "@/components/collaboration/VersionHistory.vue";
 import ParticipantCursor from "@/components/collaboration/ParticipantCursor.vue";
+import ImportAnnotationsDialog from "@/components/dialogs/ImportAnnotationsDialog.vue";
+import {
+  exportAsJson,
+  exportAsTei,
+  exportAsPlainText,
+  exportAsWebAnnotation
+} from "@/services/annotationExportService";
 import { useSession } from "@/composables/useSession";
 import { usePresence } from "@/composables/usePresence";
 import { useFollow } from "@/composables/useFollow";
@@ -980,6 +1001,7 @@ export default {
     JoinDialog,
     VersionHistory,
     ParticipantCursor,
+    ImportAnnotationsDialog,
     AngleLabelPopup,
     LengthPopupHorizontal,
     LengthPopupVertical,
@@ -1128,6 +1150,7 @@ export default {
       // Collaboration state
       showShareDialog: false,
       showVersionHistory: false,
+      showImportDialog: false,
       showJoinDialog: false,
       pendingSessionId: null,
       sessionActive: false,
@@ -1842,12 +1865,20 @@ export default {
       return this.croppedAnnotations.map((a, i) => ({
         key: `c${i}`,
         category: a.type,
-        title: a.type === 'trace' ? 'Trace' : 
+        title: a.type === 'trace' ? 'Trace' :
                a.type === 'measure' ? `Angle (${a.angle || ''}°)` :
                a.type === 'highlight' ? 'Highlight' : 'Underline',
         subtitle: a.type === 'trace' ? `${a.points?.length || 0} pts` : '',
         color: a.color || (a.type === 'measure' ? 'blue' : a.type === 'highlight' ? 'rgba(255,255,0,0.8)' : '#3b82f6')
       }));
+    },
+    // Check if any annotations exist (for import confirmation)
+    hasAnyAnnotations() {
+      return this.annotationsByPage.some(page => page?.length > 0) ||
+             this.comments.some(page => page?.length > 0) ||
+             Object.values(this.lengthMeasurements).some(
+               label => Object.values(label).some(page => page?.length > 0)
+             );
     },
   },
   watch: {
@@ -3131,6 +3162,67 @@ cancelPenSelection() {
         horizontalBands,
         verticalBands
       };
+    },
+
+    // Build metadata for exports
+    getExportMetadata() {
+      return {
+        documentName: this.documentName,
+        iiifManifest: this.iiifManifest,
+        totalPages: this.images.length,
+        currentPage: this.currentPage
+      };
+    },
+
+    // JSON Export
+    handleExportJson() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+      const settings = { angleLabels: this.angleLabels };
+
+      exportAsJson(annotations, metadata, settings, this.documentName);
+      this.showToolMessage('Exported as JSON');
+    },
+
+    // TEI XML Export
+    handleExportTei() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+
+      exportAsTei(annotations, metadata, this.documentName);
+      this.showToolMessage('Exported as TEI XML');
+    },
+
+    // Plain Text Export
+    handleExportPlainText() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+
+      exportAsPlainText(annotations, metadata, this.documentName);
+      this.showToolMessage('Exported as Plain Text');
+    },
+
+    // W3C Web Annotation Export
+    handleExportWebAnnotation() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+
+      exportAsWebAnnotation(annotations, metadata, this.documentName);
+      this.showToolMessage('Exported as Web Annotation');
+    },
+
+    // JSON Import
+    handleImportJson(data) {
+      // Use existing loadAnnotationsFromSession()
+      this.loadAnnotationsFromSession(data.annotations);
+
+      // Restore settings if present
+      if (data.settings?.angleLabels) {
+        this.angleLabels = data.settings.angleLabels;
+      }
+
+      this.showImportDialog = false;
+      this.showToolMessage('Annotations imported successfully');
     },
 
     handleSessionCreated(session) {

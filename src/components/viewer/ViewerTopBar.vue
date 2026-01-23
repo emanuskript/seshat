@@ -7,7 +7,8 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator
+  DropdownMenuSeparator,
+  DropdownMenuLabel
 } from '@/components/ui/dropdown-menu'
 import {
   Tooltip,
@@ -48,7 +49,12 @@ const emit = defineEmits([
   'clear-all',
   'start-session',
   'open-share',
-  'open-history'
+  'open-history',
+  'export-json',
+  'export-tei',
+  'export-text',
+  'export-w3c',
+  'import-json'
 ])
 
 const { currentTheme, setTheme, themes } = useTheme()
@@ -56,6 +62,7 @@ const { currentTheme, setTheme, themes } = useTheme()
 // Explicit dropdown state for debugging
 const themeDropdownOpen = ref(false)
 const clearDropdownOpen = ref(false)
+const saveDropdownOpen = ref(false)
 
 const themeConfig = {
   light: { icon: 'sun', label: 'Light' },
@@ -142,15 +149,48 @@ function handleThemeSelect(theme) {
         <!-- Divider -->
         <div class="w-px h-6 bg-border mx-1" />
 
-        <!-- Save -->
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Save as PDF" data-tour="save-button" @click="emit('save')">
+        <!-- Save/Export Dropdown -->
+        <DropdownMenu v-model:open="saveDropdownOpen">
+          <DropdownMenuTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Save & Export" title="Save & Export" data-tour="save-button">
               <Icon name="save" :size="18" />
             </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Save as PDF</TooltipContent>
-        </Tooltip>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-56">
+            <DropdownMenuLabel>Export</DropdownMenuLabel>
+            <DropdownMenuItem @click="emit('save'); saveDropdownOpen = false">
+              <Icon name="file-text" :size="16" class="mr-2" />
+              Save as PDF
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="emit('export-json'); saveDropdownOpen = false">
+              <Icon name="braces" :size="16" class="mr-2" />
+              Export as JSON
+              <span class="ml-auto text-xs text-muted-foreground">QuillApp</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="emit('export-tei'); saveDropdownOpen = false">
+              <Icon name="code" :size="16" class="mr-2" />
+              Export as TEI XML
+              <span class="ml-auto text-xs text-muted-foreground">Scholarly</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="emit('export-text'); saveDropdownOpen = false">
+              <Icon name="file-text" :size="16" class="mr-2" />
+              Export as Plain Text
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="emit('export-w3c'); saveDropdownOpen = false">
+              <Icon name="globe" :size="16" class="mr-2" />
+              Export as Web Annotation
+              <span class="ml-auto text-xs text-muted-foreground">W3C/IIIF</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Import</DropdownMenuLabel>
+            <DropdownMenuItem @click="emit('import-json'); saveDropdownOpen = false">
+              <Icon name="upload" :size="16" class="mr-2" />
+              Import Annotations
+              <span class="ml-auto text-xs text-muted-foreground">JSON</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <!-- Clear Dropdown -->
         <DropdownMenu v-model:open="clearDropdownOpen">
