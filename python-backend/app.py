@@ -20,6 +20,29 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RL
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 
+# ------------------ Helper Functions ------------------
+def convert_numpy_types(obj):
+    """Recursively convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(v) for v in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return 0.0  # Sanitize NaN/Inf values
+    return obj
+
+def assign_scribe_name(index: int) -> str:
+    """Generate alphabetic scribe labels (A, B, C... Z, then Scribe 27, 28, etc.)"""
+    if index < 26:
+        return f"Scribe {chr(ord('A') + index)}"
+    return f"Scribe {index + 1}"
+
 # ------------------ Config ------------------
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -512,18 +535,24 @@ def analyze():
     
     # Load line images for advanced analysis
     line_images = []
+    line_features = []  # Store features for each line
+
     for line_path in line_abs_paths:
         try:
             img = cv2.imread(line_path)
             if img is not None:
                 line_images.append(img)
+                # Extract features for this line
+                features = advanced_detector.extract_writing_features(img)
+                line_features.append(features)
             else:
                 log.warning(f"Could not load line image: {line_path}")
-                # Create a dummy image
                 line_images.append(np.ones((30, 100, 3), dtype=np.uint8) * 255)
+                line_features.append(advanced_detector._default_features(is_fallback=True))
         except Exception as e:
             log.warning(f"Error loading line image {line_path}: {e}")
             line_images.append(np.ones((30, 100, 3), dtype=np.uint8) * 255)
+            line_features.append(advanced_detector._default_features(is_fallback=True))
     
     # Use advanced scribe detection
     if len(line_images) >= 2:
@@ -554,6 +583,84 @@ def analyze():
     else:
         scribe_changes = advanced_changes
 
+    # Assign scribe names and aggregate features per scribe segment
+    scribe_segments = []
+
+    # Create segments based on scribe changes
+    if scribe_changes:
+        # Sort changes by line number
+        sorted_changes = sorted(scribe_changes, key=lambda x: x.get('line_number', 0))
+
+        # First scribe: from line 1 to first change
+        first_change_line = sorted_changes[0].get('line_number', 1)
+        scribe_segments.append({
+            'scribe': assign_scribe_name(0),
+            'start_line': 1,
+            'end_line': first_change_line - 1,
+            'is_initial': True
+        })
+
+        # Subsequent scribes
+        for i, change in enumerate(sorted_changes):
+            start = change.get('line_number', 1)
+            end = sorted_changes[i + 1].get('line_number', len(line_features) + 1) - 1 if i + 1 < len(sorted_changes) else len(line_features)
+
+            scribe_segments.append({
+                'scribe': assign_scribe_name(i + 1),
+                'start_line': start,
+                'end_line': end,
+                'confidence': change.get('confidence', 0),
+                'explanation': change.get('explanation', ''),
+                'distance': change.get('distance', 0),
+                'z_score': change.get('z_score', 0),
+                'methods_detected': change.get('methods_detected', []),
+                'is_initial': False
+            })
+    else:
+        # Single scribe - entire document
+        scribe_segments.append({
+            'scribe': assign_scribe_name(0),
+            'start_line': 1,
+            'end_line': len(line_features),
+            'is_initial': True
+        })
+
+    # Aggregate features for each scribe segment
+    for segment in scribe_segments:
+        start_idx = max(0, segment['start_line'] - 1)
+        end_idx = min(len(line_features), segment['end_line'])
+        segment_features = line_features[start_idx:end_idx]
+
+        if segment_features:
+            # Filter out fallback features
+            valid_features = [f for f in segment_features if not f.get('_is_fallback', False)]
+
+            if valid_features:
+                aggregated = {}
+                for key in valid_features[0].keys():
+                    if key.startswith('_'):
+                        continue
+                    values = [f.get(key, 0) for f in valid_features if key in f]
+                    if values:
+                        aggregated[key] = {
+                            'mean': float(np.mean(values)),
+                            'std': float(np.std(values)) if len(values) > 1 else 0.0,
+                            'min': float(np.min(values)),
+                            'max': float(np.max(values))
+                        }
+                segment['features'] = aggregated
+            else:
+                segment['features'] = None
+        else:
+            segment['features'] = None
+
+    # Calculate overall statistics
+    unique_scribes = set(seg['scribe'] for seg in scribe_segments)
+    avg_confidence = np.mean([seg.get('confidence', 0) for seg in scribe_segments if seg.get('confidence')]) if any(seg.get('confidence') for seg in scribe_segments) else None
+
+    # Replace scribe_changes with enriched segments
+    scribe_changes = scribe_segments
+
     # Generate PDF report with new format
     try:
         pdf_url = generate_pdf_report_advanced(job_id, scribe_changes, page_rel, line_rel_paths)
@@ -561,7 +668,16 @@ def analyze():
         log.error(f"PDF generation failed: {e}")
         pdf_url = None
 
-    return jsonify({
+    # Define feature names for frontend
+    feature_names = [
+        "avg_stroke_width", "stroke_width_variance", "curvature_avg",
+        "angularity_score", "letter_spacing", "word_spacing",
+        "slant_angle", "slant_consistency", "pressure_avg",
+        "pressure_variance", "letter_height_avg", "letter_height_variance",
+        "baseline_straightness"
+    ]
+
+    return jsonify(convert_numpy_types({
         "job_id": job_id,
         "page_image": page_url,
         "segmentation_overlay": overlay_url,
@@ -572,12 +688,19 @@ def analyze():
             {
                 "id": f"line_{i}",
                 "bbox": lines[i]["bbox"] if i < len(lines) else [0, 0, 100, 20],
-                "image": f"/static/{line_rel_paths[i]}" if i < len(line_rel_paths) else ""
+                "image": f"/static/{line_rel_paths[i]}" if i < len(line_rel_paths) else "",
+                "features": line_features[i] if i < len(line_features) else None
             }
             for i in range(len(line_rel_paths))
         ],
+        "feature_names": feature_names,
+        "statistics": {
+            "total_scribes": len(unique_scribes),
+            "overall_confidence": round(avg_confidence * 100, 1) if avg_confidence is not None else None,
+            "total_changes": len([s for s in scribe_segments if not s.get('is_initial', False)])
+        },
         "pdf_report": pdf_url
-    })
+    }))
 
 @app.route("/download_pdf/<job_id>")
 def download_pdf(job_id):

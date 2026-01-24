@@ -174,19 +174,31 @@
           </div>
         </div>
 
+        <!-- Error Alert -->
+        <div v-if="errorMessage" class="error-alert">
+          <div class="error-icon">
+            <Icon name="alert-triangle" :size="24" />
+          </div>
+          <div class="error-content">
+            <h4 class="error-title">{{ errorMessage }}</h4>
+            <p class="error-detail">{{ errorDetail }}</p>
+          </div>
+          <button class="error-dismiss" @click="errorMessage = null" aria-label="Dismiss">
+            <Icon name="x" :size="16" />
+          </button>
+        </div>
+
         <!-- Results Display -->
         <div v-else-if="hasResults" class="results-section">
-          <div class="results-header" data-scribe-tour="results-header">
-            <h4>Analysis Complete</h4>
-            <div class="results-summary">
-              <div class="metric">
-                <span class="metric-label">Total Scribes:</span>
-                <span class="metric-value">{{ results.statistics?.total_scribes || results.total_scribes || 'Unknown' }}</span>
-              </div>
-              <div class="metric">
-                <span class="metric-label">Overall Confidence:</span>
-                <span class="metric-value">{{ results.statistics?.overall_confidence ? Math.round(results.statistics.overall_confidence) + '%' : (results.confidence ? Math.round(results.confidence) + '%' : 'N/A') }}</span>
-              </div>
+          <!-- Summary Bar -->
+          <div class="results-summary-bar" data-scribe-tour="results-header">
+            <div class="summary-stat">
+              <span class="summary-label">Total Scribes</span>
+              <span class="summary-value">{{ results.statistics?.total_scribes || results.total_scribes || '1' }}</span>
+            </div>
+            <div class="summary-stat">
+              <span class="summary-label">Confidence</span>
+              <span class="summary-value">{{ results.statistics?.overall_confidence ? Math.round(results.statistics.overall_confidence) + '%' : (results.confidence ? Math.round(results.confidence) + '%' : 'N/A') }}</span>
             </div>
           </div>
 
@@ -219,73 +231,83 @@
               <div class="scribe-results" data-scribe-tour="results-accordion">
                 <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
                   <h5>Detected Scribes</h5>
-                  <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item">
-                    <div class="scribe-header">
-                      <h6 class="scribe-title">{{ change.scribe }}</h6>
-                      <!-- NEVER show confidence for initial scribe (index 0) -->
-                      <span v-if="index > 0 && change.confidence && !change.is_initial && change.confidence !== null && change.confidence !== undefined" class="scribe-confidence">
-                        {{ Math.round(change.confidence) }}% confidence
-                      </span>
-                      <!-- Show return indicator for returning scribes -->
-                      <span v-if="!change.is_initial && isScribeReturn(change.scribe, index)" class="scribe-return">
-                        (Returns)
-                      </span>
+                  <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item-card">
+                    <div class="scribe-item-header">
+                      <h6 class="scribe-name">{{ change.scribe }}</h6>
+                      <div class="scribe-meta">
+                        <span v-if="change.start_line && change.end_line" class="scribe-badge">
+                          Lines {{ change.start_line }}-{{ change.end_line }}
+                        </span>
+                        <!-- NEVER show confidence for initial scribe (index 0) -->
+                        <span v-if="index > 0 && change.confidence && !change.is_initial" class="scribe-badge confidence">
+                          {{ Math.round(change.confidence) }}%
+                        </span>
+                        <!-- Show return indicator for returning scribes -->
+                        <span v-if="!change.is_initial && isScribeReturn(change.scribe, index)" class="scribe-badge returns">
+                          Returns
+                        </span>
+                      </div>
                     </div>
-                <p class="scribe-explanation">{{ explain(change, index) }}</p>
+                    <div class="scribe-item-body">
+                      <p class="scribe-explanation">{{ explain(change, index) }}</p>
 
-                <!-- Scribe Previews (prefer OCR screenshots; fallback to page crop) -->
-                <div class="scribe-samples">
-                  <h6 class="samples-title">Scribe Previews:</h6>
-                  <div class="samples-gallery">
-                    <div v-for="(shot, sIdx) in previewImagesFor(change)" :key="sIdx" class="preview-image-container">
-                      <img :src="shot"
-                           :alt="`Preview for ${change.scribe} #${sIdx+1}`"
-                           class="preview-image"
-                           @error="onScribeSampleError" />
+                      <!-- Consolidated Samples -->
+                      <div v-if="getScribeSamples(change).length > 0" class="samples-section">
+                        <h6 class="samples-title">Sample Handwriting</h6>
+                        <div class="samples-gallery">
+                          <div v-for="(src, idx) in getScribeSamples(change).slice(0, 3)" :key="idx" class="sample-tile">
+                            <img :src="src" :alt="`${change.scribe} sample ${idx + 1}`" @error="onScribeSampleError" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Feature Toggle -->
+                      <button v-if="change.features && Object.keys(change.features).filter(k => !k.startsWith('_')).length > 0"
+                              class="feature-toggle"
+                              @click="toggleFeatures(index)">
+                        <Icon :name="expandedFeatures[index] ? 'chevron-down' : 'chevron-right'" :size="14" />
+                        Features ({{ Object.keys(change.features).filter(k => !k.startsWith('_')).length }})
+                      </button>
+
+                      <div v-if="expandedFeatures[index] && change.features" class="feature-grid">
+                        <div v-for="(value, key) in change.features" :key="key"
+                             v-show="!key.startsWith('_')"
+                             class="feature-cell">
+                          <span class="feature-cell-label">{{ formatFeatureLabel(key) }}</span>
+                          <span class="feature-cell-value">{{ formatFeatureValue(key, value) }}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                    <!-- Scribe Sample Images (fallback only if no previews available) -->
-                    <div v-if="previewImagesFor(change).length === 0 && change.samples && change.samples.length > 0" class="scribe-samples">
-                      <h6 class="samples-title">Sample Handwriting:</h6>
-                      <div class="samples-gallery">
-                        <div v-for="(sample, sampleIndex) in change.samples" :key="sampleIndex" class="sample-image-container">
-                          <img :src="backendBase + sample" 
-                               :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
-                               class="sample-image"
-                               crossorigin="anonymous"
-                               @error="onScribeSampleError">
-                        </div>
-                      </div>
+                <!-- Single Scribe Display -->
+                <div v-if="results.scribe_changes && results.scribe_changes.length === 1" class="single-scribe-section">
+                  <div class="single-scribe-content">
+                    <div class="single-scribe-icon">
+                      <Icon name="user-check" :size="28" />
                     </div>
-
-                    <!-- Alternative: Use scribe_samples from results if samples not in change object -->
-                    <div v-else-if="previewImagesFor(change).length === 0 && results.scribe_samples && results.scribe_samples[change.scribe]" class="scribe-samples">
-                      <h6 class="samples-title">Sample Handwriting:</h6>
-                      <div class="samples-gallery">
-                        <div v-for="(sample, sampleIndex) in results.scribe_samples[change.scribe]" :key="sampleIndex" class="sample-image-container">
-                          <img :src="backendBase + sample" 
-                               :alt="`${change.scribe} handwriting sample ${sampleIndex + 1}`"
-                               class="sample-image"
-                               crossorigin="anonymous"
-                               @error="onScribeSampleError">
-                        </div>
-                      </div>
-                    </div>
-
-                    <div v-if="change.features" class="scribe-features">
-                      <span class="feature-tag" v-for="(value, key) in change.features" :key="key">
-                        {{ key }}: {{ value }}
-                      </span>
-                    </div>
+                    <h6>Single Scribal Hand Detected</h6>
+                    <p>The entire selection appears to be written by one consistent hand.</p>
                   </div>
                 </div>
-                <div v-else>
+
+                <div v-else-if="!results.scribe_changes || results.scribe_changes.length === 0">
                   <p>No scribe changes detected. The entire selection appears to be written by a single hand.</p>
                 </div>
               </div>
             </div>
+          </div>
+
+          <!-- Feature Comparison - Full Width Below Split View -->
+          <div v-if="results.scribe_changes && results.scribe_changes.length > 1" class="results-comparison-panel">
+            <div class="comparison-header">
+              <h5 class="comparison-title">Feature Comparison</h5>
+            </div>
+            <ScribeFeatureComparison
+              :scribes="results.scribe_changes"
+              :feature-names="results.feature_names || []"
+            />
           </div>
         </div>
 
@@ -363,14 +385,20 @@
         </div>
 
         <footer class="actions" data-scribe-tour="step2-actions">
-          <button class="ghost" @click="goStep(1)">← Back</button>
+          <button class="ghost" @click="goStep(1)">
+            <Icon name="arrow-left" :size="16" />
+            Back
+          </button>
           <div class="action-right">
-            <button v-if="hasResults" class="secondary" @click="exportPDF">Export PDF</button>
+            <button v-if="hasResults" class="secondary" @click="exportPDF">
+              <Icon name="download" :size="16" />
+              Export PDF
+            </button>
             <button class="primary" @click="runDetection" :disabled="runButtonDisabled">
-              {{ isAnalyzing ? 'Analyzing…' : (mode==='auto' ? 'Run PharoSight' : 'Run on Selected Lines') }}
-              <small v-if="mode==='manual'" style="display: block; font-size: 10px; opacity: 0.7;">
-                ({{ regions.length }} regions selected)
-              </small>
+              <Icon v-if="!isAnalyzing" name="play" :size="16" />
+              <span v-if="isAnalyzing" class="spinner"></span>
+              <span>{{ isAnalyzing ? 'Analyzing…' : (mode==='auto' ? 'Run PharoSight' : 'Run on Selected Lines') }}</span>
+              <span v-if="mode==='manual' && !isAnalyzing" class="btn-badge">{{ regions.length }}</span>
             </button>
           </div>
         </footer>
@@ -387,13 +415,15 @@
 import logo from '@/assets/pharosight_icon_no_text.png'
 import Icon from '@/components/ui/icon/Icon.vue'
 import ScribeTourOverlay from '@/components/tour/ScribeTourOverlay.vue'
+import ScribeFeatureComparison from '@/components/popups/ScribeFeatureComparison.vue'
 import { useScribeTour } from '@/composables/useScribeTour'
 
 export default {
   name: 'ScribeDetectionPopup',
   components: {
     Icon,
-    ScribeTourOverlay
+    ScribeTourOverlay,
+    ScribeFeatureComparison
   },
   props: {
     currentPage: { type: Number, default: 1 },
@@ -423,6 +453,9 @@ export default {
       highlightedScribe: null,
       loadingMessage: 'Analyzing handwriting patterns...',
       loadingDetail:  'Initializing scribe detection algorithm',
+      // Error state for user feedback
+      errorMessage: null,
+      errorDetail: null,
       // Params
       params: {
         z_thresh: 2.5,
@@ -459,6 +492,24 @@ export default {
       debugOverlayEnabled: false,
       // Fallback/preview cache when OCR line crops aren't present
       segmentPreviews: Object.create(null),
+      // Track expanded feature sections
+      expandedFeatures: {},
+      // Feature labels for display
+      featureLabels: {
+        avg_stroke_width: 'Stroke Width',
+        stroke_width_variance: 'Stroke Variance',
+        curvature_avg: 'Curvature',
+        angularity_score: 'Angularity',
+        letter_spacing: 'Letter Spacing',
+        word_spacing: 'Word Spacing',
+        slant_angle: 'Slant Angle',
+        slant_consistency: 'Slant Consistency',
+        pressure_avg: 'Pressure',
+        pressure_variance: 'Pressure Variance',
+        letter_height_avg: 'Letter Height',
+        letter_height_variance: 'Height Variance',
+        baseline_straightness: 'Baseline Straightness'
+      }
     }
   },
   watch: {
@@ -473,6 +524,22 @@ export default {
       if (newStep === 2 && this.scribeTour.isActive.value) {
         this.scribeTour.enterStep2()
       }
+      // Clear errors when going back to step 1 to add more regions
+      if (newStep === 1) {
+        this.errorMessage = null
+        this.errorDetail = null
+      }
+    },
+    // Clear validation errors when regions change
+    regions: {
+      handler() {
+        // Clear insufficient selection error when user adds more regions
+        if (this.errorMessage === 'Insufficient Selection' || this.errorMessage === 'Insufficient Data') {
+          this.errorMessage = null
+          this.errorDetail = null
+        }
+      },
+      deep: true
     },
     // Tour integration: auto-start tour for first-time users
     isVisible(visible) {
@@ -612,6 +679,13 @@ export default {
       this.drawActive = false
       this.liveBox = null
       this.segmentPreviews = Object.create(null)
+      this.errorMessage = null
+      this.errorDetail = null
+    },
+    showError(title, message) {
+      this.errorMessage = title
+      this.errorDetail = message
+      this.isAnalyzing = false
     },
     goStep(stepNum) {
       this.step = stepNum
@@ -921,7 +995,35 @@ export default {
 
     // ---------- Running detection ----------
     async runDetection() {
-      console.log('runDetection()', { mode: this.mode, regions: this.regions.length, isAnalyzing: this.isAnalyzing })
+      // Clear any previous errors
+      this.errorMessage = null
+      this.errorDetail = null
+
+      // Validate mode is set
+      if (!this.mode) {
+        this.showError('No Mode Selected', 'Please go back and select a detection mode (Auto, Manual, or JSON).')
+        return
+      }
+
+      // Validate minimum lines for manual mode
+      if (this.mode === 'manual' && this.regions.length < 3) {
+        this.showError(
+          'Insufficient Selection',
+          `You have selected ${this.regions.length} region${this.regions.length === 1 ? '' : 's'}. Please select at least 3 text lines for reliable scribe detection. Go back to Step 1 to draw more boxes around individual lines of text.`
+        )
+        return
+      }
+
+      // Validate minimum lines for json mode
+      if (this.mode === 'json' && this.regions.length < 3) {
+        this.showError(
+          'Insufficient Data',
+          `The JSON file contains only ${this.regions.length} annotation${this.regions.length === 1 ? '' : 's'}. Please upload a file with at least 3 text line annotations for reliable scribe detection.`
+        )
+        return
+      }
+
+      console.log('✅ Validation passed, starting analysis...')
       this.analysisCompleted = false
       this.results = null
       this.segmentationOverlay = null
@@ -930,8 +1032,10 @@ export default {
 
       try {
         if (this.mode === 'auto') {
+          console.log('🚀 Starting AUTO mode analysis')
           await this.analyzeScribes()
         } else if (this.mode === 'json') {
+          console.log('🚀 Starting JSON mode analysis')
           // JSON mode: use regions from uploaded JSON file + uploaded image
           const payloadRegions = this.regions.map(r => ({
             x: Math.round(r.x),
@@ -942,6 +1046,7 @@ export default {
           this.lastPayloadRegions = payloadRegions
           await this.analyzeScribesWithJsonImage(payloadRegions, this.jsonSourceWidth, this.jsonSourceHeight)
         } else {
+          console.log('🚀 Starting MANUAL mode analysis')
           // Manual mode: use drawn regions
           const payloadRegions = this.regions.map(r => ({
             x: Math.round(r.nx), y: Math.round(r.ny),
@@ -951,15 +1056,24 @@ export default {
           const imgEl = this.$refs.drawStage?.querySelector('img')
           const srcW = imgEl?.naturalWidth || this.drawImgNaturalW || 0
           const srcH = imgEl?.naturalHeight || this.drawImgNaturalH || 0
+          console.log('📐 Manual mode image dimensions:', { srcW, srcH, regions: payloadRegions.length })
           await this.analyzeScribesWithRegions(payloadRegions, srcW, srcH)
         }
+        console.log('✅ Analysis completed successfully')
       } catch (err) {
-        console.error('Detection error:', err)
+        console.error('❌ Detection error:', err)
+        this.isAnalyzing = false
+        this.loadingMessage = 'Analysis Failed'
+        this.loadingDetail = err.message || 'An unexpected error occurred'
       }
     },
 
     async analyzeScribes() {
-      if (this.isAnalyzing) return
+      console.log('📍 analyzeScribes() entered', { isAnalyzing: this.isAnalyzing })
+      if (this.isAnalyzing) {
+        console.log('⚠️ analyzeScribes() - already analyzing, returning early')
+        return
+      }
       this.isAnalyzing = true
       this.analysisCompleted = false
       this.results = null
@@ -971,10 +1085,12 @@ export default {
         // Only send the image when we don't already have a prepared job
         let imageBlob = null
         if (!this.preparedJobId) {
+          console.log('📷 Fetching page image...', this.currentPageImage?.substring(0, 100))
           if (!this.currentPageImage) throw new Error('No page image available')
           const res = await fetch(this.currentPageImage, { mode: 'cors', cache: 'no-cache' })
           if (!res.ok) throw new Error('Failed to fetch page image')
           imageBlob = await res.blob()
+          console.log('📷 Image blob size:', imageBlob.size)
         }
 
         const fd = new FormData()
@@ -990,7 +1106,9 @@ export default {
         fd.append('algo', this.params.algo)
 
         const ts = Date.now() + Math.random()
-        const resp = await fetch(`${this.backendBase}/analyze?t=${ts}`, {
+        const url = `${this.backendBase}/analyze?t=${ts}`
+        console.log('🌐 Making request to:', url)
+        const resp = await fetch(url, {
           method: 'POST',
           body: fd,
           cache: 'no-cache',
@@ -1215,6 +1333,23 @@ export default {
       return segImgs || []
     },
 
+    // Consolidated sample getter - prioritizes: OCR previews > change.samples > results.scribe_samples
+    getScribeSamples(change) {
+      const previews = this.previewImagesFor(change)
+      if (previews.length > 0) return previews
+
+      if (change.samples?.length > 0) {
+        return change.samples.map(s => this.backendBase + s)
+      }
+
+      const resultSamples = this.results.scribe_samples?.[change.scribe]
+      if (resultSamples?.length > 0) {
+        return resultSamples.map(s => this.backendBase + s)
+      }
+
+      return []
+    },
+
     lineSegmentImagesFor(change) {
       const idx = change && typeof change.__index === 'number' ? change.__index : null
       if (idx == null) return []
@@ -1304,6 +1439,35 @@ export default {
     isScribeReturn(name, uptoIndex) {
       return !!this.lastRangeForScribe(name, uptoIndex)
     },
+
+    // Feature formatting helpers
+    toggleFeatures(index) {
+      this.expandedFeatures = { ...this.expandedFeatures, [index]: !this.expandedFeatures[index] }
+    },
+
+    formatFeatureLabel(key) {
+      return this.featureLabels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    },
+
+    formatFeatureValue(key, value) {
+      if (value == null) return 'N/A'
+      // Handle aggregated features with mean/std structure
+      const val = typeof value === 'object' && value.mean !== undefined ? value.mean : value
+      if (typeof val !== 'number') return String(val)
+
+      if (key.includes('angle')) return `${Math.round(val)}\u00B0`
+      if (key.includes('width') || key.includes('height') || key.includes('spacing')) {
+        return `${val.toFixed(1)}px`
+      }
+      if (key.includes('straightness') || key.includes('consistency')) {
+        return `${(val * 100).toFixed(0)}%`
+      }
+      if (key.includes('pressure') || key.includes('curvature') || key.includes('angularity')) {
+        return val.toFixed(2)
+      }
+      return val.toFixed(2)
+    },
+
     explain(change, index) {
       const s = change.start_line ?? change.line_number ?? 1
       const e = change.end_line ?? s
@@ -1567,13 +1731,49 @@ export default {
     transformBackendResults(data) {
       // Preserve original fields; normalize scribe_changes and tack on indices for preview cache
       const normalized = Array.isArray(data?.scribe_changes)
-        ? data.scribe_changes.map((ch, idx) => ({
-            ...ch,
-            __index: idx,
-            is_initial: ch.is_initial === true || idx === 0
-          }))
+        ? data.scribe_changes.map((ch, idx) => {
+            // Normalize confidence: backend may return 0-1 or 0-100
+            let confidence = ch.confidence
+            if (confidence != null && confidence <= 1) {
+              confidence = confidence * 100  // Convert 0-1 to 0-100
+            }
+
+            // Filter out fallback features (those with _is_fallback flag)
+            let features = ch.features
+            if (features && features._is_fallback) {
+              features = null
+            } else if (features) {
+              // Remove internal flags from features
+              const cleanFeatures = {}
+              for (const key in features) {
+                if (!key.startsWith('_')) {
+                  cleanFeatures[key] = features[key]
+                }
+              }
+              features = Object.keys(cleanFeatures).length > 0 ? cleanFeatures : null
+            }
+
+            return {
+              ...ch,
+              __index: idx,
+              is_initial: ch.is_initial === true || idx === 0,
+              confidence: confidence,
+              features: features
+            }
+          })
         : []
-      return { ...data, scribe_changes: normalized }
+
+      // Normalize overall statistics confidence
+      let statistics = data.statistics
+      if (statistics && statistics.overall_confidence != null) {
+        // Backend should already return 0-100, but ensure it's rounded
+        statistics = {
+          ...statistics,
+          overall_confidence: Math.round(statistics.overall_confidence)
+        }
+      }
+
+      return { ...data, scribe_changes: normalized, statistics }
     },
 
     // ---------- Overlay ----------
@@ -1997,29 +2197,106 @@ export default {
 
 .hint{ color:hsl(var(--muted-foreground)); font-size:12px; margin-top:8px; }
 
-.actions{
-  display:flex; justify-content:space-between; align-items: center; gap:10px; margin-top:16px;
+.actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid hsl(var(--border));
 }
-.action-right { display: flex; gap: 10px; }
-.ghost{
-  background:hsl(var(--background)); border:1px solid hsl(var(--border)); color:hsl(var(--foreground));
-  border-radius:var(--radius-md, 10px); padding:10px 14px; cursor:pointer;
+.action-right {
+  display: flex;
+  gap: 12px;
+}
+
+/* Footer Button Base */
+.actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
   transition: all 0.2s ease;
+  white-space: nowrap;
 }
-.ghost:hover{ background:hsl(var(--muted)); }
-.primary{
-  background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); border:1px solid hsl(var(--primary));
-  border-radius:var(--radius-md, 10px); padding:10px 14px;
-  font-weight:700; cursor:pointer;
-  transition: all 0.2s ease;
+
+/* Ghost/Back Button */
+.ghost {
+  background: transparent;
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
 }
-.primary:hover{ filter:brightness(0.95); }
-.secondary{
-  background:hsl(var(--muted-foreground)); color:hsl(var(--background)); border:1px solid hsl(var(--muted-foreground));
-  border-radius:var(--radius-md, 10px); padding:10px 14px;
-  font-weight:600; cursor:pointer;
+.ghost:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--muted-foreground) / 0.3);
 }
-.primary:disabled{ opacity:.6; cursor:not-allowed; }
+
+/* Secondary Button (Export PDF) */
+.secondary {
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+.secondary:hover {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-color: hsl(var(--muted-foreground) / 0.4);
+}
+
+/* Primary Button (Run) */
+.primary {
+  background: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 700;
+  box-shadow: 0 2px 8px hsl(var(--primary) / 0.3);
+}
+.primary:hover:not(:disabled) {
+  background: hsl(var(--primary) / 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px hsl(var(--primary) / 0.4);
+}
+.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Button spinner for loading state */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid hsl(var(--primary-foreground) / 0.3);
+  border-top-color: hsl(var(--primary-foreground));
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Badge for region count */
+.btn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: hsl(var(--primary-foreground) / 0.2);
+  border-radius: 10px;
+}
 
 .tuning-section { margin-bottom: 16px; }
 .results-section { margin-bottom: 16px; }
@@ -2031,34 +2308,42 @@ export default {
 .metric-label { font-size: 12px; color: hsl(var(--muted-foreground)); }
 .metric-value { font-weight: 600; color: hsl(var(--foreground)); }
 
-.scribe-results { margin-top: 16px; }
-.detected-scribes h5 { margin: 0 0 12px 0; color: hsl(var(--foreground)); }
-.scribe-item {
-  background: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-md, 8px);
-  padding: 12px;
-  margin-bottom: 8px;
+/* Summary Bar */
+.results-summary-bar {
+  display: flex;
+  gap: 24px;
+  padding: 12px 16px;
+  background: hsl(var(--primary) / 0.08);
+  border-radius: 8px;
+  border: 1px solid hsl(var(--primary) / 0.15);
+  margin-bottom: 16px;
 }
-.scribe-header { 
-  display: flex; 
-  justify-content: space-between; 
-  align-items: center; 
-  margin-bottom: 8px; 
+
+.summary-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.scribe-title {
-  margin: 0;
-  font-size: 14px;
+
+.summary-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.summary-value {
+  font-size: 18px;
   font-weight: 700;
   color: hsl(var(--primary));
 }
-.scribe-range {
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-  background: hsl(var(--primary) / 0.15);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm, 4px);
-}
+
+.scribe-results { margin-top: 16px; }
+.detected-scribes h5 { margin: 0 0 12px 0; color: hsl(var(--foreground)); }
+
+/* scribe-item, scribe-header, scribe-title, scribe-range definitions moved to .scribe-card block below */
+
 .scribe-explanation {
   margin: 0 0 8px 0;
   font-size: 13px;
@@ -2077,6 +2362,150 @@ export default {
   color: hsl(var(--accent));
   padding: 2px 6px;
   border-radius: 12px;
+}
+
+/* Enhanced Feature Display Styles */
+.scribe-features-wrap {
+  margin-top: 12px;
+  padding: 12px;
+  background: hsl(var(--background));
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid hsl(var(--border));
+}
+
+.feature-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--primary));
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.feature-toggle-btn:hover {
+  opacity: 0.8;
+}
+
+.feature-details {
+  margin-top: 12px;
+}
+
+.feature-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.feature-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  border-radius: 999px;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+
+@media (min-width: 500px) {
+  .feature-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.feature-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: hsl(var(--muted));
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+}
+
+.feature-label {
+  color: hsl(var(--muted-foreground));
+}
+
+.feature-value {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+/* Feature Comparison Section - Full Width Below Split */
+.results-comparison-panel {
+  margin-top: 20px;
+  padding: 16px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+}
+
+.comparison-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.comparison-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+/* Single Scribe Section */
+.single-scribe-section {
+  margin-top: 16px;
+  padding: 24px;
+  text-align: center;
+}
+
+.single-scribe-content {
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.single-scribe-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  background: hsl(var(--primary) / 0.1);
+  border-radius: 50%;
+  margin-bottom: 16px;
+  color: hsl(var(--primary));
+}
+
+.single-scribe-content h6 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.single-scribe-content p {
+  margin: 0;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
 }
 
 /* Legacy popup styles (for backwards compatibility) */
@@ -2205,16 +2634,16 @@ export default {
   height: auto;
   display: block;
   border-radius: 8px;
-  background: #f8f9fa;
-  border: 2px solid #e9ecef;
+  background: hsl(var(--muted));
+  border: 2px solid hsl(var(--border));
 }
 
 .screenshot-overlay {
   position: absolute;
   top: 8px;
   right: 8px;
-  background: rgba(0, 0, 0, 0.7);
-  color: white;
+  background: hsl(var(--foreground) / 0.85);
+  color: hsl(var(--background));
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 11px;
@@ -2222,12 +2651,12 @@ export default {
 }
 
 .line-range {
-  color: #ffc107;
+  color: hsl(var(--primary));
 }
 
 .image-placeholder {
   text-align: center;
-  color: #6c757d;
+  color: hsl(var(--muted-foreground));
   padding: 2rem;
 }
 
@@ -2240,32 +2669,32 @@ export default {
 
 .page-indicator i {
   font-size: 4rem;
-  color: #007bff;
+  color: hsl(var(--primary));
   opacity: 0.7;
 }
 
 .page-indicator h4 {
   margin: 0;
   font-size: 1.5rem;
-  color: #2c3e50;
+  color: hsl(var(--foreground));
 }
 
 .page-indicator p {
   margin: 0;
   font-size: 1rem;
-  color: #6c757d;
+  color: hsl(var(--muted-foreground));
 }
 
 .loading-text {
   margin-top: 1rem !important;
   font-style: italic;
   font-size: 0.9rem !important;
-  color: #007bff !important;
+  color: hsl(var(--primary)) !important;
 }
 
 .right-panel {
   flex: 1;
-  background: white;
+  background: hsl(var(--background));
   overflow-y: auto;
   margin-left: -80px; /* Allow space for arrows from left panel */
   padding-left: 80px; /* Restore content padding */
@@ -2284,8 +2713,8 @@ export default {
 }
 
 .analyze-button {
-  background: #007bff;
-  color: white;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   border: none;
   padding: 0.75rem 1.5rem;
   border-radius: 6px;
@@ -2296,8 +2725,8 @@ export default {
 }
 
 .analyze-btn {
-  background: linear-gradient(45deg, #6f42c1, #8b5fbf);
-  color: white;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   border: none;
   padding: 12px 24px;
   border-radius: 6px;
@@ -2345,6 +2774,65 @@ export default {
   cursor: not-allowed;
 }
 
+/* Error Alert Styles */
+.error-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  background: hsl(0 84% 60% / 0.1);
+  border: 1px solid hsl(0 84% 60% / 0.3);
+  border-radius: var(--radius-lg, 10px);
+  animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+.error-icon {
+  flex-shrink: 0;
+  color: hsl(0 84% 60%);
+  margin-top: 2px;
+}
+
+.error-content {
+  flex: 1;
+}
+
+.error-title {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: hsl(0 84% 45%);
+}
+
+.error-detail {
+  margin: 0;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+}
+
+.error-dismiss {
+  flex-shrink: 0;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.error-dismiss:hover {
+  background: hsl(0 84% 60% / 0.15);
+  color: hsl(0 84% 45%);
+}
+
 .loading-section {
   text-align: center;
   padding: 2rem;
@@ -2357,8 +2845,8 @@ export default {
 .spinner {
   width: 32px;
   height: 32px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #007bff;
+  border: 4px solid hsl(var(--muted));
+  border-top: 4px solid hsl(var(--primary));
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -2373,7 +2861,7 @@ export default {
 }
 
 .results-section h4 {
-  color: #2c3e50;
+  color: hsl(var(--foreground));
   margin-bottom: 1rem;
   font-size: 1.1rem;
 }
@@ -2392,22 +2880,23 @@ export default {
 
 .pdf-right {
   flex: 1.4;
+  max-width: 55%;
 }
 
 .analyzed-card {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 2px 8px hsl(var(--foreground) / 0.06);
 }
 
 .analyzed-card-header {
   padding: 10px 12px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  background: hsl(var(--muted));
+  border-bottom: 1px solid hsl(var(--border));
   font-weight: 600;
-  color: #374151;
+  color: hsl(var(--foreground));
 }
 
 .analyzed-card-body {
@@ -2433,56 +2922,88 @@ export default {
   display: block;
   width: 100%;
   height: auto;
-  background: #fff;
+  background: hsl(var(--background));
   object-fit: contain;
   border-radius: 6px;
-  /* Removed border from image */
   border: none;
 }
 
 /* Added border to the container */
 .analyzed-card {
-  border: 1px solid #e5e7eb;
+  border: 1px solid hsl(var(--border));
 }
 
-.scribe-item {
-  background: #f8f9fa;
-  border-radius: 12px;
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
-  border-left: 4px solid #1e40af;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
+/* Scribe Item Card - individual scribe entries */
+.scribe-item-card {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-left: 4px solid hsl(var(--primary));
+  border-radius: 10px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease;
 }
 
-.scribe-item.highlighted {
-  border-left-color: #007bff !important;
-  background: rgba(0, 123, 255, 0.1) !important;
-  box-shadow: 0 0 15px rgba(0, 123, 255, 0.3);
-  transform: scale(1.02);
+.scribe-item-card:hover {
+  box-shadow: 0 4px 12px hsl(var(--foreground) / 0.08);
 }
 
-.scribe-header {
+.scribe-item-card.highlighted {
+  border-left-color: hsl(var(--primary)) !important;
+  background: hsl(var(--primary) / 0.1) !important;
+  box-shadow: 0 0 15px hsl(var(--primary) / 0.3);
+}
+
+.scribe-item-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  padding: 12px 16px;
+  background: hsl(var(--muted) / 0.5);
+  border-bottom: 1px solid hsl(var(--border));
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.scribe-title {
+.scribe-name {
   margin: 0;
-  color: #f4d03f; /* gold like header */
-  font-size: 1.2rem;
-  font-weight: 800;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.7), 0 0 6px rgba(244, 208, 63, 0.25);
+  font-size: 15px;
+  font-weight: 700;
+  color: hsl(var(--primary));
 }
 
+.scribe-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.scribe-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.scribe-badge.confidence {
+  background: hsl(142 76% 36% / 0.15);
+  color: hsl(142 76% 36%);
+}
+
+.scribe-item-body {
+  padding: 12px 16px;
+}
+
+
 .scribe-range {
-  font-size: 0.9rem;
-  color: #6c757d;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
 }
 
 .scribe-confidence {
@@ -2508,18 +3029,99 @@ export default {
   margin-left: 0.5rem;
 }
 
+/* Samples Section - New Compact Style */
+.samples-section {
+  margin-top: 12px;
+  padding: 10px;
+  background: hsl(var(--muted) / 0.3);
+  border-radius: 6px;
+}
+
+.samples-section .samples-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 8px 0;
+}
+
+.sample-tile {
+  flex: 0 0 auto;
+  max-width: 100px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  transition: transform 0.2s ease;
+}
+
+.sample-tile:hover {
+  transform: scale(1.03);
+}
+
+.sample-tile img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 60px;
+  object-fit: cover;
+}
+
+/* Feature Toggle Button */
+.feature-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 0 0;
+  border-top: 1px dashed hsl(var(--border));
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--primary));
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.feature-toggle:hover {
+  color: hsl(var(--primary) / 0.8);
+}
+
+/* Feature Cell Grid */
+.feature-cell {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: hsl(var(--muted));
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.feature-cell-label {
+  color: hsl(var(--muted-foreground));
+}
+
+.feature-cell-value {
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: hsl(var(--foreground));
+}
+
+/* Legacy scribe-samples (backwards compat) */
 .scribe-samples {
   margin: 1rem 0;
   padding: 1rem;
-  background: rgba(249, 250, 251, 0.8);
+  background: hsl(var(--muted) / 0.5);
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid hsl(var(--border));
 }
 
 .samples-title {
   margin: 0 0 0.75rem 0;
   font-size: 0.9rem;
-  color: #374151;
+  color: hsl(var(--foreground));
   font-weight: 600;
 }
 
@@ -2527,7 +3129,7 @@ export default {
 /* Fix sample thumbnails rendering as black rectangles */
 .samples-gallery {
   display: flex;
-  gap: 0.75rem;
+  gap: 8px;
   flex-wrap: wrap;
   align-items: flex-start;
   max-width: 100%;
@@ -2583,43 +3185,33 @@ export default {
 
 .sample-error {
   padding: 1rem;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: hsl(0 84% 60% / 0.1);
+  border: 1px solid hsl(0 84% 60% / 0.3);
   border-radius: 6px;
-  color: #dc2626;
+  color: hsl(0 84% 60%);
   font-size: 0.8rem;
   text-align: center;
 }
 
 .sample-image:hover {
   transform: scale(1.05);
-  border-color: #3b82f6;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-}
-
-.sample-error {
-  font-size: 0.8rem;
-  color: #6b7280;
-  padding: 0.5rem;
-  text-align: center;
-  background: #f3f4f6;
-  border-radius: 4px;
-  border: 1px dashed #d1d5db;
+  border-color: hsl(var(--primary));
+  box-shadow: 0 4px 12px hsl(var(--primary) / 0.3);
 }
 
 .confidence {
-  background: #1e40af;
-  color: white;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   padding: 0.4rem 0.8rem;
   border-radius: 16px;
   font-size: 0.85rem;
   font-weight: 600;
-  box-shadow: 0 2px 4px rgba(30, 64, 175, 0.3);
+  box-shadow: 0 2px 4px hsl(var(--primary) / 0.3);
 }
 
 .location {
   font-size: 0.9rem;
-  color: #6c757d;
+  color: hsl(var(--muted-foreground));
   margin: 1rem 0 0.5rem 0;
   font-style: italic;
   font-weight: 500;
@@ -2627,17 +3219,17 @@ export default {
 
 .explanation {
   font-size: 0.95rem;
-  color: #495057;
+  color: hsl(var(--foreground));
   margin: 0 0 1rem 0;
   line-height: 1.5;
-  background: rgba(30, 64, 175, 0.05);
+  background: hsl(var(--primary) / 0.05);
   padding: 0.8rem;
   border-radius: 8px;
-  border-left: 3px solid #fbbf24;
+  border-left: 3px solid hsl(var(--primary));
 }
 
 .additional-scribes h5 {
-  color: #2c3e50;
+  color: hsl(var(--foreground));
   margin: 1.5rem 0 1rem 0;
   font-size: 1rem;
 }
@@ -2645,11 +3237,11 @@ export default {
 .statistics-section {
   margin-top: 1.5rem;
   padding-top: 1.5rem;
-  border-top: 1px solid #e9ecef;
+  border-top: 1px solid hsl(var(--border));
 }
 
 .statistics-section h5 {
-  color: #2c3e50;
+  color: hsl(var(--foreground));
   margin-bottom: 1rem;
   font-size: 1rem;
 }
@@ -2664,46 +3256,46 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 0.5rem;
-  background: #f8f9fa;
+  background: hsl(var(--muted));
   border-radius: 4px;
 }
 
 .stat-label {
-  color: #6c757d;
+  color: hsl(var(--muted-foreground));
   font-size: 0.9rem;
 }
 
 .stat-value {
   font-weight: 600;
-  color: #2c3e50;
+  color: hsl(var(--foreground));
 }
 
 /* Disclaimer Styling */
 .analysis-disclaimer {
   margin-top: 1.5rem;
   padding: 1rem;
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
-  border-left: 3px solid #6c757d;
+  border-left: 3px solid hsl(var(--muted-foreground));
 }
 
 .analysis-disclaimer h6 {
-  color: #495057;
+  color: hsl(var(--foreground));
   margin: 0 0 0.75rem 0;
   font-size: 0.9rem;
   font-weight: 600;
 }
 
 .disclaimer-text {
-  color: #495057;
+  color: hsl(var(--muted-foreground));
   font-size: 0.85rem;
   line-height: 1.5;
   margin: 0 0 0.75rem 0;
 }
 
 .disclaimer-factors {
-  color: #495057;
+  color: hsl(var(--muted-foreground));
   font-size: 0.8rem;
   line-height: 1.4;
   margin: 0 0 0.75rem 0;
@@ -2715,23 +3307,23 @@ export default {
 }
 
 .disclaimer-factors strong {
-  color: #343a40;
+  color: hsl(var(--foreground));
   font-weight: 600;
 }
 
 .disclaimer-conclusion {
-  color: #495057;
+  color: hsl(var(--muted-foreground));
   font-size: 0.8rem;
   line-height: 1.4;
   margin: 0;
   font-style: italic;
-  border-top: 1px solid #dee2e6;
+  border-top: 1px solid hsl(var(--border));
   padding-top: 0.75rem;
 }
 
 .no-results, .initial-state {
   text-align: center;
-  color: #6c757d;
+  color: hsl(var(--muted-foreground));
   padding: 2rem;
   font-style: italic;
 }
@@ -2741,17 +3333,38 @@ export default {
   .popup-content {
     flex-direction: column;
   }
-  
+
   .left-panel {
     flex: 0 0 40%;
     border-right: none;
-    border-bottom: 1px solid #e9ecef;
+    border-bottom: 1px solid hsl(var(--border));
   }
-  
+
   .right-panel {
     flex: 1;
   }
-  
+
+  /* PDF Layout responsive */
+  .pdf-layout {
+    flex-direction: column;
+  }
+
+  .pdf-left {
+    max-width: 100%;
+    position: relative;
+  }
+
+  .pdf-right {
+    max-width: 100%;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .results-summary-bar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
   .scribe-popup-container {
     width: 95%;
     height: 90%;
