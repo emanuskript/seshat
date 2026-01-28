@@ -51,7 +51,10 @@ export function validateUrl(value, fieldName) {
 
 export function validateSessionCreate(data) {
   validateRequired(data.iiifManifest, 'iiifManifest')
-  validateUrl(data.iiifManifest, 'iiifManifest')
+  // Allow JSON arrays (uploaded multi-page images) or valid URLs
+  if (!data.iiifManifest.startsWith('[')) {
+    validateUrl(data.iiifManifest, 'iiifManifest')
+  }
 
   if (data.documentName !== undefined) {
     validateString(data.documentName, 'documentName', { maxLength: 255 })

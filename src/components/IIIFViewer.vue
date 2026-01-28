@@ -38,6 +38,7 @@
         @export-text="handleExportPlainText"
         @export-w3c="handleExportWebAnnotation"
         @import-json="showImportDialog = true"
+        @add-images="$refs.addImagesInput.click()"
       />
     </header>
 
@@ -65,6 +66,10 @@
       >
         {{ toolMessage }}
       </div>
+
+      <!-- Hidden file input for adding more pages -->
+      <input ref="addImagesInput" type="file" accept="image/*,application/pdf"
+             multiple style="display:none" @change="handleAddImages" />
 
       <!-- Image Stage -->
       <div
@@ -1146,6 +1151,7 @@ export default {
       annotationSyncUnsubscribe: null,
       versionRestoredUnsubscribe: null,
       iiifManifest: '',
+      jobId: null,
       remoteCursors: [],
       // Follow mode state
       followSyncUnsubscribers: [],
@@ -1921,6 +1927,26 @@ export default {
       return;
     }
     this.annotationsByPage = []; // init
+
+    // Handle uploaded files (job:xxx)
+    if (this.source.startsWith("job:")) {
+      const cached = sessionStorage.getItem(this.source);
+      if (!cached) {
+        alert("Upload data expired. Returning to input.");
+        this.$router.push({ name: "IIIFInput" });
+        return;
+      }
+      const data = JSON.parse(cached);
+      this.jobId = data.job_id;
+      const base = this._getBackendBase();
+      this.images = data.pages.map(p => `${base}/static/${p.image}`);
+      // Store image list as JSON so session sharing can reconstruct pages
+      this.iiifManifest = JSON.stringify(this.images);
+      this.annotationsByPage = this.images.map(() => []);
+      this.comments = this.images.map(() => []);
+      return;
+    }
+
     this.iiifManifest = this.source; // Store for sharing
     if (this.source.endsWith("manifest.json")) {
       await this.fetchIIIFImages(this.source);
@@ -2031,6 +2057,33 @@ export default {
   methods: {
     openScribeDetection() {
       this.$refs.scribeDetectionPopup.openPopup();
+    },
+    _getBackendBase() {
+      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isDev) return 'http://localhost:5001';
+      return window.__PHAROSIGHT_API_BASE__ || 'https://basuony-pharosight.hf.space';
+    },
+    async handleAddImages(e) {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      e.target.value = '';
+      const fd = new FormData();
+      for (const f of files) fd.append("image", f);
+      try {
+        const base = this._getBackendBase();
+        const res = await fetch(`${base}/prepare`, { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Upload failed");
+        const newImages = data.pages.map(p => `${base}/static/${p.image}`);
+        this.images.push(...newImages);
+        for (let i = 0; i < newImages.length; i++) {
+          this.annotationsByPage.push([]);
+          this.comments.push([]);
+        }
+        this.showToolMessage(`Added ${newImages.length} page(s).`);
+      } catch (err) {
+        alert("Failed to add pages: " + err.message);
+      }
     },
     goHome() {
       const ok = window.confirm(
@@ -2153,6 +2206,11 @@ export default {
     /* ---------- OpenSeadragon Methods ---------- */
     async initOpenSeadragon(imageUrl) {
       if (!imageUrl) return;
+      // Wait until DOM is ready (watcher with immediate:true can fire before mount)
+      if (!this.$refs.viewer) {
+        await this.$nextTick();
+        if (!this.$refs.viewer) return;
+      }
 
       // Destroy previous viewer if exists
       if (this.osdViewer) {
@@ -3306,8 +3364,13 @@ cancelPenSelection() {
         this.iiifManifest = session.iiifManifest;
         this.documentName = session.documentName || 'IIIF Document';
 
-        // Load the IIIF manifest
-        if (session.iiifManifest.endsWith("manifest.json")) {
+        // Load images from session
+        if (session.iiifManifest.startsWith('[')) {
+          // JSON array of image URLs (from uploaded files)
+          this.images = JSON.parse(session.iiifManifest);
+          this.annotationsByPage = this.images.map(() => []);
+          this.comments = this.images.map(() => []);
+        } else if (session.iiifManifest.endsWith("manifest.json")) {
           await this.fetchIIIFImages(session.iiifManifest);
         } else {
           this.images = [session.iiifManifest];

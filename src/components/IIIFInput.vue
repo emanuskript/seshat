@@ -44,23 +44,24 @@
         <div class="upload">
           <label class="upload-btn" for="upload-file">
             <Upload :size="18" aria-hidden="true" />
-            <span>Upload Image</span>
+            <span>Upload Images / PDF</span>
           </label>
           <input
             id="upload-file"
             class="file-input"
             type="file"
             accept="image/*,application/pdf"
+            multiple
             @change="handleFileUpload"
           />
           <span class="file-name" :class="{ 'muted': !fileName }">
-            {{ fileName || 'Supports: JPG, PNG, GIF, PDF, WebP, SVG' }}
+            {{ fileName || 'Supports: JPG, PNG, PDF (multiple files allowed)' }}
           </span>
         </div>
 
         <!-- Start -->
-        <button class="cta" @click="startAnnotating">
-          <span>Start Annotating</span>
+        <button class="cta" :disabled="isUploading" @click="startAnnotating">
+          <span>{{ isUploading ? 'Uploading...' : 'Start Annotating' }}</span>
           <ArrowRight :size="18" aria-hidden="true" />
         </button>
       </div>
@@ -93,31 +94,58 @@ export default {
     return {
       iiifLink: "",
       fileName: "",
-      imageSrc: "",
+      uploadedFiles: [],
+      isUploading: false,
     };
   },
   methods: {
     handleFileUpload(e) {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      this.fileName = file.name;
-      this.imageSrc = URL.createObjectURL(file);
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      this.uploadedFiles = files;
+      this.fileName = files.length === 1
+        ? files[0].name
+        : `${files.length} files selected`;
       this.iiifLink = "";
     },
     isValidIIIFLink(link) {
       return !!link && link.startsWith("http");
     },
-    startAnnotating() {
-      if (!(this.iiifLink || this.fileName)) {
-        alert("Please provide a valid IIIF link or upload an image.");
+    _getBackendBase() {
+      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isDev) return 'http://localhost:5001';
+      return window.__PHAROSIGHT_API_BASE__ || 'https://basuony-pharosight.hf.space';
+    },
+    async startAnnotating() {
+      if (!(this.iiifLink || this.uploadedFiles.length)) {
+        alert("Please provide a valid IIIF link or upload file(s).");
         return;
       }
-      if (this.iiifLink && !this.isValidIIIFLink(this.iiifLink)) {
-        alert("Please provide a valid IIIF link (must start with http…).");
+      if (this.iiifLink) {
+        if (!this.isValidIIIFLink(this.iiifLink)) {
+          alert("Please provide a valid IIIF link (must start with http…).");
+          return;
+        }
+        this.$router.push({ name: "IIIFViewer", params: { source: this.iiifLink } });
         return;
       }
-      const src = this.iiifLink || this.imageSrc;
-      this.$router.push({ name: "IIIFViewer", params: { source: src } });
+      // Upload files to backend
+      this.isUploading = true;
+      try {
+        const fd = new FormData();
+        for (const f of this.uploadedFiles) fd.append("image", f);
+        const base = this._getBackendBase();
+        const res = await fetch(`${base}/prepare`, { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Upload failed");
+        const key = `job:${data.job_id}`;
+        sessionStorage.setItem(key, JSON.stringify(data));
+        this.$router.push({ name: "IIIFViewer", params: { source: key } });
+      } catch (err) {
+        alert("Upload failed: " + err.message);
+      } finally {
+        this.isUploading = false;
+      }
     },
   },
 };

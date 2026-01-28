@@ -54,7 +54,8 @@ const emit = defineEmits([
   'export-tei',
   'export-text',
   'export-w3c',
-  'import-json'
+  'import-json',
+  'add-images'
 ])
 
 const { currentTheme, setTheme, themes } = useTheme()
@@ -188,6 +189,11 @@ function handleThemeSelect(theme) {
               <Icon name="upload" :size="16" class="mr-2" />
               Import Annotations
               <span class="ml-auto text-xs text-muted-foreground">JSON</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="emit('add-images'); saveDropdownOpen = false">
+              <Icon name="plus" :size="16" class="mr-2" />
+              Add More Pages
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
