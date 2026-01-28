@@ -680,6 +680,9 @@
           </div>
 
           <div class="crop-actions">
+            <Button variant="outline" size="sm" @click="croppedBankVisible = !croppedBankVisible">
+              {{ croppedBankVisible ? 'Hide' : 'Show' }} Bank
+            </Button>
             <Button variant="outline" size="sm" @click="saveCroppedImageAsPNG">Save PNG</Button>
             <Button variant="outline" size="sm" @click="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</Button>
             <Button variant="outline" size="sm" @click="saveCroppedImage">Save w/ Annotations</Button>
@@ -869,6 +872,7 @@
 
         <!-- Mini bank (re-uses same UX: multi-select, move, delete) -->
         <AnnotationsBank
+          v-show="croppedBankVisible"
           class="mini-bank"
           :page="0"
           :items="croppedBankItems"
@@ -1385,6 +1389,7 @@ export default {
       croppedBankSelected: [],
       croppedBankMulti: false,
       croppedMoveActive: false,
+      croppedBankVisible: true,
     };
   },
   computed: {
