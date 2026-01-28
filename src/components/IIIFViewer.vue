@@ -308,7 +308,6 @@
             height: `${(measurement.height / osdImageHeight) * 100}%`,
             backgroundColor: measurement.color,
             position: 'absolute',
-            border: '1px solid #000',
           }"
         >
           <div
@@ -5422,7 +5421,7 @@ cancelPenSelection() {
 
 .underline-line { position: absolute; background-color: blue; height: 2px; pointer-events: none; z-index: 1100; }
 
-.length-measurement { position: absolute; border: 2px solid rgba(0, 0, 0, 0.5); pointer-events: none; }
+.length-measurement { position: absolute; border: none; pointer-events: none; }
 .length-label {
   position: absolute; left: 15px; top: 15px; transform: translateY(0);
   color: hsl(var(--foreground)); font-size: 12px; background-color: hsl(var(--card)); padding: 2px 5px; border-radius: 3px;
