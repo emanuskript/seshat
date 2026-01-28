@@ -419,44 +419,6 @@
         ></div>
         </div>
 
-        <!-- Comments (attached to page edge; positioned in viewer space, not scaled) -->
-        <div
-          v-for="(c, i) in currentPageComments"
-          :key="'comment-'+i"
-          class="comment-card"
-          :style="commentStyle(c)"
-          @mousedown.stop="startDraggingComment(i, $event)"
-          @mouseup.stop="stopDraggingComment"
-          @mousemove.stop="dragComment"
-          @click.stop
-        >
-          <div class="comment-pin">💬</div>
-          <div class="comment-bubble">
-            <div class="comment-text">{{ c.text }}</div>
-          </div>
-        </div>
-
-        <!-- Inline composer near target Y on chosen side -->
-        <div
-          v-if="showCommentInput"
-          class="comment-composer"
-          :style="composerStyle"
-          @mousedown.stop
-          @click.stop
-        >
-          <textarea
-            class="composer-textarea"
-            v-model="currentCommentText"
-            placeholder="Add your comment…"
-            @keydown.enter.exact.prevent="addComment"
-          ></textarea>
-
-          <div class="composer-actions">
-            <button class="btn-blue" @click.stop="addComment">Add</button>
-            <button class="btn-gray" @click.stop="cancelComment">Cancel</button>
-          </div>
-        </div>
-
       </div>
 
       <!-- Floating Scribe Detection Button -->
@@ -1322,12 +1284,8 @@ export default {
 
       // Comments
       comments: [],                   // per page (array of arrays)
-      showCommentInput: false,
       currentCommentText: "",
-      // Where the composer should appear:
-      composerTarget: { side: 'right', t: 0.5 }, // side: 'left'|'right', t in [0..1] vertical relative
-      draggingCommentIndex: null,
-      dragOffset: { x: 0, y: 0 },
+      expandedCommentId: null,
       suppressNextComment: false,
 
       // UI
@@ -1614,46 +1572,6 @@ export default {
       return { left, top, width: w, height: h, right: left + w, bottom: top + h };
     },
 
-    composerStyle() {
-      if (!this.imageReady || !this.composerTarget) return {};
-      const box = this.anchorBoxInViewer;
-      const pad = 12;             // gap outside page
-      const width = 260;          // composer width
-      const y = box.top + this.composerTarget.t * box.height;
-      const x = this.composerTarget.side === 'left'
-        ? (box.left - pad - width)
-        : (box.right + pad);
-
-      return {
-        position: 'absolute',
-        top: `${Math.round(y)}px`,
-        left: `${Math.round(x)}px`,
-        transform: 'translateY(-50%)',
-        zIndex: 40
-      };
-    },
-
-    commentStyle() {
-      // returns a function to style each card
-      return (c) => {
-        const box = this.anchorBoxInViewer;
-        const pad = 12;     // gap from page edge
-        const width = 240;  // visual width of comment card
-        const y = box.top + c.t * box.height;
-        const x = c.side === 'left'
-          ? (box.left - pad - width)
-          : (box.right + pad);
-
-        return {
-          position: 'absolute',
-          top: `${Math.round(y)}px`,
-          left: `${Math.round(x)}px`,
-          transform: 'translateY(-50%)',
-          zIndex: 30,
-          width: `${width}px`
-        };
-      };
-    },
 
     viewerWidth() {
       const viewer = this.$refs.viewer;
@@ -1934,6 +1852,10 @@ export default {
       this.bankSelectedKeys = [];
       // Update adjustment page for per-page filters
       this.setAdjustmentPage(n);
+      // Refresh comment overlays for the new page
+      this.expandedCommentId = null;
+      this._removeComposerOverlay();
+      this.$nextTick(() => this.renderCommentOverlays());
 
       // Broadcast page change for follow mode (immediate, not throttled)
       if (this.sessionConnected && !this.isApplyingFollowSync && this.osdViewer) {
@@ -1981,6 +1903,11 @@ export default {
     }
   },
   async created() {
+    // Non-reactive comment overlay refs
+    this._commentOverlayEls = [];
+    this._composerOverlayEl = null;
+    this._composerImageCoords = { x: 0, y: 0 };
+
     // Handle session route - load from session API
     if (this.sessionId) {
       await this.loadFromSession(this.sessionId);
@@ -2723,8 +2650,8 @@ export default {
         this.croppingStarted = false;
         this.cropButtonClicked = false;
         this.showStatsPanel = false;
-        // Close any open comment input when switching tools
-        this.showCommentInput = false;
+        // Close any open comment composer when switching tools
+        this._removeComposerOverlay();
         this.currentCommentText = "";
         // Clear cropped popup tool state
         this.croppedStartPoint = null;
@@ -2971,30 +2898,77 @@ cancelPenSelection() {
       this.showToolMessage(`Measuring "${this.selectedMeasurement}": click-start then click-end.`);
     },
 
-    /* ---------- Comments ---------- */
+    /* ---------- Comments (OSD overlay-based) ---------- */
+    _imageToViewportPoint(x, y) {
+      const tiledImage = this.osdViewer && this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) return null;
+      return tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(x, y));
+    },
+
     startComment(event) {
-      // Only proceed if comment mode is actually active
       if (!this.commentModeActive) return;
-      
-      if (this.suppressNextComment) {
-        this.suppressNextComment = false;
-        return;
-      }
+      if (this.suppressNextComment) { this.suppressNextComment = false; return; }
 
-      // Only respond if click is inside the page (anchor) bounds
-      const local = this.getMousePosition(event); // anchor-local coords
-      if (
-        local.x < 0 || local.y < 0 ||
-        local.x > this.baseFitWidth || local.y > this.baseFitHeight
-      ) return;
+      const local = this.getMousePosition(event);
+      const imgW = this.osdImageWidth || this.baseFitWidth;
+      const imgH = this.osdImageHeight || this.baseFitHeight;
+      if (local.x < 0 || local.y < 0 || local.x > imgW || local.y > imgH) return;
 
-      const isLeftHalf = local.x < (this.baseFitWidth / 2);
-      const side = isLeftHalf ? 'left' : 'right';
-      const t = Math.max(0, Math.min(1, local.y / this.baseFitHeight));
-
-      this.composerTarget = { side, t };
+      this._composerImageCoords = { x: local.x, y: local.y };
       this.currentCommentText = "";
-      this.showCommentInput = true;
+      // Deactivate comment mode and re-enable OSD navigation so the viewer
+      // isn't stuck in a disabled state after the composer appears
+      this.commentModeActive = false;
+      this.isOperationInProgress = false;
+      this.setOsdMouseNavEnabled(true);
+      this._showComposerOverlay();
+    },
+
+    _showComposerOverlay() {
+      this._removeComposerOverlay();
+
+      // Position composer as a fixed-position DOM element using screen coords
+      const tiledImage = this.osdViewer && this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) return;
+      const vp = tiledImage.imageToViewportCoordinates(
+        new OpenSeadragon.Point(this._composerImageCoords.x, this._composerImageCoords.y)
+      );
+      const screenPt = this.osdViewer.viewport.pixelFromPoint(vp, true);
+      const containerRect = this.osdViewer.container.getBoundingClientRect();
+
+      const el = document.createElement('div');
+      el.className = 'comment-composer';
+      el.style.position = 'fixed';
+      el.style.left = (containerRect.left + screenPt.x) + 'px';
+      el.style.top = (containerRect.top + screenPt.y) + 'px';
+      el.style.zIndex = '10000';
+      el.innerHTML = `
+        <textarea class="composer-textarea" placeholder="Add your comment…"></textarea>
+        <div class="composer-actions">
+          <button class="btn-blue comment-add-btn">Add</button>
+          <button class="btn-gray comment-cancel-btn">Cancel</button>
+        </div>
+      `;
+
+      const textarea = el.querySelector('textarea');
+      textarea.addEventListener('input', e => { this.currentCommentText = e.target.value; });
+      textarea.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.addComment(); }
+      });
+      el.querySelector('.comment-add-btn').addEventListener('click', () => this.addComment());
+      el.querySelector('.comment-cancel-btn').addEventListener('click', () => this.cancelComment());
+
+      document.body.appendChild(el);
+      this._composerOverlayEl = el;
+
+      this.$nextTick(() => textarea.focus());
+    },
+
+    _removeComposerOverlay() {
+      if (this._composerOverlayEl) {
+        try { this._composerOverlayEl.remove(); } catch(e) {}
+        this._composerOverlayEl = null;
+      }
     },
 
     addComment() {
@@ -3004,71 +2978,82 @@ cancelPenSelection() {
       const comment = {
         id: crypto.randomUUID(),
         pageIndex: this.currentPage,
-        side: this.composerTarget.side,
-        t: Math.max(0, Math.min(1, this.composerTarget.t)),
+        x: this._composerImageCoords.x,
+        y: this._composerImageCoords.y,
         text: this.currentCommentText.trim(),
       };
 
       this.comments[this.currentPage].push(comment);
 
-      // Sync to session if connected
       if (this.sessionConnected) {
         this.syncAddAnnotation('comments', comment);
       }
 
       this.currentCommentText = "";
-      this.showCommentInput = false;
-      this.commentModeActive = false; // <-- disable comment mode after adding one comment
-      this.suppressNextComment = true; // <-- prevents instant re-open
+      this._removeComposerOverlay();
+      this.commentModeActive = false;
+      this.suppressNextComment = true;
+      this.renderCommentOverlays();
     },
 
     cancelComment() {
       this.currentCommentText = "";
-      this.showCommentInput = false;
-      this.commentModeActive = false; // <-- disable comment mode when canceling
-      this.suppressNextComment = true; // <-- prevents instant re-open
+      this._removeComposerOverlay();
+      this.commentModeActive = false;
+      this.suppressNextComment = true;
     },
 
-    startDraggingComment(index, event) {
-      this.draggingCommentIndex = index;
-      // keep where the pointer is relative to card's top-left; we'll convert to side/t on move
-      const viewer = this.$refs.viewer.getBoundingClientRect();
-      this.dragOffset = {
-        x: event.clientX - viewer.left,
-        y: event.clientY - viewer.top,
-      };
+    toggleCommentExpand(id) {
+      this.expandedCommentId = this.expandedCommentId === id ? null : id;
+      this.renderCommentOverlays();
     },
 
-    dragComment(event) {
-      if (this.draggingCommentIndex === null) return;
-
-      // Pointer position in viewer space
-      const viewerRect = this.$refs.viewer.getBoundingClientRect();
-      const px = event.clientX - viewerRect.left;
-      const py = event.clientY - viewerRect.top;
-
-      // Snap horizontally to the closer page edge; map vertically to t
-      const box = this.anchorBoxInViewer;
-      // If page not ready, skip
-      if (box.width <= 0 || box.height <= 0) return;
-
-      const distLeft  = Math.abs(px - box.left);
-      const distRight = Math.abs(px - box.right);
-      const side = (distLeft <= distRight) ? 'left' : 'right';
-
-      // t is 0..1 within page box
-      const t = Math.max(0, Math.min(1, (py - box.top) / box.height));
-
-      const pageComments = this.comments[this.currentPage] || [];
-      const c = pageComments[this.draggingCommentIndex];
-      if (c) {
-        c.side = side;
-        c.t = t;
+    renderCommentOverlays() {
+      // Remove existing pin overlays
+      if (this._commentOverlayEls) {
+        this._commentOverlayEls.forEach(el => {
+          try { this.osdViewer.removeOverlay(el); } catch(e) {}
+        });
       }
+      this._commentOverlayEls = [];
+
+      const comments = this.comments[this.currentPage] || [];
+      if (!this.osdViewer) return;
+
+      comments.forEach(c => {
+        const vp = this._imageToViewportPoint(c.x, c.y);
+        if (!vp) return;
+
+        const el = document.createElement('div');
+        el.className = 'comment-pin-wrapper';
+        el.innerHTML = `<div class="comment-pin-icon">💬</div>`;
+
+        if (this.expandedCommentId === c.id) {
+          const bubble = document.createElement('div');
+          bubble.className = 'comment-expanded-bubble';
+          bubble.innerHTML = `<div class="comment-text">${this._escapeHtml(c.text)}</div>`;
+          el.appendChild(bubble);
+        }
+
+        const stopPin = e => e.stopPropagation();
+        ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup',
+         'dblclick', 'touchstart', 'touchend'
+        ].forEach(evt => el.addEventListener(evt, stopPin, true));
+        el.addEventListener('click', (e) => { e.stopPropagation(); this.toggleCommentExpand(c.id); });
+
+        this.osdViewer.addOverlay({
+          element: el,
+          location: vp,
+          placement: OpenSeadragon.Placement.CENTER,
+        });
+        this._commentOverlayEls.push(el);
+      });
     },
 
-    stopDraggingComment() {
-      this.draggingCommentIndex = null;
+    _escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
     },
 
     /* ---------- Theme dropdown ---------- */
@@ -4233,6 +4218,9 @@ cancelPenSelection() {
           if (this.labelPositions[id]) delete this.labelPositions[id]; 
         });
       }
+
+      // Refresh comment overlays if any were deleted
+      if (cmtIdxs.length) this.renderCommentOverlays();
 
       // Clear selection after successful deletion
       this.bankSelectedKeys = [];
@@ -5497,102 +5485,6 @@ body.cropped-popup-active *::-moz-selection {
 .cropped-popup-content button { margin-top: 10px; padding: 8px 16px; background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border: none; border-radius: 4px; cursor: pointer; }
 .cropped-popup-content button:hover { filter: brightness(0.9); }
 
-/* Comment card */
-.comment-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: grab;
-  user-select: none;
-}
-.comment-card:active { cursor: grabbing; }
-
-.comment-pin {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: hsl(var(--primary) / 0.1);
-  color: hsl(var(--primary));
-  border: 1px solid hsl(var(--primary) / 0.3);
-  font-size: 14px;
-  flex: 0 0 auto;
-}
-
-.comment-bubble {
-  flex: 1 1 auto;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
-  padding: 8px 10px;
-}
-.comment-text {
-  font-size: 13px;
-  color: hsl(var(--foreground));
-  line-height: 1.35;
-}
-
-/* Composer */
-.comment-composer {
-  width: 260px;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg, 0 10px 24px rgba(0, 0, 0, 0.18));
-  padding: 10px;
-}
-
-.composer-textarea {
-  width: 100%;
-  min-height: 86px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 13px;
-  resize: vertical;
-  outline: none;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-}
-.composer-textarea:focus {
-  border-color: hsl(var(--primary));
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
-}
-
-.composer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.btn-blue {
-  border: 1px solid hsl(var(--primary));
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: filter .15s, transform .02s;
-}
-.btn-blue:hover { filter: brightness(0.95); }
-.btn-blue:active { transform: translateY(1px); }
-
-.btn-gray {
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: filter .15s, transform .02s;
-}
-.btn-gray:hover { filter: brightness(0.97); }
-.btn-gray:active { transform: translateY(1px); }
 
 .clear-dropdown {
   position: absolute; top: 100%; left: 0; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); border: 1px solid hsl(var(--border)); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; min-width: 160px; padding: 4px 0; margin-top: 4px;
@@ -6470,4 +6362,101 @@ div.statistics-popup,
   visibility: hidden !important;
   pointer-events: none !important;
 }
+</style>
+
+<!-- Unscoped: styles for dynamically created OSD overlay elements -->
+<style>
+.comment-pin-wrapper {
+  cursor: pointer;
+  pointer-events: auto;
+}
+.comment-pin-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: hsl(var(--primary));
+  color: white;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  transition: transform 0.15s ease;
+}
+.comment-pin-icon:hover {
+  transform: scale(1.15);
+}
+.comment-expanded-bubble {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  width: 220px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+  padding: 8px 10px;
+  pointer-events: auto;
+}
+.comment-text {
+  font-size: 13px;
+  color: hsl(var(--foreground));
+  line-height: 1.35;
+}
+.comment-composer {
+  width: 260px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  padding: 10px;
+  pointer-events: auto;
+}
+.composer-textarea {
+  width: 100%;
+  min-height: 86px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+.composer-textarea:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+.composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.btn-blue {
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: filter .15s, transform .02s;
+}
+.btn-blue:hover { filter: brightness(0.95); }
+.btn-blue:active { transform: translateY(1px); }
+.btn-gray {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: filter .15s, transform .02s;
+}
+.btn-gray:hover { filter: brightness(0.97); }
+.btn-gray:active { transform: translateY(1px); }
 </style>
