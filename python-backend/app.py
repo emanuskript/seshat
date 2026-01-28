@@ -1,6 +1,6 @@
 # app.py
 from __future__ import annotations
-import os, json, uuid, time, shutil, logging
+import os, io, json, uuid, time, shutil, logging
 from pathlib import Path
 from typing import List, Dict, Tuple
 from datetime import datetime
@@ -49,8 +49,9 @@ STATIC_DIR = BASE_DIR / "static"
 UPLOADS_DIR = BASE_DIR / "uploads"
 JOBS_DIR = STATIC_DIR / "jobs"
 
-ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
 MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20MB
+MAX_IMAGE_DIM = int(os.getenv("QUILLAPP_MAX_IMAGE_DIM", "0"))  # 0 = disabled
 
 # ------------------ Morphological Line Segmentation ------------------
 def _ink_mask(binary: np.ndarray) -> np.ndarray:
@@ -477,35 +478,160 @@ def generate_pdf_report(job_id: str, cards: List[Dict], page_image: str) -> str:
     rel = str(pdf_path.relative_to(STATIC_DIR)).replace("\\", "/")
     return f"/static/{rel}"
 
+def _normalize_regions_to_image(regions, src_w, src_h, dst_w, dst_h):
+    """Map regions from frontend source space to actual image pixel space."""
+    out = []
+    if not regions:
+        return out
+    try:
+        src_w, src_h = int(src_w or 0), int(src_h or 0)
+    except Exception:
+        src_w, src_h = 0, 0
+
+    if src_w <= 0 or src_h <= 0:
+        for r in regions:
+            out.append({
+                "x": int(round(r.get("x", 0))),
+                "y": int(round(r.get("y", 0))),
+                "w": int(round(r.get("w", 0))),
+                "h": int(round(r.get("h", 0))),
+            })
+        return out
+
+    sx = float(dst_w) / float(src_w)
+    sy = float(dst_h) / float(src_h)
+    for r in regions:
+        out.append({
+            "x": int(round(r.get("x", 0) * sx)),
+            "y": int(round(r.get("y", 0) * sy)),
+            "w": int(round(r.get("w", 0) * sx)),
+            "h": int(round(r.get("h", 0) * sy)),
+        })
+    return out
+
 def crop_manual_regions(image_path, regions, output_dir, src_w=0, src_h=0):
-    """Crop user-drawn regions from the image. Returns list of crop file paths."""
+    """Crop user-drawn regions from the image with size filtering. Returns list of crop file paths."""
     from PIL import Image, ImageOps
     im = Image.open(image_path)
     im = ImageOps.exif_transpose(im)
     im = im.convert("RGB")
     W, H = im.size
 
-    if src_w > 0 and src_h > 0:
-        sx, sy = W / src_w, H / src_h
-    else:
-        sx, sy = 1.0, 1.0
+    # Normalize regions from frontend to image space
+    norm_regions = _normalize_regions_to_image(regions, src_w, src_h, W, H)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    for idx, r in enumerate(regions):
-        x = max(0, int(round(r.get('x', 0) * sx)))
-        y = max(0, int(round(r.get('y', 0) * sy)))
-        w = max(1, int(round(r.get('w', 1) * sx)))
-        h = max(1, int(round(r.get('h', 1) * sy)))
+    min_line_width = min(W * 0.15, 150)
+    min_line_height = 20
+
+    for idx, r in enumerate(norm_regions):
+        x = max(0, r["x"])
+        y = max(0, r["y"])
+        w = max(1, r["w"])
+        h = max(1, r["h"])
         x2, y2 = min(W, x + w), min(H, y + h)
+
+        # Filter out regions too small to be real text lines
+        if w < min_line_width or h < min_line_height:
+            log.info(f"Filtering region {idx}: {w}x{h}px (too small)")
+            continue
         if x2 <= x or y2 <= y:
             continue
+
         crop = im.crop((x, y, x2, y2))
         np_crop = cv2.cvtColor(np.array(crop), cv2.COLOR_RGB2BGR)
         fpath = output_dir / f"manual_region_{idx}.png"
         cv2.imwrite(str(fpath), np_crop)
         paths.append(str(fpath))
     return paths
+
+def _extract_pages_from_pdf(pdf_bytes, output_dir):
+    """Extract PDF pages as JPEG images. Returns list of (page_index, path) tuples."""
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pages = []
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(dpi=200)
+        img_path = output_dir / f"page_{i + 1}.jpg"
+        pix.save(str(img_path))
+        pages.append((i + 1, img_path))
+    doc.close()
+    return pages
+
+def _find_latest_prepared_page():
+    """Find the most recently modified manuscript_page.jpg in JOBS_DIR. Returns Path or None."""
+    best, best_mtime = None, 0
+    if not JOBS_DIR.exists():
+        return None
+    for d in JOBS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        cand = d / "manuscript_page.jpg"
+        if cand.exists():
+            mt = cand.stat().st_mtime
+            if mt > best_mtime:
+                best, best_mtime = cand, mt
+    return best
+
+def _read_base64_image(data):
+    """Decode a base64 or data-URL string to raw image bytes. Returns bytes or None."""
+    import base64
+    if not data:
+        return None
+    if "," in data:
+        data = data.split(",", 1)[1]
+    try:
+        return base64.b64decode(data)
+    except Exception:
+        return None
+
+def _split_double_page_if_needed(pil_image):
+    """Return [PIL.Image] list: [full] or [left, right] if a central gutter is detected."""
+    img = np.array(pil_image.convert("RGB"))[:, :, ::-1]
+    bw = preprocess(img)
+    ink = (bw == 0).astype(np.uint8)
+    vproj = ink.sum(axis=0)
+    W = vproj.shape[0]
+    if W < 200:
+        return [pil_image]
+    c0, c1 = int(0.3 * W), int(0.7 * W)
+    mid_slice = vproj[c0:c1]
+    if mid_slice.size == 0:
+        return [pil_image]
+    gutter = c0 + int(np.argmin(mid_slice))
+    left_ink = vproj[:gutter].mean()
+    right_ink = vproj[gutter:].mean()
+    gutter_ink = vproj[gutter:gutter + max(3, W // 200)].mean()
+    if gutter_ink < 0.25 * max(left_ink, right_ink) and min(left_ink, right_ink) > 0.15 * max(vproj):
+        pad = max(5, W // 200)
+        L = pil_image.crop((0, 0, max(0, gutter - pad), pil_image.height))
+        R = pil_image.crop((min(pil_image.width, gutter + pad), 0, pil_image.width, pil_image.height))
+        return [L, R]
+    return [pil_image]
+
+def _downscale_image_if_needed(file_bytes, max_dim=MAX_IMAGE_DIM):
+    """Downscale large images to avoid exhausting memory. Returns (new_bytes, orig_size, new_size)."""
+    if not max_dim or max_dim <= 0:
+        return file_bytes, None, None
+    try:
+        from PIL import Image as PILImage, ImageOps as PILImageOps
+        with PILImage.open(io.BytesIO(file_bytes)) as img:
+            img = PILImageOps.exif_transpose(img)
+            orig_size = img.size
+            if max(orig_size) <= max_dim:
+                return file_bytes, orig_size, orig_size
+            scale = max_dim / float(max(orig_size))
+            new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+            resample = getattr(getattr(PILImage, "Resampling", PILImage), "LANCZOS", PILImage.BICUBIC)
+            img = img.resize(new_size, resample).convert("RGB")
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=90, optimize=True)
+            return out.getvalue(), orig_size, new_size
+    except Exception as e:
+        log.warning(f"Downscale failed: {e}")
+    return file_bytes, None, None
 
 # ------------------ Routes ------------------
 @app.errorhandler(413)
@@ -516,29 +642,149 @@ def too_large(_e):
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/prepare", methods=["POST"])
+def prepare():
+    """Upload image(s) or PDF for later analysis. Returns job_id and page list."""
+    from PIL import Image as PILImage, ImageOps as PILImageOps
+
+    job_id = new_job_id()
+    paths = job_paths(job_id)
+
+    # Collect all uploaded files (supports multiple via getlist)
+    files = request.files.getlist("image")
+    files = [f for f in files if f and getattr(f, "filename", "")]
+
+    # Fallback: raw body bytes (single image)
+    raw_bytes = None
+    if not files:
+        raw_bytes = request.get_data() or None
+
+    if not files and not raw_bytes:
+        return jsonify({"error": "No image provided"}), 400
+
+    page_entries = []  # list of {index, path, rel}
+
+    def _save_image(img_bytes, index):
+        """Save image bytes as page_{index}.jpg, returns path."""
+        page_path = paths["root"] / f"page_{index}.jpg"
+        try:
+            img = PILImage.open(io.BytesIO(img_bytes))
+            img = PILImageOps.exif_transpose(img).convert("RGB")
+            img.save(str(page_path), "JPEG")
+        except Exception:
+            page_path.write_bytes(img_bytes)
+        return page_path
+
+    if files:
+        page_idx = 1
+        for f in files:
+            fname = f.filename or ""
+            ext = Path(fname).suffix.lower()
+            f_bytes = f.read()
+
+            if ext == ".pdf":
+                # Extract pages from PDF
+                try:
+                    pdf_pages = _extract_pages_from_pdf(f_bytes, paths["root"])
+                    for _, pdf_page_path in pdf_pages:
+                        rel = str(pdf_page_path.relative_to(STATIC_DIR)).replace("\\", "/")
+                        page_entries.append({"index": page_idx, "image": rel, "image_static": f"/static/{rel}"})
+                        page_idx += 1
+                except Exception as e:
+                    log.error(f"PDF extraction failed: {e}")
+                    return jsonify({"error": f"Failed to extract PDF pages: {str(e)}"}), 500
+            else:
+                # Regular image
+                page_path = _save_image(f_bytes, page_idx)
+                rel = str(page_path.relative_to(STATIC_DIR)).replace("\\", "/")
+                page_entries.append({"index": page_idx, "image": rel, "image_static": f"/static/{rel}"})
+                page_idx += 1
+    else:
+        # Raw bytes — single image
+        page_path = _save_image(raw_bytes, 1)
+        rel = str(page_path.relative_to(STATIC_DIR)).replace("\\", "/")
+        page_entries.append({"index": 1, "image": rel, "image_static": f"/static/{rel}"})
+
+    # Backward compatible: manuscript_page.jpg = copy of first page
+    if page_entries:
+        first_abs = STATIC_DIR / page_entries[0]["image"]
+        compat_path = paths["root"] / "manuscript_page.jpg"
+        if not compat_path.exists() or str(first_abs) != str(compat_path):
+            shutil.copy(str(first_abs), str(compat_path))
+
+    first_rel = page_entries[0]["image"] if page_entries else ""
+
+    return jsonify({
+        "ok": True,
+        "job_id": job_id,
+        "page_count": len(page_entries),
+        "pages": page_entries,
+        "page_image": first_rel,
+        "page_image_static": f"/static/{first_rel}"
+    })
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     cleanup_old_jobs()
 
-    # Check if file is present
-    if 'image' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-    
-    file = request.files['image']
-    if not file or not file.filename:
-        return jsonify({"error": "No file selected"}), 400
-    
-    if not allowed_file(file.filename):
-        return jsonify({"error": "Unsupported file type"}), 400
+    # Resolve image source: direct upload or prepared job
+    file_content = None
+    original_filename = None
+
+    # 1) Direct file upload
+    if 'image' in request.files and getattr(request.files['image'], 'filename', ''):
+        f = request.files['image']
+        original_filename = f.filename
+        if not allowed_file(original_filename):
+            return jsonify({"error": "Unsupported file type"}), 400
+        file_content = f.read()
+
+    # 2) Prepared job reuse (supports page_index for multi-page jobs)
+    if file_content is None:
+        prepared_job = request.form.get('prepared_job') or request.args.get('prepared_job')
+        if prepared_job:
+            page_index = int(request.form.get('page_index', 0) or request.args.get('page_index', 0) or 0)
+            job_dir = JOBS_DIR / prepared_job
+            cand = None
+            if page_index > 0:
+                cand = job_dir / f"page_{page_index}.jpg"
+            if cand is None or not cand.exists():
+                cand = job_dir / "manuscript_page.jpg"
+            if cand.exists():
+                file_content = cand.read_bytes()
+                original_filename = cand.name
+
+    # 3) Base64 inline image
+    if file_content is None:
+        img_b64 = (request.form.get('image') or request.form.get('imageBase64') or
+                   request.form.get('image_base64') or request.form.get('dataUrl') or
+                   request.form.get('data_url'))
+        raw = _read_base64_image(img_b64)
+        if raw:
+            file_content = raw
+            original_filename = "inline-base64.png"
+
+    # 4) Last-resort: latest prepared page on disk
+    if file_content is None:
+        latest = _find_latest_prepared_page()
+        if latest:
+            file_content = latest.read_bytes()
+            original_filename = latest.name
+            log.warning(f"No image provided; using latest prepared page: {latest}")
+
+    if file_content is None:
+        return jsonify({"error": "No image provided. Send 'image' file, 'prepared_job' ID, or base64 data."}), 400
+
+    # Downscale if configured
+    file_content, _, _ = _downscale_image_if_needed(file_content)
 
     job_id = new_job_id()
     paths = job_paths(job_id)
 
     # save upload (also copy to job root so front-end can display it)
-    fname = secure_filename(file.filename)
-    ext = Path(fname).suffix.lower()
+    ext = Path(original_filename).suffix.lower() if original_filename else ".jpg"
     up_path = UPLOADS_DIR / f"{job_id}{ext}"
-    file.save(str(up_path))
+    up_path.write_bytes(file_content)
     page_copy = paths["root"] / f"page{ext}"
     shutil.copy(str(up_path), str(page_copy))
     page_rel = str(page_copy.relative_to(STATIC_DIR)).replace("\\", "/")
@@ -609,7 +855,7 @@ def analyze():
     if len(line_images) >= 2:
         try:
             advanced_changes = advanced_detector.detect_scribe_changes_advanced(
-                line_images, window_size=3, sensitivity=0.6
+                line_images, window_size=3, sensitivity=0.4 if mode == 'json' else 0.6
             )
             log.info(f"Advanced detector found {len(advanced_changes)} changes")
         except Exception as e:
@@ -775,6 +1021,11 @@ def static_files(filename):
     if not file_path.exists():
         abort(404)
     return send_file(str(file_path))
+
+@app.route("/prepare", methods=["OPTIONS"])
+@app.route("/analyze", methods=["OPTIONS"])
+def _preflight():
+    return ("", 204)
 
 if __name__ == "__main__":
     # Change default port if 5000 is busy

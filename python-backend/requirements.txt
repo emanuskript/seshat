@@ -17,5 +17,6 @@ ruptures==1.1.9
 # --- OCR wrapper (binary required at OS level if you use OCR paths) ---
 pytesseract==0.3.10
 
-# --- PDF export ---
+# --- PDF import/export ---
+PyMuPDF==1.24.3
 reportlab==4.1.0
