@@ -332,7 +332,7 @@ def generate_pdf_report_advanced(job_id: str, scribe_changes: List[Dict], page_i
         
         for i, change in enumerate(scribe_changes):
             change_text = f"""
-            <b>Change #{i+1} - Line {change['line_number']}</b><br/>
+            <b>Change #{i+1} - Line {change.get('line_number', i+1)}</b><br/>
             Confidence: {change.get('confidence', 0.0):.1f}%<br/>
             Explanation: {change.get('explanation','')}<br/>
             Statistical Distance: {change.get('distance', 0):.3f}<br/>
@@ -477,6 +477,36 @@ def generate_pdf_report(job_id: str, cards: List[Dict], page_image: str) -> str:
     rel = str(pdf_path.relative_to(STATIC_DIR)).replace("\\", "/")
     return f"/static/{rel}"
 
+def crop_manual_regions(image_path, regions, output_dir, src_w=0, src_h=0):
+    """Crop user-drawn regions from the image. Returns list of crop file paths."""
+    from PIL import Image, ImageOps
+    im = Image.open(image_path)
+    im = ImageOps.exif_transpose(im)
+    im = im.convert("RGB")
+    W, H = im.size
+
+    if src_w > 0 and src_h > 0:
+        sx, sy = W / src_w, H / src_h
+    else:
+        sx, sy = 1.0, 1.0
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for idx, r in enumerate(regions):
+        x = max(0, int(round(r.get('x', 0) * sx)))
+        y = max(0, int(round(r.get('y', 0) * sy)))
+        w = max(1, int(round(r.get('w', 1) * sx)))
+        h = max(1, int(round(r.get('h', 1) * sy)))
+        x2, y2 = min(W, x + w), min(H, y + h)
+        if x2 <= x or y2 <= y:
+            continue
+        crop = im.crop((x, y, x2, y2))
+        np_crop = cv2.cvtColor(np.array(crop), cv2.COLOR_RGB2BGR)
+        fpath = output_dir / f"manual_region_{idx}.png"
+        cv2.imwrite(str(fpath), np_crop)
+        paths.append(str(fpath))
+    return paths
+
 # ------------------ Routes ------------------
 @app.errorhandler(413)
 def too_large(_e):
@@ -514,24 +544,45 @@ def analyze():
     page_rel = str(page_copy.relative_to(STATIC_DIR)).replace("\\", "/")
     page_url = f"/static/{page_rel}"
 
-    # run line segmentation + crop
-    try:
-        lines = segment_lines(up_path)
-        line_rel_paths, polygons = crop_lines(up_path, lines, paths["lines"])
-        
-        # make overlay image
-        overlay_path = paths["root"] / "overlay.jpg"
-        draw_segmentation_overlay(up_path, lines, overlay_path)
-        overlay_rel = str(overlay_path.relative_to(STATIC_DIR)).replace("\\", "/")
-        overlay_url = f"/static/{overlay_rel}"
-    except Exception as e:
-        log.error(f"Segmentation failed: {e}")
-        return jsonify({"error": f"Segmentation failed: {str(e)}"}), 500
+    # Parse mode and manual regions
+    mode = request.form.get('mode', 'auto')
+    manual_regions = []
+    if mode in ('manual', 'json'):
+        import json as _json
+        regions_raw = request.form.get('regions', '[]')
+        try:
+            manual_regions = _json.loads(regions_raw) if regions_raw else []
+        except Exception:
+            manual_regions = []
+        src_w = int(request.form.get('regions_src_w', 0) or 0)
+        src_h = int(request.form.get('regions_src_h', 0) or 0)
+
+    if mode in ('manual', 'json') and manual_regions:
+        # Manual mode: crop user-drawn regions
+        line_abs_paths = crop_manual_regions(up_path, manual_regions, paths["lines"], src_w, src_h)
+        line_rel_paths = [str(Path(p).relative_to(STATIC_DIR)) for p in line_abs_paths]
+        overlay_url = None
+        lines = []
+        polygons = []
+    else:
+        # Auto mode: run line segmentation + crop
+        try:
+            lines = segment_lines(up_path)
+            line_rel_paths, polygons = crop_lines(up_path, lines, paths["lines"])
+
+            # make overlay image
+            overlay_path = paths["root"] / "overlay.jpg"
+            draw_segmentation_overlay(up_path, lines, overlay_path)
+            overlay_rel = str(overlay_path.relative_to(STATIC_DIR)).replace("\\", "/")
+            overlay_url = f"/static/{overlay_rel}"
+        except Exception as e:
+            log.error(f"Segmentation failed: {e}")
+            return jsonify({"error": f"Segmentation failed: {str(e)}"}), 500
+        line_abs_paths = [str(STATIC_DIR / rp) for rp in line_rel_paths]
 
     # detect scribe changes + build reasons
     processor = ImageProcessor()
     advanced_detector = AdvancedScribeDetector()
-    line_abs_paths = [str(STATIC_DIR / rp) for rp in line_rel_paths]
     
     # Load line images for advanced analysis
     line_images = []
