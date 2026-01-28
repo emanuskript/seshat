@@ -127,8 +127,8 @@
               :x2="angleGuideMousePos.x"
               :y2="angleGuideMousePos.y"
               stroke="#00D4FF"
-              stroke-width="1"
-              stroke-dasharray="5,5"
+              :stroke-width="1 * svgInverseScale"
+              :stroke-dasharray="(5*svgInverseScale)+','+(5*svgInverseScale)"
               opacity="0.7"
             />
             
@@ -141,7 +141,7 @@
                 :x2="measurePoints[0].x"
                 :y2="measurePoints[0].y"
                 stroke="#00D4FF"
-                stroke-width="2"
+                :stroke-width="2 * svgInverseScale"
                 opacity="0.8"
               />
               <!-- Dashed line to cursor -->
@@ -151,8 +151,8 @@
                 :x2="angleGuideMousePos.x"
                 :y2="angleGuideMousePos.y"
                 stroke="#00D4FF"
-                stroke-width="1"
-                stroke-dasharray="5,5"
+                :stroke-width="1 * svgInverseScale"
+                :stroke-dasharray="(5*svgInverseScale)+','+(5*svgInverseScale)"
                 opacity="0.7"
               />
               <!-- Arc preview -->
@@ -160,19 +160,20 @@
                 :d="getAngleArcPath(measurePoints[1], measurePoints[0], angleGuideMousePos)"
                 fill="none"
                 stroke="#00ff87"
-                stroke-width="2"
+                :stroke-width="2 * svgInverseScale"
                 opacity="0.8"
               />
               <!-- Live angle display -->
               <text
-                :x="measurePoints[1].x + 15"
-                :y="measurePoints[1].y - 15"
-                font-size="16"
+                :x="measurePoints[1].x + 15 * svgInverseScale"
+                :y="measurePoints[1].y - 15 * svgInverseScale"
+                :font-size="16 * svgInverseScale"
                 font-weight="bold"
                 fill="#00ff87"
                 stroke="#000"
-                stroke-width="0.5"
+                :stroke-width="0.5 * svgInverseScale"
                 paint-order="stroke"
+                pointer-events="none"
               >
                 {{ calculateLiveAngle(measurePoints[0], measurePoints[1], angleGuideMousePos) }}°
               </text>
@@ -208,15 +209,15 @@
             <circle
               :cx="point.x"
               :cy="point.y"
-              r="6"
+              :r="6 * svgInverseScale"
               fill="#FF4444"
               stroke="#FFF"
-              stroke-width="2"
+              :stroke-width="2 * svgInverseScale"
             />
             <text
               :x="point.x"
-              :y="point.y + 5"
-              font-size="10"
+              :y="point.y + 5 * svgInverseScale"
+              :font-size="10 * svgInverseScale"
               font-weight="bold"
               fill="#FFF"
               text-anchor="middle"
@@ -236,7 +237,7 @@
               :x2="annotation.points[1].x"
               :y2="annotation.points[1].y"
               stroke="blue"
-              stroke-width="2"
+              :stroke-width="2 * svgInverseScale"
             />
             <line
               v-if="annotation.type === 'measure' && annotation.points.length === 3"
@@ -245,18 +246,19 @@
               :x2="annotation.points[2].x"
               :y2="annotation.points[2].y"
               stroke="blue"
-              stroke-width="2"
+              :stroke-width="2 * svgInverseScale"
             />
             <text
               v-if="annotation.type === 'measure' && annotation.points.length === 3"
-              :x="annotation.points[1].x + 10"
-              :y="annotation.points[1].y - 10"
-              font-size="16"
+              :x="annotation.points[1].x + 10 * svgInverseScale"
+              :y="annotation.points[1].y - 10 * svgInverseScale"
+              :font-size="16 * svgInverseScale"
               font-weight="bold"
               fill="#00ff87"
               stroke="#000"
-              stroke-width="0.5"
+              :stroke-width="0.5 * svgInverseScale"
               paint-order="stroke"
+              pointer-events="none"
             >
               {{ annotation.angle }}°{{ annotation.label ? ' • ' + annotation.label : '' }}
             </text>
@@ -293,7 +295,6 @@
               top: (labelPositions['dynamic']?.y ?? 15) + 'px',
               position: 'absolute',
               cursor: draggedLabelIndex === 'dynamic' ? 'grabbing' : 'grab',
-              backgroundColor: 'white',
               zIndex: 400,
               userSelect: 'none',
               pointerEvents: 'auto',
@@ -331,7 +332,6 @@
               top: (labelPositions[measurement.id]?.y ?? 15) + 'px',
               position: 'absolute',
               cursor: draggedLabelIndex === measurement.id ? 'grabbing' : 'grab',
-              backgroundColor: 'white',
               zIndex: 400,
               userSelect: 'none',
               pointerEvents: 'auto',
@@ -1496,6 +1496,24 @@ export default {
       return '#3d8bfa'; // Fallback blue
     },
 
+    // Inverse scale so SVG cosmetic sizes (text, circles, strokes) stay
+    // constant on screen regardless of zoom level.
+    svgInverseScale() {
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+      if (!this.osdViewer || !this.osdReady) return 1;
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) return 1;
+      const tl = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+      );
+      const tr = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, 0))
+      );
+      const w = tr.x - tl.x;
+      return w > 0 ? this.osdImageWidth / w : 1;
+    },
+
     // Annotation overlay positioning - syncs with OpenSeadragon viewport
     annotationOverlayStyle() {
       // Force reactivity on viewport changes
@@ -2514,7 +2532,7 @@ export default {
     
     getAngleArcPath(vertex, pt1, pt2) {
       // Draw an arc from pt1 to pt2 around vertex
-      const radius = 30; // Arc radius in pixels
+      const radius = 30 * this.svgInverseScale; // Arc radius scaled to zoom
       
       // Calculate angles for both points relative to vertex
       const angle1 = Math.atan2(pt1.y - vertex.y, pt1.x - vertex.x);
@@ -5130,7 +5148,7 @@ cancelPenSelection() {
 }
 
 .annotation-overlay .drawing-layer * {
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .bank { width: 300px; min-width: 300px; border-left: 1px solid hsl(var(--border)); }
