@@ -297,9 +297,8 @@
               cursor: draggedLabelIndex === 'dynamic' ? 'grabbing' : 'grab',
               zIndex: 400,
               userSelect: 'none',
-              pointerEvents: 'auto',
+              pointerEvents: 'none',
             }"
-            @mousedown.stop="startLabelDrag('dynamic', $event)"
           >
             {{ currentSquare.label }}:
             {{
@@ -816,19 +815,25 @@
                   :x1="a.points[1].x" :y1="a.points[1].y"
                   :x2="a.points[2].x" :y2="a.points[2].y"
                   stroke="blue" stroke-width="2" />
+                <path v-if="a.points.length===3"
+                  :d="getAngleArcPath(a.points[1], a.points[0], a.points[2], 30)"
+                  fill="none" stroke="#00ff87" stroke-width="2" opacity="0.8" />
                 <text v-if="a.points.length===3"
                   :x="a.points[1].x + 10" :y="a.points[1].y - 10"
-                  :fill="svgLabelFill" font-size="12" font-weight="500">
+                  font-size="16" font-weight="bold"
+                  fill="#00ff87" stroke="#000" stroke-width="0.5"
+                  paint-order="stroke" pointer-events="none">
                   {{ a.angle }}°{{ a.label ? ' • '+a.label : '' }}
                 </text>
               </g>
 
               <!-- live angle points/lines -->
               <g v-if="croppedLive.measure && croppedLive.measure.points.length">
-                <circle
-                  v-for="(p, idx) in croppedLive.measure.points"
-                  :key="'livep-'+idx"
-                  :cx="p.x" :cy="p.y" r="5" fill="red" />
+                <g v-for="(p, idx) in croppedLive.measure.points" :key="'livep-'+idx">
+                  <circle :cx="p.x" :cy="p.y" r="6" fill="#FF4444" stroke="#FFF" stroke-width="2" />
+                  <text :x="p.x" :y="p.y + 5" font-size="10" font-weight="bold"
+                    fill="#FFF" text-anchor="middle">{{ idx + 1 }}</text>
+                </g>
                 <line v-if="croppedLive.measure.points.length>=2"
                   :x1="croppedLive.measure.points[0].x" :y1="croppedLive.measure.points[0].y"
                   :x2="croppedLive.measure.points[1].x" :y2="croppedLive.measure.points[1].y"
@@ -837,6 +842,9 @@
                   :x1="croppedLive.measure.points[1].x" :y1="croppedLive.measure.points[1].y"
                   :x2="croppedLive.measure.points[2].x" :y2="croppedLive.measure.points[2].y"
                   stroke="blue" stroke-width="2" />
+                <path v-if="croppedLive.measure.points.length===3"
+                  :d="getAngleArcPath(croppedLive.measure.points[1], croppedLive.measure.points[0], croppedLive.measure.points[2], 30)"
+                  fill="none" stroke="#00ff87" stroke-width="2" opacity="0.8" />
               </g>
             </svg>
           </div>
@@ -2530,9 +2538,9 @@ export default {
       return this.calculateAngle(pt1, vertex, mousePt);
     },
     
-    getAngleArcPath(vertex, pt1, pt2) {
+    getAngleArcPath(vertex, pt1, pt2, customRadius) {
       // Draw an arc from pt1 to pt2 around vertex
-      const radius = 30 * this.svgInverseScale; // Arc radius scaled to zoom
+      const radius = customRadius ?? 30 * this.svgInverseScale;
       
       // Calculate angles for both points relative to vertex
       const angle1 = Math.atan2(pt1.y - vertex.y, pt1.x - vertex.x);
