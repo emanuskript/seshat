@@ -684,7 +684,6 @@
               {{ croppedBankVisible ? 'Hide' : 'Show' }} Bank
             </Button>
             <Button variant="outline" size="sm" @click="saveCroppedImageAsPNG">Save PNG</Button>
-            <Button variant="outline" size="sm" @click="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</Button>
             <Button variant="outline" size="sm" @click="saveCroppedImage">Save w/ Annotations</Button>
             <Button size="sm" @click="closeCroppedPopup">Close</Button>
           </div>
@@ -1305,7 +1304,6 @@ export default {
       showStatsPanel: false,
 
       // Cropped popup state
-      croppedSvg: null,
       croppedImage: null,
       croppedStrokes: [],
       croppedMeasures: [],
@@ -4376,20 +4374,109 @@ cancelPenSelection() {
         setTimeout(() => { this.toolMessage = ''; }, 3000);
       }
     },
-    saveCroppedImageAsPNG() {
+    _downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = this.croppedImage;
-      link.download = "cropped-image.png";
+      link.href = url;
+      link.download = filename;
       link.click();
+      URL.revokeObjectURL(url);
     },
-    saveCroppedImageAsSVG() {
-      if (!this.croppedSvg) return;
-      const svgBlob = new Blob([this.croppedSvg], { type: "image/svg+xml" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(svgBlob);
-      link.download = "cropped-image.svg";
-      link.click();
-      URL.revokeObjectURL(link.href);
+    _drawCroppedToCanvas(withAnnotations) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const w = img.naturalWidth;
+          const h = img.naturalHeight;
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+
+          if (withAnnotations) {
+            const sx = w / (this.croppedBaseW || w);
+            const sy = h / (this.croppedBaseH || h);
+
+            for (const a of this.croppedAnnotations) {
+              if (a.type === "highlight") {
+                ctx.fillStyle = "rgba(255, 255, 0, 0.3)";
+                ctx.strokeStyle = "rgba(255, 255, 0, 0.7)";
+                ctx.lineWidth = 2 * sx;
+                ctx.fillRect(a.x * sx, a.y * sy, a.width * sx, a.height * sy);
+                ctx.strokeRect(a.x * sx, a.y * sy, a.width * sx, a.height * sy);
+              } else if (a.type === "underline") {
+                ctx.strokeStyle = a.color || "#3b82f6";
+                ctx.lineWidth = (a.height || 3) * sy;
+                ctx.beginPath();
+                ctx.moveTo(a.x * sx, (a.y + (a.height || 3) / 2) * sy);
+                ctx.lineTo((a.x + a.width) * sx, (a.y + (a.height || 3) / 2) * sy);
+                ctx.stroke();
+              } else if (a.type === "trace" && Array.isArray(a.points) && a.points.length > 1) {
+                ctx.strokeStyle = a.color || "#000";
+                ctx.lineWidth = (a.penWidth || 2) * sx;
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+                ctx.beginPath();
+                ctx.moveTo(a.points[0].x * sx, a.points[0].y * sy);
+                for (let i = 1; i < a.points.length; i++) {
+                  ctx.lineTo(a.points[i].x * sx, a.points[i].y * sy);
+                }
+                ctx.stroke();
+              } else if (a.type === "measure" && Array.isArray(a.points)) {
+                ctx.strokeStyle = "blue";
+                ctx.lineWidth = 2 * sx;
+                if (a.points.length >= 2) {
+                  ctx.beginPath();
+                  ctx.moveTo(a.points[0].x * sx, a.points[0].y * sy);
+                  ctx.lineTo(a.points[1].x * sx, a.points[1].y * sy);
+                  ctx.stroke();
+                }
+                if (a.points.length === 3) {
+                  ctx.beginPath();
+                  ctx.moveTo(a.points[1].x * sx, a.points[1].y * sy);
+                  ctx.lineTo(a.points[2].x * sx, a.points[2].y * sy);
+                  ctx.stroke();
+                  const lx = a.points[1].x * sx + 10 * sx;
+                  const ly = a.points[1].y * sy - 10 * sy;
+                  ctx.font = `bold ${16 * sx}px sans-serif`;
+                  ctx.fillStyle = "#00ff87";
+                  ctx.strokeStyle = "#000";
+                  ctx.lineWidth = 0.5 * sx;
+                  const label = `${a.angle}°${a.label ? ' • ' + a.label : ''}`;
+                  ctx.strokeText(label, lx, ly);
+                  ctx.fillText(label, lx, ly);
+                }
+              }
+            }
+          }
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error("Canvas toBlob failed"));
+          }, "image/png");
+        };
+        img.onerror = () => reject(new Error("Failed to load image"));
+        img.src = this.croppedImage;
+      });
+    },
+    async saveCroppedImageAsPNG() {
+      try {
+        const blob = await this._drawCroppedToCanvas(false);
+        this._downloadBlob(blob, "cropped-image.png");
+      } catch (e) {
+        console.warn("PNG save failed:", e);
+        window.open(this.croppedImage, "_blank");
+      }
+    },
+    async saveCroppedImage() {
+      try {
+        const blob = await this._drawCroppedToCanvas(true);
+        this._downloadBlob(blob, "cropped-annotated.png");
+      } catch (e) {
+        console.warn("Annotated save failed:", e);
+        this.showToolMessage("Failed to save annotated image.");
+      }
     },
     calculateCroppedAngleStatistics() {
       const angleValues = this.collectAngleValuesFromAnnotations(this.croppedAnnotations);
