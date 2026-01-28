@@ -248,20 +248,7 @@
               stroke="blue"
               :stroke-width="2 * svgInverseScale"
             />
-            <text
-              v-if="annotation.type === 'measure' && annotation.points.length === 3"
-              :x="annotation.points[1].x + 10 * svgInverseScale"
-              :y="annotation.points[1].y - 10 * svgInverseScale"
-              :font-size="16 * svgInverseScale"
-              font-weight="bold"
-              fill="#00ff87"
-              stroke="#000"
-              :stroke-width="0.5 * svgInverseScale"
-              paint-order="stroke"
-              pointer-events="none"
-            >
-              {{ annotation.angle }}°{{ annotation.label ? ' • ' + annotation.label : '' }}
-            </text>
+            <!-- angle label moved to HTML overlay for drag support -->
           </g>
           <!-- dynamic freehand trace -->
           <polyline
@@ -343,6 +330,36 @@
                 ? measurement.height
                 : measurement.width)
             }}
+          </div>
+        </div>
+
+        <!-- Draggable angle labels -->
+        <div
+          v-for="annotation in currentPageAngles.filter(a => a.type === 'measure' && a.points.length === 3)"
+          :key="'angle-label-' + annotation.id"
+          :style="{
+            left: `${(annotation.points[1].x / osdImageWidth) * 100}%`,
+            top: `${(annotation.points[1].y / osdImageHeight) * 100}%`,
+            position: 'absolute',
+            width: 0,
+            height: 0,
+            overflow: 'visible',
+          }"
+        >
+          <div
+            class="angle-label draggable-label"
+            :style="{
+              left: (angleLabelPositions[annotation.id]?.x ?? 10) + 'px',
+              top: (angleLabelPositions[annotation.id]?.y ?? -30) + 'px',
+              position: 'absolute',
+              cursor: draggedLabelIndex === annotation.id ? 'grabbing' : 'grab',
+              zIndex: 400,
+              userSelect: 'none',
+              pointerEvents: 'auto',
+            }"
+            @mousedown.stop="startAngleLabelDrag(annotation.id, $event)"
+          >
+            {{ annotation.angle }}°{{ annotation.label ? ' • ' + annotation.label : '' }}
           </div>
         </div>
 
@@ -1273,6 +1290,7 @@ export default {
         externalMargin: {},
       },
       labelPositions: {}, // for length labels drag
+      angleLabelPositions: {}, // for angle labels drag
       draggedLabelIndex: null,
       labelDragOffset: { x: 0, y: 0 },
 
@@ -1996,6 +2014,11 @@ export default {
           measurement = this.currentPageLengthMeasurements.find((m) => m.id === this.draggedLabelIndex);
         }
         if (measurement) this.dragLabel(this.draggedLabelIndex, e);
+      }
+    };
+    this._onAngleLabelDragMove = (e) => {
+      if (this.draggedLabelIndex !== null) {
+        this.dragAngleLabel(this.draggedLabelIndex, e);
       }
     };
     
@@ -3625,6 +3648,30 @@ cancelPenSelection() {
       window.removeEventListener("mouseup", this.stopLabelDrag);
     },
 
+    /* ---------- Angle label drag ---------- */
+    startAngleLabelDrag(id, event) {
+      this.draggedLabelIndex = id;
+      const el = event.currentTarget;
+      const rect = el.getBoundingClientRect();
+      const parentRect = el.parentElement.getBoundingClientRect();
+      const currentX = rect.left - parentRect.left;
+      const currentY = rect.top - parentRect.top;
+      this.labelDragOffset = { x: event.clientX - currentX, y: event.clientY - currentY };
+      window.addEventListener("mousemove", this._onAngleLabelDragMove);
+      window.addEventListener("mouseup", this.stopAngleLabelDrag);
+    },
+    dragAngleLabel(id, event) {
+      if (this.draggedLabelIndex !== id) return;
+      const x = event.clientX - this.labelDragOffset.x;
+      const y = event.clientY - this.labelDragOffset.y;
+      this.angleLabelPositions[id] = { x, y };
+    },
+    stopAngleLabelDrag() {
+      this.draggedLabelIndex = null;
+      window.removeEventListener("mousemove", this._onAngleLabelDragMove);
+      window.removeEventListener("mouseup", this.stopAngleLabelDrag);
+    },
+
     /* ---------- Paging ---------- */
     nextPage() {
       if (this.currentPage < this.totalPages - 1) {
@@ -4073,6 +4120,12 @@ cancelPenSelection() {
               if (Array.isArray(a.points)) {
                 a.points = a.points.map((p) => ({ x: (p.x || 0) + dx, y: (p.y || 0) + dy }));
               }
+              if (a.id && this.angleLabelPositions[a.id]) {
+                this.angleLabelPositions[a.id] = {
+                  x: (this.angleLabelPositions[a.id].x || 0) + dx,
+                  y: (this.angleLabelPositions[a.id].y || 0) + dy,
+                };
+              }
             }
           }
           if (kind === "c") {
@@ -4143,7 +4196,11 @@ cancelPenSelection() {
         }
         const sorted = [...annIdxs].sort((a,b)=>b-a);
         sorted.forEach((i) => {
-          if (this.annotationsByPage[page][i] != null) {
+          const ann = this.annotationsByPage[page][i];
+          if (ann != null) {
+            if (ann.id && this.angleLabelPositions[ann.id]) {
+              delete this.angleLabelPositions[ann.id];
+            }
             this.annotationsByPage[page].splice(i, 1);
           }
         });
@@ -5280,6 +5337,13 @@ cancelPenSelection() {
 }
 .draggable-label { cursor: grab; user-select: none; }
 .draggable-label:active { cursor: grabbing; }
+.angle-label {
+  position: absolute; left: 15px; top: 15px;
+  color: #00ff87; font-size: 14px; font-weight: bold;
+  background-color: rgba(0, 0, 0, 0.6); padding: 2px 6px; border-radius: 3px;
+  text-shadow: 0 0 2px #000;
+  white-space: nowrap;
+}
 
 .highlight-rectangle { position: absolute; border: 2px solid rgba(255, 255, 0, 0.7); background-color: rgba(255, 255, 0, 0.3); pointer-events: none; }
 
