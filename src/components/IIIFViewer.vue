@@ -4342,7 +4342,7 @@ cancelPenSelection() {
       this.showAngleStatistics = true;
     },
     handleCropDialogChange(open) {
-      if (!open) {
+      if (!open && !this.showAngleStatistics) {
         this.closeCroppedPopup();
       }
     },
