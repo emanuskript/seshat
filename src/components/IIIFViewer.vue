@@ -112,15 +112,13 @@
           :viewBox="`0 0 ${osdImageWidth || baseFitWidth} ${osdImageHeight || baseFitHeight}`"
           preserveAspectRatio="xMidYMid meet"
         >
-          <!-- existing traces -->
-          <polyline
+          <!-- existing traces (calligraphic paths with variable width) -->
+          <path
             v-for="(stroke, index) in currentPageStrokes"
             :key="'stroke-' + index"
-            :points="formatPoints(stroke.points)"
-            :stroke="stroke.color"
-            :stroke-width="stroke.penWidth"
-            :stroke-height="stroke.penHeight"
-            fill="none"
+            :d="generateCalligraphicPath(stroke.points, stroke.penWidth, stroke.penHeight, stroke.nibAngle)"
+            :fill="stroke.color"
+            stroke="none"
           />
           <!-- Angle Construction Guides -->
           <g v-if="measureModeActive && angleGuideMousePos">
@@ -255,14 +253,12 @@
             />
             <!-- angle label moved to HTML overlay for drag support -->
           </g>
-          <!-- dynamic freehand trace -->
-          <polyline
-            v-if="currentStroke"
-            :points="formatPoints(currentStroke.points)"
-            :stroke="currentStroke.color"
-            :stroke-width="currentStroke.penWidth"
-            :stroke-height="currentStroke.penHeight"
-            fill="none"
+          <!-- dynamic freehand trace (calligraphic path) -->
+          <path
+            v-if="currentStroke && currentStroke.points.length > 1"
+            :d="generateCalligraphicPath(currentStroke.points, currentStroke.penWidth, currentStroke.penHeight, currentStroke.nibAngle)"
+            :fill="currentStroke.color"
+            stroke="none"
           />
         </svg>
 
@@ -772,22 +768,20 @@
             <!-- SVG layer (traces & angles) -->
             <svg class="drawing-layer" :width="croppedBaseW" :height="croppedBaseH"
                  style="position:absolute;inset:0;z-index:2;">
-              <!-- traces -->
-              <polyline
+              <!-- traces (calligraphic paths) -->
+              <path
                 v-for="(a, i) in croppedTraces"
                 :key="'ct-'+i"
-                :points="formatPoints(a.points)"
-                :stroke="a.color"
-                :stroke-width="a.penWidth || 2"
-                fill="none"
+                :d="generateCalligraphicPath(a.points, a.penWidth, a.penHeight, a.nibAngle)"
+                :fill="a.color"
+                stroke="none"
               />
-              <!-- live stroke -->
-              <polyline
-                v-if="croppedLive.trace"
-                :points="formatPoints(croppedLive.trace.points)"
-                :stroke="croppedLive.trace.color"
-                :stroke-width="croppedLive.trace.penWidth || 2"
-                fill="none"
+              <!-- live stroke (calligraphic path) -->
+              <path
+                v-if="croppedLive.trace && croppedLive.trace.points.length > 1"
+                :d="generateCalligraphicPath(croppedLive.trace.points, croppedLive.trace.penWidth, croppedLive.trace.penHeight, croppedLive.trace.nibAngle)"
+                :fill="croppedLive.trace.color"
+                stroke="none"
               />
 
               <!-- angles -->
@@ -960,6 +954,7 @@ import ViewerRightPanel from "@/components/viewer/ViewerRightPanel.vue";
 import OpenSeadragon from "openseadragon";
 import "openseadragon-filtering";
 import { extractServiceId, fetchImageInfo, buildTileSource } from "@/services/iiifService";
+import { generateCalligraphicPath, generateCalligraphicPolygon } from "@/utils/math";
 import {
   MessageSquare,
   SlidersHorizontal,
@@ -1165,9 +1160,9 @@ export default {
       showTracePopup: false,
       penAngles: [0, 15, 30, 45, 60, 75],
       penSizes: [
-        { key: 'thin',   label: 'Thin'   , w: 2, h: 3 },
-        { key: 'medium', label: 'Medium' , w: 3, h: 5 },
-        { key: 'broad',  label: 'Broad'  , w: 5, h: 8 },
+        { key: 'thin',   label: 'Thin'   , w: 2, h: 6 },
+        { key: 'medium', label: 'Medium' , w: 3, h: 12 },
+        { key: 'broad',  label: 'Broad'  , w: 5, h: 20 },
       ],
       selectedPenAngle: 45,
       selectedPenSize: 'medium',
@@ -2055,6 +2050,8 @@ export default {
   },
 
   methods: {
+    // Make calligraphic path generator available in template
+    generateCalligraphicPath,
     openScribeDetection() {
       this.$refs.scribeDetectionPopup.openPopup();
     },
@@ -4464,16 +4461,25 @@ cancelPenSelection() {
                 ctx.lineTo((a.x + a.width) * sx, (a.y + (a.height || 3) / 2) * sy);
                 ctx.stroke();
               } else if (a.type === "trace" && Array.isArray(a.points) && a.points.length > 1) {
-                ctx.strokeStyle = a.color || "#000";
-                ctx.lineWidth = (a.penWidth || 2) * sx;
-                ctx.lineCap = "round";
-                ctx.lineJoin = "round";
-                ctx.beginPath();
-                ctx.moveTo(a.points[0].x * sx, a.points[0].y * sy);
-                for (let i = 1; i < a.points.length; i++) {
-                  ctx.lineTo(a.points[i].x * sx, a.points[i].y * sy);
+                // Use calligraphic polygon for variable-width strokes
+                const polygon = generateCalligraphicPolygon(
+                  a.points,
+                  a.penWidth || 2,
+                  a.penHeight || a.penWidth || 2,
+                  a.nibAngle || 45,
+                  sx,
+                  sy
+                );
+                if (polygon.length > 0) {
+                  ctx.fillStyle = a.color || "#000";
+                  ctx.beginPath();
+                  ctx.moveTo(polygon[0].x, polygon[0].y);
+                  for (let i = 1; i < polygon.length; i++) {
+                    ctx.lineTo(polygon[i].x, polygon[i].y);
+                  }
+                  ctx.closePath();
+                  ctx.fill();
                 }
-                ctx.stroke();
               } else if (a.type === "measure" && Array.isArray(a.points)) {
                 ctx.strokeStyle = "blue";
                 ctx.lineWidth = 2 * sx;
@@ -4778,7 +4784,9 @@ cancelPenSelection() {
       if (this.traceModeActive) {
         this.croppedLive.trace = {
           color: this.generateRandomColor(),
-          penWidth: 2,
+          penWidth: this.penWidth,
+          penHeight: this.penHeight,
+          nibAngle: this.currentNibAngle,
           points: [{ x, y }]
         };
         return;
@@ -4939,9 +4947,11 @@ cancelPenSelection() {
           type: 'trace',
           points: [...this.croppedLive.trace.points],
           color: this.croppedLive.trace.color,
-          penWidth: this.croppedLive.trace.penWidth
+          penWidth: this.croppedLive.trace.penWidth,
+          penHeight: this.croppedLive.trace.penHeight,
+          nibAngle: this.croppedLive.trace.nibAngle
         });
-        
+
         this.croppedLive.trace = null;
         return;
       }
