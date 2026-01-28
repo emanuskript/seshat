@@ -229,7 +229,7 @@
             <div class="pdf-right">
               <!-- Results content -->
               <div class="scribe-results" data-scribe-tour="results-accordion">
-                <div v-if="results.scribe_changes && results.scribe_changes.length > 0" class="detected-scribes">
+                <div v-if="results.scribe_changes && results.scribe_changes.length > 1" class="detected-scribes">
                   <h5>Detected Scribes</h5>
                   <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item-card">
                     <div class="scribe-item-header">
@@ -287,8 +287,27 @@
                     <div class="single-scribe-icon">
                       <Icon name="user-check" :size="28" />
                     </div>
-                    <h6>Single Scribal Hand Detected</h6>
-                    <p>The entire selection appears to be written by one consistent hand.</p>
+                    <h6>Single Scribal Hand Detected — {{ results.scribe_changes[0].scribe }}</h6>
+                    <span v-if="results.scribe_changes[0].start_line && results.scribe_changes[0].end_line" class="scribe-badge" style="margin-bottom: 8px;">
+                      Lines {{ results.scribe_changes[0].start_line }}-{{ results.scribe_changes[0].end_line }}
+                    </span>
+                    <p>No handwriting changes were detected across the selection.</p>
+                    <p v-if="singleScribeProfile" class="scribe-profile">Handwriting profile: {{ singleScribeProfile }}</p>
+
+                    <button v-if="results.scribe_changes[0].features && Object.keys(results.scribe_changes[0].features).filter(k => !k.startsWith('_')).length > 0"
+                            class="feature-toggle"
+                            @click="toggleFeatures(0)">
+                      <Icon :name="expandedFeatures[0] ? 'chevron-down' : 'chevron-right'" :size="14" />
+                      Features ({{ Object.keys(results.scribe_changes[0].features).filter(k => !k.startsWith('_')).length }})
+                    </button>
+                    <div v-if="expandedFeatures[0] && results.scribe_changes[0].features" class="feature-grid">
+                      <div v-for="(value, key) in results.scribe_changes[0].features" :key="key"
+                           v-show="!key.startsWith('_')"
+                           class="feature-cell">
+                        <span class="feature-cell-label">{{ formatFeatureLabel(key) }}</span>
+                        <span class="feature-cell-value">{{ formatFeatureValue(key, value) }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -589,6 +608,24 @@ export default {
     },
   },
   computed: {
+    singleScribeProfile() {
+      if (!this.results?.scribe_changes || this.results.scribe_changes.length !== 1) return null
+      const raw = this.results.scribe_changes[0].features
+      if (!raw || typeof raw !== 'object') return null
+      // Backend returns aggregated features as {mean, std, min, max} objects.
+      // Flatten to plain values (use mean) so buildFeatureCues can describe them.
+      const flat = {}
+      for (const [key, val] of Object.entries(raw)) {
+        if (key.startsWith('_')) continue
+        if (val && typeof val === 'object' && 'mean' in val) {
+          flat[key] = val.mean
+        } else {
+          flat[key] = val
+        }
+      }
+      const cues = this.buildFeatureCues(flat)
+      return cues.length ? cues.slice(0, 3).join(', ') + '.' : null
+    },
     hasResults() {
       return !!(
         this.results &&
