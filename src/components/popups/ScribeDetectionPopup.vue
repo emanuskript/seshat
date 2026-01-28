@@ -1043,19 +1043,19 @@ export default {
       }
 
       // Validate minimum lines for manual mode
-      if (this.mode === 'manual' && this.regions.length < 3) {
+      if (this.mode === 'manual' && this.regions.length < 2) {
         this.showError(
           'Insufficient Selection',
-          `You have selected ${this.regions.length} region${this.regions.length === 1 ? '' : 's'}. Please select at least 3 text lines for reliable scribe detection. Go back to Step 1 to draw more boxes around individual lines of text.`
+          `You have selected ${this.regions.length} region. Please select at least 2 text lines for reliable scribe detection. Go back to Step 1 to draw more boxes around individual lines of text.`
         )
         return
       }
 
       // Validate minimum lines for json mode
-      if (this.mode === 'json' && this.regions.length < 3) {
+      if (this.mode === 'json' && this.regions.length < 2) {
         this.showError(
           'Insufficient Data',
-          `The JSON file contains only ${this.regions.length} annotation${this.regions.length === 1 ? '' : 's'}. Please upload a file with at least 3 text line annotations for reliable scribe detection.`
+          `The JSON file contains only ${this.regions.length} annotation. Please upload a file with at least 2 text line annotations for reliable scribe detection.`
         )
         return
       }
