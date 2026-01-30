@@ -3330,6 +3330,18 @@ cancelPenSelection() {
       // Initialize follow mode
       this.initFollow();
       this.setupFollowSyncHandlers();
+
+      // Subscribe to remote annotation changes (same as handleJoinSession)
+      this.annotationSyncUnsubscribe = this.onSessionMessage('annotation:sync', (payload) => {
+        this.handleRemoteAnnotationSync(payload);
+      });
+
+      // Subscribe to version restored events (from other participants)
+      this.versionRestoredUnsubscribe = this.onSessionMessage('version:restored', (payload) => {
+        if (payload.annotations) {
+          this.loadAnnotationsFromSession(payload.annotations);
+        }
+      });
     },
 
     applySessionComments(sessionComments) {
@@ -3513,6 +3525,11 @@ cancelPenSelection() {
             }
           }
           break;
+      }
+
+      // Re-render comment overlays if a comment was changed on the current page
+      if (annotationType === 'comments' && pageIndex === this.currentPage) {
+        this.$nextTick(() => this.renderCommentOverlays());
       }
     },
 
