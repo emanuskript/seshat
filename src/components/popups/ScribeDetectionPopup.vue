@@ -1810,7 +1810,16 @@ export default {
         }
       }
 
-      return { ...data, scribe_changes: normalized, statistics }
+      // Map line_segments to line_screenshots format for display
+      // Backend returns: line_segments[].image, frontend expects: line_screenshots[].screenshot
+      const lineScreenshots = Array.isArray(data?.line_segments)
+        ? data.line_segments.map((seg, idx) => ({
+            line_number: idx + 1,
+            screenshot: seg.image ? `${this.backendBase}${seg.image}` : null
+          })).filter(ls => ls.screenshot)
+        : []
+
+      return { ...data, scribe_changes: normalized, statistics, line_screenshots: lineScreenshots }
     },
 
     // ---------- Overlay ----------
