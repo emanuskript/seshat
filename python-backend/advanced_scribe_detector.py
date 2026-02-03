@@ -65,11 +65,27 @@ class AdvancedScribeDetector:
             
         except Exception as e:
             log.warning(f"Feature extraction failed: {e}")
-            return self._default_features()
-            
+            return self._default_features(is_fallback=True)
+
+        # Sanitize NaN/Inf values and mark as valid extraction
+        features = self._sanitize_features(features)
+        features['_is_fallback'] = False
         return features
+
+    def _sanitize_features(self, features: Dict[str, float]) -> Dict[str, float]:
+        """Sanitize NaN and Inf values in features"""
+        sanitized = {}
+        for key, value in features.items():
+            if isinstance(value, float):
+                if np.isnan(value) or np.isinf(value):
+                    sanitized[key] = 0.0
+                else:
+                    sanitized[key] = value
+            else:
+                sanitized[key] = value
+        return sanitized
     
-    def _default_features(self) -> Dict[str, float]:
+    def _default_features(self, is_fallback: bool = True) -> Dict[str, float]:
         """Return default features when extraction fails"""
         return {
             'avg_stroke_width': 2.0,
@@ -84,7 +100,8 @@ class AdvancedScribeDetector:
             'pressure_variance': 0.2,
             'letter_height_avg': 15.0,
             'letter_height_variance': 2.0,
-            'baseline_straightness': 0.9
+            'baseline_straightness': 0.9,
+            '_is_fallback': is_fallback  # Flag to indicate extraction failure
         }
     
     def _analyze_stroke_width(self, gray: np.ndarray) -> Dict[str, float]:

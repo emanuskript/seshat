@@ -60,7 +60,7 @@ const emit = defineEmits(['update:modelValue', 'valueCommit'])
     @value-commit="emit('valueCommit', $event)"
   >
     <SliderTrack
-      class="relative h-2 w-full grow overflow-hidden rounded-full bg-secondary"
+      class="relative h-2 w-full grow overflow-hidden rounded-full bg-border"
     >
       <SliderRange class="absolute h-full bg-primary" />
     </SliderTrack>

@@ -1,192 +1,98 @@
 <!-- /src/components/IIIFViewer.vue -->
-<!-- Main IIIF viewer component -->
+<!-- Main IIIF viewer component with CSS Grid layout -->
 <template>
-  <div class="viewer-container">
+  <div
+    class="grid h-screen w-screen bg-background overflow-hidden"
+    :class="{
+      'grid-cols-[0_1fr_280px]': leftPanelCollapsed && !rightPanelCollapsed,
+      'grid-cols-[48px_1fr_0]': !leftPanelCollapsed && rightPanelCollapsed,
+      'grid-cols-[0_1fr_0]': leftPanelCollapsed && rightPanelCollapsed,
+      'grid-cols-[48px_1fr_280px]': !leftPanelCollapsed && !rightPanelCollapsed
+    }"
+    style="grid-template-rows: 48px 1fr 40px; grid-template-areas: 'topbar topbar topbar' 'left canvas right' 'bottom bottom bottom';"
+  >
     <!-- Top Bar -->
-    <div class="top-bar">
-      <img
-        src="@/assets/logo.png"
-        alt="Logo"
-        class="logo"
-        @click="goHome"
+    <header style="grid-area: topbar;" class="relative z-50">
+      <ViewerTopBar
+        :document-name="documentName"
+        :left-collapsed="leftPanelCollapsed"
+        :right-collapsed="rightPanelCollapsed"
+        :session-active="sessionActive"
+        @toggle-left="leftPanelCollapsed = !leftPanelCollapsed"
+        @toggle-right="rightPanelCollapsed = !rightPanelCollapsed"
+        @save="saveAnnotations"
+        @go-home="goHome"
+        @clear-highlights="clearHighlights"
+        @clear-underlines="clearUnderlines"
+        @clear-comments="clearComments"
+        @clear-traces="clearTraces"
+        @clear-angles="clearAngles"
+        @clear-horizontal="clearHorizontalLengths"
+        @clear-vertical="clearVerticalLengths"
+        @clear-all="showClearConfirmation = true"
+        @start-session="showShareDialog = true"
+        @open-share="showShareDialog = true"
+        @open-history="showVersionHistory = true"
+        @export-json="handleExportJson"
+        @export-tei="handleExportTei"
+        @export-text="handleExportPlainText"
+        @export-w3c="handleExportWebAnnotation"
+        @import-json="showImportDialog = true"
+        @add-images="$refs.addImagesInput.click()"
       />
+    </header>
 
-      <TooltipProvider :delay-duration="300">
-        <div class="toolbar">
-          <!-- Comment -->
-          <div class="toolbar-item" @click="selectTool('comment')">
-            <MessageSquare :size="22" />
-            <span>Comment</span>
-          </div>
+    <!-- Left Toolbar -->
+    <aside v-show="!leftPanelCollapsed" style="grid-area: left;" data-tour="toolbar">
+      <ViewerToolbar
+        :active-tool="currentActiveTool"
+        :has-active-filters="hasActiveFilters"
+        :is-operation-in-progress="isOperationInProgress"
+        @select-tool="selectTool"
+        @toggle-adjustments="toggleAdjustmentsPanel"
+        @open-horizontal="openHorizontalPopup"
+        @open-vertical="openVerticalPopup"
+        @open-statistics="showStatsPanel = true"
+        @start-crop="startCrop"
+      />
+    </aside>
 
-          <!-- Highlight -->
-          <div class="toolbar-item" @click="selectTool('highlight')">
-            <Highlighter :size="22" />
-            <span>Highlight</span>
-          </div>
-
-          <!-- Underline -->
-          <div class="toolbar-item" @click="selectTool('underline')">
-            <Underline :size="22" />
-            <span>Underline</span>
-          </div>
-
-          <!-- Trace -->
-          <div class="toolbar-item" @click="selectTool('trace')">
-            <Pencil :size="22" />
-            <span>Trace</span>
-          </div>
-
-          <!-- Crop -->
-          <div class="toolbar-item" @click="startCrop">
-            <Scissors :size="22" />
-            <span>Crop</span>
-          </div>
-
-          <!-- Image Adjustments -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" :class="{ active: showAdjustmentsPanel || hasActiveFilters }" @click="toggleAdjustmentsPanel">
-                <SlidersHorizontal :size="22" />
-                <span>Adjust</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Adjust Image (Brightness, Contrast, etc.)</TooltipContent>
-          </Tooltip>
-
-          <!-- divider -->
-          <div class="toolbar-divider" aria-hidden="true"></div>
-
-          <!-- Measure Angle -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="selectTool('measure')">
-                <ChevronUp :size="22" />
-                <span>Angle</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Measure Angle</TooltipContent>
-          </Tooltip>
-
-          <!-- Horizontal Bands -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="openHorizontalPopup">
-                <Ruler :size="22" />
-                <span>Horizontal</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Measure Horizontal Bands</TooltipContent>
-          </Tooltip>
-
-          <!-- Vertical Bands -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="openVerticalPopup">
-                <RulerDimensionLine :size="22" />
-                <span>Vertical</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Measure Vertical Bands</TooltipContent>
-          </Tooltip>
-
-          <!-- Generate Statistics -->
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <div class="toolbar-item" @click="showStatsPanel = !showStatsPanel">
-                <Calculator :size="22" />
-                <span>Statistics</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Generate Statistics</TooltipContent>
-          </Tooltip>
-
-        <!-- divider -->
-        <div class="toolbar-divider" aria-hidden="true"></div>
-
-        <!-- Save -->
-        <div class="toolbar-item" @click="saveAnnotations">
-          <Save :size="22" />
-          <span>Save</span>
-        </div>
-
-        <!-- Clear -->
-        <div class="toolbar-item" @click="toggleClearDropdown">
-          <Trash2 :size="22" />
-          <span>Clear</span>
-          <div v-if="showClearDropdown" class="clear-dropdown">
-            <div @click.stop="clearHighlights">Clear Highlights</div>
-            <div @click.stop="clearUnderlines">Clear Underlines</div>
-            <div @click.stop="clearComments">Clear Comments</div>
-            <div @click.stop="clearTraces">Clear Traces</div>
-            <div @click.stop="clearAngles">Clear Angles</div>
-            <div @click.stop="clearHorizontalLengths">Clear Horizontal Lengths</div>
-            <div @click.stop="clearVerticalLengths">Clear Vertical Lengths</div>
-            <div @click.stop="clearAll">Clear All</div>
-          </div>
-        </div>
-
-        <!-- Theme Toggle -->
-        <div class="toolbar-item theme-container" @click.stop="toggleThemeDropdown">
-          <Palette :size="22" />
-          <span>Theme</span>
-          <div v-if="showThemeDropdown" class="theme-dropdown">
-            <div @click.stop="setThemeAndClose('light')" :class="{ active: currentTheme === 'light' }">
-              <Sun :size="16" /> Light
-            </div>
-            <div @click.stop="setThemeAndClose('dark')" :class="{ active: currentTheme === 'dark' }">
-              <Moon :size="16" /> Dark
-            </div>
-            <div @click.stop="setThemeAndClose('high-contrast')" :class="{ active: currentTheme === 'high-contrast' }">
-              <Contrast :size="16" /> High Contrast
-            </div>
-          </div>
-        </div>
+    <!-- Main Canvas Area -->
+    <main style="grid-area: canvas;" class="relative overflow-hidden bg-muted" data-tour="canvas">
+      <!-- Tool message -->
+      <div
+        v-if="toolMessage"
+        class="absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-card border border-border rounded-md shadow-lg text-sm"
+      >
+        {{ toolMessage }}
       </div>
-      </TooltipProvider>
-    </div>
-    <!-- Page Navigation (now right under the toolbar, at the top) -->
-    <NavigationBar
-      :currentPage="currentPage"
-      :totalPages="totalPages"
-      :pageInput="pageInput"
-      :imageReady="imageReady"
-      :zoomLevel="zoomLevel"
-      :minZoom="minZoom"
-      @prev="prevPage"
-      @next="nextPage"
-      @go-to="goToPage"
-      @zoom-in="zoomIn"
-      @zoom-out="zoomOut"
-      @start-hold-reset="startHoldReset"
-      @cancel-hold-reset="cancelHoldReset"
-    />
 
-    <!-- Tool tip message -->
-    <div class="tool-message" v-if="toolMessage">{{ toolMessage }}</div>
+      <!-- Hidden file input for adding more pages -->
+      <input ref="addImagesInput" type="file" accept="image/*,application/pdf"
+             multiple style="display:none" @change="handleAddImages" />
 
-    <!-- Workspace: stage + annotations bank -->
-    <div class="workspace">
       <!-- Image Stage -->
       <div
-        class="pdf-viewer stage"
+        class="absolute inset-0"
         ref="viewer"
         :style="{ cursor: stageCursor }"
         @selectstart.prevent.stop
         @dragstart.prevent.stop
         @contextmenu.prevent.stop
+        @mousemove="trackCursorForCollaboration($event)"
         ondragstart="return false"
         onselectstart="return false"
         oncontextmenu="return false"
         unselectable="on"
       >
         <!-- OpenSeadragon Container -->
-        <div ref="osdContainer" class="osd-container"></div>
+        <div ref="osdContainer" class="absolute inset-0"></div>
 
         <!-- Event Intercept Layer - captures events when tools are active -->
         <div
           v-show="isAnyToolActive"
-          class="event-intercept-layer"
+          class="absolute inset-0 z-10"
+          :class="{ 'cursor-crosshair': isAnyToolActive }"
           @mousedown="startTrace($event)"
           @mousemove="trace($event)"
           @mouseup="endTrace($event)"
@@ -206,15 +112,13 @@
           :viewBox="`0 0 ${osdImageWidth || baseFitWidth} ${osdImageHeight || baseFitHeight}`"
           preserveAspectRatio="xMidYMid meet"
         >
-          <!-- existing traces -->
-          <polyline
+          <!-- existing traces (calligraphic paths with variable width) -->
+          <path
             v-for="(stroke, index) in currentPageStrokes"
             :key="'stroke-' + index"
-            :points="formatPoints(stroke.points)"
-            :stroke="stroke.color"
-            :stroke-width="stroke.penWidth"
-            :stroke-height="stroke.penHeight"
-            fill="none"
+            :d="generateCalligraphicPath(stroke.points, stroke.penWidth, stroke.penHeight, stroke.nibAngle)"
+            :fill="stroke.color"
+            stroke="none"
           />
           <!-- Angle Construction Guides -->
           <g v-if="measureModeActive && angleGuideMousePos">
@@ -226,8 +130,8 @@
               :x2="angleGuideMousePos.x"
               :y2="angleGuideMousePos.y"
               stroke="#00D4FF"
-              stroke-width="1"
-              stroke-dasharray="5,5"
+              :stroke-width="1 * svgInverseScale"
+              :stroke-dasharray="(5*svgInverseScale)+','+(5*svgInverseScale)"
               opacity="0.7"
             />
             
@@ -240,7 +144,7 @@
                 :x2="measurePoints[0].x"
                 :y2="measurePoints[0].y"
                 stroke="#00D4FF"
-                stroke-width="2"
+                :stroke-width="2 * svgInverseScale"
                 opacity="0.8"
               />
               <!-- Dashed line to cursor -->
@@ -250,8 +154,8 @@
                 :x2="angleGuideMousePos.x"
                 :y2="angleGuideMousePos.y"
                 stroke="#00D4FF"
-                stroke-width="1"
-                stroke-dasharray="5,5"
+                :stroke-width="1 * svgInverseScale"
+                :stroke-dasharray="(5*svgInverseScale)+','+(5*svgInverseScale)"
                 opacity="0.7"
               />
               <!-- Arc preview -->
@@ -259,19 +163,20 @@
                 :d="getAngleArcPath(measurePoints[1], measurePoints[0], angleGuideMousePos)"
                 fill="none"
                 stroke="#00ff87"
-                stroke-width="2"
+                :stroke-width="2 * svgInverseScale"
                 opacity="0.8"
               />
               <!-- Live angle display -->
               <text
-                :x="measurePoints[1].x + 15"
-                :y="measurePoints[1].y - 15"
-                font-size="16"
+                :x="measurePoints[1].x + 15 * svgInverseScale"
+                :y="measurePoints[1].y - 15 * svgInverseScale"
+                :font-size="16 * svgInverseScale"
                 font-weight="bold"
                 fill="#00ff87"
                 stroke="#000"
-                stroke-width="0.5"
+                :stroke-width="0.5 * svgInverseScale"
                 paint-order="stroke"
+                pointer-events="none"
               >
                 {{ calculateLiveAngle(measurePoints[0], measurePoints[1], angleGuideMousePos) }}°
               </text>
@@ -307,15 +212,15 @@
             <circle
               :cx="point.x"
               :cy="point.y"
-              r="6"
+              :r="6 * svgInverseScale"
               fill="#FF4444"
               stroke="#FFF"
-              stroke-width="2"
+              :stroke-width="2 * svgInverseScale"
             />
             <text
               :x="point.x"
-              :y="point.y + 5"
-              font-size="10"
+              :y="point.y + 5 * svgInverseScale"
+              :font-size="10 * svgInverseScale"
               font-weight="bold"
               fill="#FFF"
               text-anchor="middle"
@@ -335,7 +240,7 @@
               :x2="annotation.points[1].x"
               :y2="annotation.points[1].y"
               stroke="blue"
-              stroke-width="2"
+              :stroke-width="2 * svgInverseScale"
             />
             <line
               v-if="annotation.type === 'measure' && annotation.points.length === 3"
@@ -344,30 +249,16 @@
               :x2="annotation.points[2].x"
               :y2="annotation.points[2].y"
               stroke="blue"
-              stroke-width="2"
+              :stroke-width="2 * svgInverseScale"
             />
-            <text
-              v-if="annotation.type === 'measure' && annotation.points.length === 3"
-              :x="annotation.points[1].x + 10"
-              :y="annotation.points[1].y - 10"
-              font-size="16"
-              font-weight="bold"
-              fill="#00ff87"
-              stroke="#000"
-              stroke-width="0.5"
-              paint-order="stroke"
-            >
-              {{ annotation.angle }}°{{ annotation.label ? ' • ' + annotation.label : '' }}
-            </text>
+            <!-- angle label moved to HTML overlay for drag support -->
           </g>
-          <!-- dynamic freehand trace -->
-          <polyline
-            v-if="currentStroke"
-            :points="formatPoints(currentStroke.points)"
-            :stroke="currentStroke.color"
-            :stroke-width="currentStroke.penWidth"
-            :stroke-height="currentStroke.penHeight"
-            fill="none"
+          <!-- dynamic freehand trace (calligraphic path) -->
+          <path
+            v-if="currentStroke && currentStroke.points.length > 1"
+            :d="generateCalligraphicPath(currentStroke.points, currentStroke.penWidth, currentStroke.penHeight, currentStroke.nibAngle)"
+            :fill="currentStroke.color"
+            stroke="none"
           />
         </svg>
 
@@ -392,12 +283,10 @@
               top: (labelPositions['dynamic']?.y ?? 15) + 'px',
               position: 'absolute',
               cursor: draggedLabelIndex === 'dynamic' ? 'grabbing' : 'grab',
-              backgroundColor: 'white',
               zIndex: 400,
               userSelect: 'none',
-              pointerEvents: 'auto',
+              pointerEvents: 'none',
             }"
-            @mousedown.stop="startLabelDrag('dynamic', $event)"
           >
             {{ currentSquare.label }}:
             {{
@@ -420,7 +309,6 @@
             height: `${(measurement.height / osdImageHeight) * 100}%`,
             backgroundColor: measurement.color,
             position: 'absolute',
-            border: '1px solid #000',
           }"
         >
           <div
@@ -430,7 +318,6 @@
               top: (labelPositions[measurement.id]?.y ?? 15) + 'px',
               position: 'absolute',
               cursor: draggedLabelIndex === measurement.id ? 'grabbing' : 'grab',
-              backgroundColor: 'white',
               zIndex: 400,
               userSelect: 'none',
               pointerEvents: 'auto',
@@ -443,6 +330,36 @@
                 ? measurement.height
                 : measurement.width)
             }}
+          </div>
+        </div>
+
+        <!-- Draggable angle labels -->
+        <div
+          v-for="annotation in currentPageAngles.filter(a => a.type === 'measure' && a.points.length === 3)"
+          :key="'angle-label-' + annotation.id"
+          :style="{
+            left: `${(annotation.points[1].x / osdImageWidth) * 100}%`,
+            top: `${(annotation.points[1].y / osdImageHeight) * 100}%`,
+            position: 'absolute',
+            width: 0,
+            height: 0,
+            overflow: 'visible',
+          }"
+        >
+          <div
+            class="angle-label draggable-label"
+            :style="{
+              left: (angleLabelPositions[annotation.id]?.x ?? 10) + 'px',
+              top: (angleLabelPositions[annotation.id]?.y ?? -30) + 'px',
+              position: 'absolute',
+              cursor: draggedLabelIndex === annotation.id ? 'grabbing' : 'grab',
+              zIndex: 400,
+              userSelect: 'none',
+              pointerEvents: 'auto',
+            }"
+            @mousedown.stop="startAngleLabelDrag(annotation.id, $event)"
+          >
+            {{ annotation.angle }}°{{ annotation.label ? ' • ' + annotation.label : '' }}
           </div>
         </div>
 
@@ -503,72 +420,61 @@
         ></div>
         </div>
 
-        <!-- Comments (attached to page edge; positioned in viewer space, not scaled) -->
-        <div
-          v-for="(c, i) in currentPageComments"
-          :key="'comment-'+i"
-          class="comment-card"
-          :style="commentStyle(c)"
-          @mousedown.stop="startDraggingComment(i, $event)"
-          @mouseup.stop="stopDraggingComment"
-          @mousemove.stop="dragComment"
-          @click.stop
-        >
-          <div class="comment-pin">💬</div>
-          <div class="comment-bubble">
-            <div class="comment-text">{{ c.text }}</div>
-          </div>
-        </div>
-
-        <!-- Inline composer near target Y on chosen side -->
-        <div
-          v-if="showCommentInput"
-          class="comment-composer"
-          :style="composerStyle"
-          @mousedown.stop
-          @click.stop
-        >
-          <textarea
-            class="composer-textarea"
-            v-model="currentCommentText"
-            placeholder="Add your comment…"
-            @keydown.enter.exact.prevent="addComment"
-          ></textarea>
-
-          <div class="composer-actions">
-            <button class="btn-blue" @click.stop="addComment">Add</button>
-            <button class="btn-gray" @click.stop="cancelComment">Cancel</button>
-          </div>
-        </div>
-
       </div>
 
-<!-- Compact Bank Panel (anchored, not affecting layout) -->
-   <AnnotationsBank
-     class="bank-panel"
-     :class="{ 'annotations-bank--hidden': croppedImage }"
-    :page="currentPage"
-     :items="bankItems"
-     :selectedKeys="bankSelectedKeys"
-     :multiSelect="bankMultiSelect"
-     :moveActive="moveModeActive"
-     :zoomLevel="zoomLevel"
-     :showInCm="showMeasurementsInCm"
-     :pixelsPerCm="pixelsPerCm"
-     :isBlurred="isAnyPopupOpen"
-     @update:selected="(keys) => bankSelectedKeys = keys"
-     @toggle-multi="bankMultiSelect = !bankMultiSelect"
-     @request-move="enableMoveMode"
-     @cancel-move="disableMoveMode"
-     @request-delete="deleteSelectedFromBank"
-     @toggle-units="toggleMeasurementUnits"
-   />
+      <!-- Floating Scribe Detection Button -->
+      <div
+        class="absolute bottom-4 right-4 z-40 cursor-pointer hover:scale-110 transition-transform"
+        data-tour="scribe-button"
+        @click="openScribeDetection"
+      >
+        <img
+          :src="require('@/assets/pharosight_icon_no_text.png')"
+          alt="PharoSight"
+          class="h-10 w-10 rounded-full shadow-lg"
+        />
+      </div>
+    </main>
 
-   <!-- Floating Scribe Detection Button -->
-   <div class="floating-scribe-button" @click="openScribeDetection">
-     <img :src="require('@/assets/pharosight_icon_no_text.png')" alt="PharoSight" class="scribe-button-icon" />
-   </div>
-    </div>
+    <!-- Right Panel -->
+    <aside v-show="!rightPanelCollapsed" style="grid-area: right;" data-tour="right-panel">
+      <ViewerRightPanel
+        :annotations="currentPageAnnotationsList"
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :zoom-level="zoomLevel"
+        :show-in-cm="showMeasurementsInCm"
+        :selected-annotation="selectedAnnotationItem"
+        @select-annotation="handleSelectAnnotation"
+        @delete-annotation="handleDeleteAnnotation"
+        @generate-bands-page="calculateCurrentPage"
+        @generate-bands-doc="calculateEntireDocument"
+        @generate-angles="openAnglesFilterFromStats"
+      />
+    </aside>
+
+    <!-- Bottom Bar -->
+    <footer style="grid-area: bottom;" data-tour="bottom-bar">
+      <ViewerBottomBar
+        :current-page="currentPage"
+        :total-pages="totalPages"
+        :zoom-level="zoomLevel"
+        :min-zoom="minZoom"
+        :max-zoom="maxZoom"
+        :show-in-cm="showMeasurementsInCm"
+        :image-ready="imageReady"
+        @prev-page="prevPage"
+        @next-page="nextPage"
+        @go-to-page="goToPage"
+        @zoom-in="zoomIn"
+        @zoom-out="zoomOut"
+        @zoom-to="zoomTo"
+        @reset-zoom="resetZoom"
+        @toggle-units="toggleMeasurementUnits"
+        @start-hold-reset="startHoldReset"
+        @cancel-hold-reset="cancelHoldReset"
+      />
+    </footer>
 
     <!-- Angle Label Picker Popup -->
     <!-- Angle Label Popup -->
@@ -736,8 +642,10 @@
           </div>
 
           <div class="crop-actions">
+            <Button variant="outline" size="sm" @click="croppedBankVisible = !croppedBankVisible">
+              {{ croppedBankVisible ? 'Hide' : 'Show' }} Bank
+            </Button>
             <Button variant="outline" size="sm" @click="saveCroppedImageAsPNG">Save PNG</Button>
-            <Button variant="outline" size="sm" @click="saveCroppedImageAsSVG" :disabled="!croppedSvg">Save SVG</Button>
             <Button variant="outline" size="sm" @click="saveCroppedImage">Save w/ Annotations</Button>
             <Button size="sm" @click="closeCroppedPopup">Close</Button>
           </div>
@@ -860,22 +768,20 @@
             <!-- SVG layer (traces & angles) -->
             <svg class="drawing-layer" :width="croppedBaseW" :height="croppedBaseH"
                  style="position:absolute;inset:0;z-index:2;">
-              <!-- traces -->
-              <polyline
+              <!-- traces (calligraphic paths) -->
+              <path
                 v-for="(a, i) in croppedTraces"
                 :key="'ct-'+i"
-                :points="formatPoints(a.points)"
-                :stroke="a.color"
-                :stroke-width="a.penWidth || 2"
-                fill="none"
+                :d="generateCalligraphicPath(a.points, a.penWidth, a.penHeight, a.nibAngle)"
+                :fill="a.color"
+                stroke="none"
               />
-              <!-- live stroke -->
-              <polyline
-                v-if="croppedLive.trace"
-                :points="formatPoints(croppedLive.trace.points)"
-                :stroke="croppedLive.trace.color"
-                :stroke-width="croppedLive.trace.penWidth || 2"
-                fill="none"
+              <!-- live stroke (calligraphic path) -->
+              <path
+                v-if="croppedLive.trace && croppedLive.trace.points.length > 1"
+                :d="generateCalligraphicPath(croppedLive.trace.points, croppedLive.trace.penWidth, croppedLive.trace.penHeight, croppedLive.trace.nibAngle)"
+                :fill="croppedLive.trace.color"
+                stroke="none"
               />
 
               <!-- angles -->
@@ -888,19 +794,25 @@
                   :x1="a.points[1].x" :y1="a.points[1].y"
                   :x2="a.points[2].x" :y2="a.points[2].y"
                   stroke="blue" stroke-width="2" />
+                <path v-if="a.points.length===3"
+                  :d="getAngleArcPath(a.points[1], a.points[0], a.points[2], 30)"
+                  fill="none" stroke="#00ff87" stroke-width="2" opacity="0.8" />
                 <text v-if="a.points.length===3"
                   :x="a.points[1].x + 10" :y="a.points[1].y - 10"
-                  :fill="svgLabelFill" font-size="12" font-weight="500">
+                  font-size="16" font-weight="bold"
+                  fill="#00ff87" stroke="#000" stroke-width="0.5"
+                  paint-order="stroke" pointer-events="none">
                   {{ a.angle }}°{{ a.label ? ' • '+a.label : '' }}
                 </text>
               </g>
 
               <!-- live angle points/lines -->
               <g v-if="croppedLive.measure && croppedLive.measure.points.length">
-                <circle
-                  v-for="(p, idx) in croppedLive.measure.points"
-                  :key="'livep-'+idx"
-                  :cx="p.x" :cy="p.y" r="5" fill="red" />
+                <g v-for="(p, idx) in croppedLive.measure.points" :key="'livep-'+idx">
+                  <circle :cx="p.x" :cy="p.y" r="6" fill="#FF4444" stroke="#FFF" stroke-width="2" />
+                  <text :x="p.x" :y="p.y + 5" font-size="10" font-weight="bold"
+                    fill="#FFF" text-anchor="middle">{{ idx + 1 }}</text>
+                </g>
                 <line v-if="croppedLive.measure.points.length>=2"
                   :x1="croppedLive.measure.points[0].x" :y1="croppedLive.measure.points[0].y"
                   :x2="croppedLive.measure.points[1].x" :y2="croppedLive.measure.points[1].y"
@@ -909,6 +821,9 @@
                   :x1="croppedLive.measure.points[1].x" :y1="croppedLive.measure.points[1].y"
                   :x2="croppedLive.measure.points[2].x" :y2="croppedLive.measure.points[2].y"
                   stroke="blue" stroke-width="2" />
+                <path v-if="croppedLive.measure.points.length===3"
+                  :d="getAngleArcPath(croppedLive.measure.points[1], croppedLive.measure.points[0], croppedLive.measure.points[2], 30)"
+                  fill="none" stroke="#00ff87" stroke-width="2" opacity="0.8" />
               </g>
             </svg>
           </div>
@@ -916,6 +831,7 @@
 
         <!-- Mini bank (re-uses same UX: multi-select, move, delete) -->
         <AnnotationsBank
+          v-show="croppedBankVisible"
           class="mini-bank"
           :page="0"
           :items="croppedBankItems"
@@ -941,6 +857,49 @@
       :totalPages="totalPages"
       :currentPageImage="currentImage"
     />
+
+    <!-- Share Dialog -->
+    <ShareDialog
+      v-model:open="showShareDialog"
+      :iiif-manifest="iiifManifest"
+      :document-name="documentName"
+      :current-annotations="getAllAnnotations()"
+      @session-created="handleSessionCreated"
+    />
+
+    <!-- Join Dialog (for shared links) -->
+    <JoinDialog
+      v-model:open="showJoinDialog"
+      :document-name="documentName"
+      @join="handleJoinSession"
+    />
+
+    <!-- Version History Panel -->
+    <VersionHistory
+      v-model:open="showVersionHistory"
+      @version-restored="handleVersionRestored"
+    />
+
+    <!-- Import Annotations Dialog -->
+    <ImportAnnotationsDialog
+      v-model:open="showImportDialog"
+      :has-existing-annotations="hasAnyAnnotations"
+      :current-manifest="iiifManifest"
+      :current-page-count="images.length"
+      @import="handleImportJson"
+    />
+
+    <!-- Remote Participant Cursors -->
+    <template v-if="sessionConnected && remoteCursorData.length > 0">
+      <ParticipantCursor
+        v-for="cursor in currentPageCursors"
+        :key="cursor.participantId"
+        :x="cursorToScreenX(cursor.x)"
+        :y="cursorToScreenY(cursor.y)"
+        :display-name="cursor.displayName"
+        :color="cursor.color"
+      />
+    </template>
   </div>
 </template>
 
@@ -949,7 +908,6 @@
 import { PDFDocument } from "pdf-lib";
 import html2canvas from "html2canvas";
 import AnnotationsBank from "@/components/viewer/AnnotationsBank.vue";
-import NavigationBar from "@/components/viewer/NavigationBar.vue";
 import ScribeDetectionPopup from "@/components/popups/ScribeDetectionPopup.vue";
 import AngleLabelPopup from "@/components/popups/AngleLabelPopup.vue";
 import LengthPopupHorizontal from "@/components/popups/LengthPopupHorizontal.vue";
@@ -975,9 +933,28 @@ import {
 import { useTheme } from "@/composables/useTheme";
 import { useImageAdjustments } from "@/composables/useImageAdjustments";
 import ImageAdjustmentsPanel from "@/components/viewer/ImageAdjustmentsPanel.vue";
+import ViewerTopBar from "@/components/viewer/ViewerTopBar.vue";
+import ShareDialog from "@/components/collaboration/ShareDialog.vue";
+import JoinDialog from "@/components/collaboration/JoinDialog.vue";
+import VersionHistory from "@/components/collaboration/VersionHistory.vue";
+import ParticipantCursor from "@/components/collaboration/ParticipantCursor.vue";
+import ImportAnnotationsDialog from "@/components/dialogs/ImportAnnotationsDialog.vue";
+import {
+  exportAsJson,
+  exportAsTei,
+  exportAsPlainText,
+  exportAsWebAnnotation
+} from "@/services/annotationExportService";
+import { useSession } from "@/composables/useSession";
+import { usePresence } from "@/composables/usePresence";
+import { useFollow } from "@/composables/useFollow";
+import ViewerToolbar from "@/components/viewer/ViewerToolbar.vue";
+import ViewerBottomBar from "@/components/viewer/ViewerBottomBar.vue";
+import ViewerRightPanel from "@/components/viewer/ViewerRightPanel.vue";
 import OpenSeadragon from "openseadragon";
 import "openseadragon-filtering";
 import { extractServiceId, fetchImageInfo, buildTileSource } from "@/services/iiifService";
+import { generateCalligraphicPath, generateCalligraphicPolygon } from "@/utils/math";
 import {
   MessageSquare,
   SlidersHorizontal,
@@ -1004,8 +981,16 @@ export default {
   name: "IIIFViewer",
   components: {
     AnnotationsBank,
-    NavigationBar,
+    ViewerTopBar,
+    ViewerToolbar,
+    ViewerBottomBar,
+    ViewerRightPanel,
     ScribeDetectionPopup,
+    ShareDialog,
+    JoinDialog,
+    VersionHistory,
+    ParticipantCursor,
+    ImportAnnotationsDialog,
     AngleLabelPopup,
     LengthPopupHorizontal,
     LengthPopupVertical,
@@ -1054,6 +1039,48 @@ export default {
       applyToAllPages,
       setCurrentPage: setAdjustmentPage
     } = useImageAdjustments();
+
+    // Session collaboration
+    const {
+      sessionId: activeSessionId,
+      isConnected: sessionConnected,
+      annotations: sessionAnnotations,
+      addAnnotation: syncAddAnnotation,
+      updateAnnotation: syncUpdateAnnotation,
+      deleteAnnotation: syncDeleteAnnotation,
+      joinSession,
+      leaveSession,
+      onMessage: onSessionMessage,
+      localParticipant
+    } = useSession();
+
+    // Presence tracking
+    const {
+      participants,
+      otherParticipants,
+      cursors: remoteCursorData,
+      init: initPresence,
+      throttledCursorUpdate
+    } = usePresence();
+
+    // Follow mode
+    const {
+      isFollowing,
+      followingId,
+      followersCount,
+      startFollowing,
+      stopFollowing,
+      broadcastViewport,
+      broadcastViewportImmediate,
+      broadcastFilters,
+      init: initFollow,
+      cleanup: cleanupFollow,
+      onViewportSync,
+      onFiltersSync,
+      isFollowingParticipant,
+      getParticipantPage
+    } = useFollow();
+
     return {
       currentTheme,
       setTheme,
@@ -1062,14 +1089,69 @@ export default {
       setFilter,
       resetFilters,
       applyToAllPages,
-      setAdjustmentPage
+      setAdjustmentPage,
+      // Session
+      activeSessionId,
+      sessionConnected,
+      sessionAnnotations,
+      syncAddAnnotation,
+      syncUpdateAnnotation,
+      syncDeleteAnnotation,
+      joinSession,
+      leaveSession,
+      onSessionMessage,
+      localParticipant,
+      // Presence
+      participants,
+      otherParticipants,
+      remoteCursorData,
+      initPresence,
+      throttledCursorUpdate,
+      // Follow mode
+      isFollowing,
+      followingId,
+      followersCount,
+      startFollowing,
+      stopFollowing,
+      broadcastViewport,
+      broadcastViewportImmediate,
+      broadcastFilters,
+      initFollow,
+      cleanupFollow,
+      onViewportSync,
+      onFiltersSync,
+      isFollowingParticipant,
+      getParticipantPage
     };
   },
   props: {
-    source: { type: String, required: true },
+    source: { type: String, default: '' },
+    sessionId: { type: String, default: '' },
   },
   data() {
     return {
+      // Layout state
+      leftPanelCollapsed: false,
+      rightPanelCollapsed: false,
+      selectedAnnotationItem: null,
+      documentName: 'IIIF Document',
+
+      // Collaboration state
+      showShareDialog: false,
+      showVersionHistory: false,
+      showImportDialog: false,
+      showJoinDialog: false,
+      pendingSessionId: null,
+      sessionActive: false,
+      annotationSyncUnsubscribe: null,
+      versionRestoredUnsubscribe: null,
+      iiifManifest: '',
+      jobId: null,
+      remoteCursors: [],
+      // Follow mode state
+      followSyncUnsubscribers: [],
+      isApplyingFollowSync: false,
+
       annotationsByPage: [],
       // Pen config
       penWidth: 3,
@@ -1078,9 +1160,9 @@ export default {
       showTracePopup: false,
       penAngles: [0, 15, 30, 45, 60, 75],
       penSizes: [
-        { key: 'thin',   label: 'Thin'   , w: 2, h: 3 },
-        { key: 'medium', label: 'Medium' , w: 3, h: 5 },
-        { key: 'broad',  label: 'Broad'  , w: 5, h: 8 },
+        { key: 'thin',   label: 'Thin'   , w: 2, h: 6 },
+        { key: 'medium', label: 'Medium' , w: 3, h: 12 },
+        { key: 'broad',  label: 'Broad'  , w: 5, h: 20 },
       ],
       selectedPenAngle: 45,
       selectedPenSize: 'medium',
@@ -1173,6 +1255,7 @@ export default {
         externalMargin: {},
       },
       labelPositions: {}, // for length labels drag
+      angleLabelPositions: {}, // for angle labels drag
       draggedLabelIndex: null,
       labelDragOffset: { x: 0, y: 0 },
 
@@ -1183,7 +1266,6 @@ export default {
       showStatsPanel: false,
 
       // Cropped popup state
-      croppedSvg: null,
       croppedImage: null,
       croppedStrokes: [],
       croppedMeasures: [],
@@ -1203,12 +1285,8 @@ export default {
 
       // Comments
       comments: [],                   // per page (array of arrays)
-      showCommentInput: false,
       currentCommentText: "",
-      // Where the composer should appear:
-      composerTarget: { side: 'right', t: 0.5 }, // side: 'left'|'right', t in [0..1] vertical relative
-      draggingCommentIndex: null,
-      dragOffset: { x: 0, y: 0 },
+      expandedCommentId: null,
       suppressNextComment: false,
 
       // UI
@@ -1234,11 +1312,11 @@ export default {
       _overlayUpdatePending: false, // RAF throttle flag for overlay updates
       isOperationInProgress: false, // Lock to prevent tool switching during drawing
 
-      // Legacy Zoom & Pan (kept for NavigationBar display, will be synced from OSD)
+      // Legacy Zoom & Pan (kept for compatibility, synced from OSD)
       zoomLevel: 1,
       zoomStep: 0.10,
-      minZoom: 0.5,
-      maxZoom: 15,
+      minZoom: 0.25,
+      maxZoom: 25,
       _holdTimer: null,      // for long-press reset
       panX: 0,
       panY: 0,
@@ -1267,6 +1345,7 @@ export default {
       croppedBankSelected: [],
       croppedBankMulti: false,
       croppedMoveActive: false,
+      croppedBankVisible: true,
     };
   },
   computed: {
@@ -1304,6 +1383,88 @@ export default {
              this.lengthMeasurementActive || this.croppingStarted || this.commentModeActive;
     },
 
+    // Active tool for toolbar highlighting
+    currentActiveTool() {
+      if (this.traceModeActive) return 'trace';
+      if (this.highlightModeActive) return 'highlight';
+      if (this.underlineModeActive) return 'underline';
+      if (this.commentModeActive) return 'comment';
+      if (this.measureModeActive) return 'measure';
+      if (this.lengthMeasurementActive || this.isMeasuring) {
+        const label = this.selectedMeasurement || '';
+        const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'].includes(label);
+        return isHorizontal ? 'horizontal' : 'vertical';
+      }
+      if (this.croppingStarted) return 'crop';
+      return '';
+    },
+
+    // All annotations for right panel
+    currentPageAnnotationsList() {
+      const list = [];
+
+      // Highlights
+      if (this.currentPageHighlights) {
+        this.currentPageHighlights.forEach((h, i) => {
+          list.push({ type: 'highlight', label: `Highlight ${i + 1}`, data: h, index: i });
+        });
+      }
+
+      // Underlines
+      if (this.currentPageUnderlines) {
+        this.currentPageUnderlines.forEach((u, i) => {
+          list.push({ type: 'underline', label: `Underline ${i + 1}`, data: u, index: i });
+        });
+      }
+
+      // Traces
+      if (this.currentPageStrokes) {
+        this.currentPageStrokes.forEach((s, i) => {
+          list.push({ type: 'trace', label: `Trace ${i + 1}`, data: s, index: i });
+        });
+      }
+
+      // Comments
+      if (this.currentPageComments) {
+        this.currentPageComments.forEach((c, i) => {
+          const text = c.text || '';
+          list.push({
+            type: 'comment',
+            label: text.substring(0, 25) + (text.length > 25 ? '...' : '') || `Comment ${i + 1}`,
+            data: c,
+            index: i
+          });
+        });
+      }
+
+      // Angles
+      if (this.currentPageAngles) {
+        this.currentPageAngles.forEach((a, i) => {
+          list.push({
+            type: 'angle',
+            label: `${a.angle}°${a.label ? ' - ' + a.label : ''}`,
+            data: a,
+            index: i
+          });
+        });
+      }
+
+      // Length measurements
+      if (this.currentPageLengthMeasurements) {
+        this.currentPageLengthMeasurements.forEach((m) => {
+          const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'].includes(m.label);
+          list.push({
+            type: isHorizontal ? 'length-h' : 'length-v',
+            label: m.label,
+            data: m,
+            id: m.id
+          });
+        });
+      }
+
+      return list;
+    },
+
     imageReady() {
       // Use OSD state when available, fall back to legacy for cropped popup
       return (this.osdReady && this.osdImageWidth > 0 && this.osdImageHeight > 0) ||
@@ -1320,6 +1481,24 @@ export default {
         return `hsl(${primary})`;
       }
       return '#3d8bfa'; // Fallback blue
+    },
+
+    // Inverse scale so SVG cosmetic sizes (text, circles, strokes) stay
+    // constant on screen regardless of zoom level.
+    svgInverseScale() {
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+      if (!this.osdViewer || !this.osdReady) return 1;
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) return 1;
+      const tl = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+      );
+      const tr = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, 0))
+      );
+      const w = tr.x - tl.x;
+      return w > 0 ? this.osdImageWidth / w : 1;
     },
 
     // Annotation overlay positioning - syncs with OpenSeadragon viewport
@@ -1394,46 +1573,6 @@ export default {
       return { left, top, width: w, height: h, right: left + w, bottom: top + h };
     },
 
-    composerStyle() {
-      if (!this.imageReady || !this.composerTarget) return {};
-      const box = this.anchorBoxInViewer;
-      const pad = 12;             // gap outside page
-      const width = 260;          // composer width
-      const y = box.top + this.composerTarget.t * box.height;
-      const x = this.composerTarget.side === 'left'
-        ? (box.left - pad - width)
-        : (box.right + pad);
-
-      return {
-        position: 'absolute',
-        top: `${Math.round(y)}px`,
-        left: `${Math.round(x)}px`,
-        transform: 'translateY(-50%)',
-        zIndex: 1600
-      };
-    },
-
-    commentStyle() {
-      // returns a function to style each card
-      return (c) => {
-        const box = this.anchorBoxInViewer;
-        const pad = 12;     // gap from page edge
-        const width = 240;  // visual width of comment card
-        const y = box.top + c.t * box.height;
-        const x = c.side === 'left'
-          ? (box.left - pad - width)
-          : (box.right + pad);
-
-        return {
-          position: 'absolute',
-          top: `${Math.round(y)}px`,
-          left: `${Math.round(x)}px`,
-          transform: 'translateY(-50%)',
-          zIndex: 1400,
-          width: `${width}px`
-        };
-      };
-    },
 
     viewerWidth() {
       const viewer = this.$refs.viewer;
@@ -1469,6 +1608,10 @@ export default {
     },
     totalPages() {
       return this.images.length;
+    },
+    currentPageCursors() {
+      // Filter cursors to only show those on the current page
+      return (this.remoteCursorData || []).filter(cursor => cursor.pageIndex === this.currentPage);
     },
     currentPageHighlights() {
       return (this.annotationsByPage[this.currentPage] || []).filter(a => a.type === "highlight");
@@ -1687,12 +1830,20 @@ export default {
       return this.croppedAnnotations.map((a, i) => ({
         key: `c${i}`,
         category: a.type,
-        title: a.type === 'trace' ? 'Trace' : 
+        title: a.type === 'trace' ? 'Trace' :
                a.type === 'measure' ? `Angle (${a.angle || ''}°)` :
                a.type === 'highlight' ? 'Highlight' : 'Underline',
         subtitle: a.type === 'trace' ? `${a.points?.length || 0} pts` : '',
         color: a.color || (a.type === 'measure' ? 'blue' : a.type === 'highlight' ? 'rgba(255,255,0,0.8)' : '#3b82f6')
       }));
+    },
+    // Check if any annotations exist (for import confirmation)
+    hasAnyAnnotations() {
+      return this.annotationsByPage.some(page => page?.length > 0) ||
+             this.comments.some(page => page?.length > 0) ||
+             Object.values(this.lengthMeasurements).some(
+               label => Object.values(label).some(page => page?.length > 0)
+             );
     },
   },
   watch: {
@@ -1702,6 +1853,22 @@ export default {
       this.bankSelectedKeys = [];
       // Update adjustment page for per-page filters
       this.setAdjustmentPage(n);
+      // Refresh comment overlays for the new page
+      this.expandedCommentId = null;
+      this._removeComposerOverlay();
+      this.$nextTick(() => this.renderCommentOverlays());
+
+      // Broadcast page change for follow mode (immediate, not throttled)
+      if (this.sessionConnected && !this.isApplyingFollowSync && this.osdViewer) {
+        const bounds = this.osdViewer.viewport.getBounds();
+        const zoom = this.osdViewer.viewport.getZoom();
+        this.broadcastViewportImmediate(n, zoom, {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height
+        });
+      }
     },
     // Initialize OpenSeadragon when image changes
     currentImage: {
@@ -1716,17 +1883,66 @@ export default {
     currentFilters: {
       handler() {
         this.applyFiltersToOsd();
+
+        // Broadcast filter changes for follow mode
+        if (this.sessionConnected && !this.isApplyingFollowSync) {
+          this.broadcastCurrentFilters();
+        }
+      },
+      deep: true
+    },
+    // Watch for incoming annotation changes from session
+    sessionAnnotations: {
+      handler(newAnnotations) {
+        if (!newAnnotations || !this.sessionConnected) return;
+        // Apply comments from session
+        if (newAnnotations.comments) {
+          this.applySessionComments(newAnnotations.comments);
+        }
       },
       deep: true
     }
   },
   async created() {
+    // Non-reactive comment overlay refs
+    this._commentOverlayEls = [];
+    this._composerOverlayEl = null;
+    this._composerImageCoords = { x: 0, y: 0 };
+
+    // Handle session route - load from session API
+    if (this.sessionId) {
+      await this.loadFromSession(this.sessionId);
+      return;
+    }
+
+    // Handle regular IIIF source route
     if (!this.source) {
       alert("Invalid source. Returning to input.");
       this.$router.push({ name: "IIIFInput" });
       return;
     }
     this.annotationsByPage = []; // init
+
+    // Handle uploaded files (job:xxx)
+    if (this.source.startsWith("job:")) {
+      const cached = sessionStorage.getItem(this.source);
+      if (!cached) {
+        alert("Upload data expired. Returning to input.");
+        this.$router.push({ name: "IIIFInput" });
+        return;
+      }
+      const data = JSON.parse(cached);
+      this.jobId = data.job_id;
+      const base = this._getBackendBase();
+      this.images = data.pages.map(p => `${base}/static/${p.image}`);
+      // Store image list as JSON so session sharing can reconstruct pages
+      this.iiifManifest = JSON.stringify(this.images);
+      this.annotationsByPage = this.images.map(() => []);
+      this.comments = this.images.map(() => []);
+      return;
+    }
+
+    this.iiifManifest = this.source; // Store for sharing
     if (this.source.endsWith("manifest.json")) {
       await this.fetchIIIFImages(this.source);
     } else {
@@ -1748,6 +1964,11 @@ export default {
           measurement = this.currentPageLengthMeasurements.find((m) => m.id === this.draggedLabelIndex);
         }
         if (measurement) this.dragLabel(this.draggedLabelIndex, e);
+      }
+    };
+    this._onAngleLabelDragMove = (e) => {
+      if (this.draggedLabelIndex !== null) {
+        this.dragAngleLabel(this.draggedLabelIndex, e);
       }
     };
     
@@ -1782,6 +2003,22 @@ export default {
   beforeUnmount() {
     window.removeEventListener('resize', this.computeBaseFit);
 
+    // Clean up annotation sync subscription
+    if (this.annotationSyncUnsubscribe) {
+      this.annotationSyncUnsubscribe();
+      this.annotationSyncUnsubscribe = null;
+    }
+
+    // Clean up version restored subscription
+    if (this.versionRestoredUnsubscribe) {
+      this.versionRestoredUnsubscribe();
+      this.versionRestoredUnsubscribe = null;
+    }
+
+    // Clean up follow mode
+    this.cleanupFollowSyncHandlers();
+    this.cleanupFollow();
+
     // Clean up OpenSeadragon
     if (this.osdViewer) {
       // Remove all event handlers before destroying
@@ -1813,8 +2050,37 @@ export default {
   },
 
   methods: {
+    // Make calligraphic path generator available in template
+    generateCalligraphicPath,
     openScribeDetection() {
       this.$refs.scribeDetectionPopup.openPopup();
+    },
+    _getBackendBase() {
+      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isDev) return 'http://localhost:5001';
+      return window.__PHAROSIGHT_API_BASE__ || 'https://basuony-pharosight.hf.space';
+    },
+    async handleAddImages(e) {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      e.target.value = '';
+      const fd = new FormData();
+      for (const f of files) fd.append("image", f);
+      try {
+        const base = this._getBackendBase();
+        const res = await fetch(`${base}/prepare`, { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Upload failed");
+        const newImages = data.pages.map(p => `${base}/static/${p.image}`);
+        this.images.push(...newImages);
+        for (let i = 0; i < newImages.length; i++) {
+          this.annotationsByPage.push([]);
+          this.comments.push([]);
+        }
+        this.showToolMessage(`Added ${newImages.length} page(s).`);
+      } catch (err) {
+        alert("Failed to add pages: " + err.message);
+      }
     },
     goHome() {
       const ok = window.confirm(
@@ -1858,6 +2124,68 @@ export default {
       if (!this.osdViewer || !this.osdReady) return;
       this.osdViewer.viewport.goHome();
     },
+    zoomTo(level) {
+      if (!this.osdViewer || !this.osdReady) return;
+      this.osdViewer.viewport.zoomTo(level);
+    },
+
+    // Right panel handlers
+    handleSelectAnnotation(annotation) {
+      this.selectedAnnotationItem = annotation;
+      // Future enhancement: scroll viewport to annotation location
+    },
+
+    handleDeleteAnnotation(annotation) {
+      const pageAnnotations = this.annotationsByPage[this.currentPage] || [];
+
+      switch (annotation.type) {
+        case 'highlight': {
+          // Find highlights in annotationsByPage with type 'highlight', delete by index
+          const highlights = pageAnnotations.filter(a => a.type === 'highlight');
+          if (highlights[annotation.index]) {
+            const idx = pageAnnotations.indexOf(highlights[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'underline': {
+          const underlines = pageAnnotations.filter(a => a.type === 'underline');
+          if (underlines[annotation.index]) {
+            const idx = pageAnnotations.indexOf(underlines[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'trace': {
+          const traces = pageAnnotations.filter(a => a.type === 'trace');
+          if (traces[annotation.index]) {
+            const idx = pageAnnotations.indexOf(traces[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'comment':
+          if (this.comments[this.currentPage]) {
+            this.comments[this.currentPage].splice(annotation.index, 1);
+          }
+          break;
+        case 'angle': {
+          const angles = pageAnnotations.filter(a => a.type === 'measure');
+          if (angles[annotation.index]) {
+            const idx = pageAnnotations.indexOf(angles[annotation.index]);
+            if (idx !== -1) this.annotationsByPage[this.currentPage].splice(idx, 1);
+          }
+          break;
+        }
+        case 'length-h':
+        case 'length-v':
+          this.deleteLengthMeasurement(annotation.id);
+          break;
+      }
+      this.selectedAnnotationItem = null;
+      this.showToolMessage("Annotation deleted.");
+    },
+
     startHoldReset() {
       // Long press (3s) to reset to 100%
       this._holdTimer = setTimeout(() => {
@@ -1875,6 +2203,11 @@ export default {
     /* ---------- OpenSeadragon Methods ---------- */
     async initOpenSeadragon(imageUrl) {
       if (!imageUrl) return;
+      // Wait until DOM is ready (watcher with immediate:true can fire before mount)
+      if (!this.$refs.viewer) {
+        await this.$nextTick();
+        if (!this.$refs.viewer) return;
+      }
 
       // Destroy previous viewer if exists
       if (this.osdViewer) {
@@ -1917,8 +2250,9 @@ export default {
         gestureSettingsTouch: {
           pinchToZoom: true
         },
-        minZoomLevel: 0.5,
-        maxZoomLevel: 15,
+        minZoomLevel: 0.25,
+        maxZoomLevel: 25,
+        animationTime: 0,
         visibilityRatio: 0.8,
         constrainDuringPan: true,
         immediateRender: true,
@@ -1934,7 +2268,7 @@ export default {
       this.osdViewer.addHandler('animation-finish', this.updateOverlayPosition);
       this.osdViewer.addHandler('resize', this.updateOverlayPosition);
       this.osdViewer.addHandler('zoom', this.onOsdZoom);
-      this.osdViewer.addHandler('pan', this.updateOverlayPosition);
+      this.osdViewer.addHandler('pan', this.onOsdPan);
     },
 
     onOsdOpen() {
@@ -1969,6 +2303,20 @@ export default {
       // Sync legacy zoom level for UI display
       this.zoomLevel = event.zoom;
       this.updateOverlayPosition();
+
+      // Broadcast viewport for follow mode
+      if (!this.isApplyingFollowSync) {
+        this.broadcastCurrentViewport();
+      }
+    },
+
+    onOsdPan() {
+      this.updateOverlayPosition();
+
+      // Broadcast viewport for follow mode
+      if (!this.isApplyingFollowSync) {
+        this.broadcastCurrentViewport();
+      }
     },
 
     updateOverlayPosition() {
@@ -2163,6 +2511,20 @@ export default {
 
       return { x, y };
     },
+
+    // Convert percentage coordinates to screen coordinates for remote cursor display
+    cursorToScreenX(xPercent) {
+      if (!this.$refs.viewer) return 0;
+      const rect = this.$refs.viewer.getBoundingClientRect();
+      return rect.left + (xPercent / 100) * rect.width;
+    },
+
+    cursorToScreenY(yPercent) {
+      if (!this.$refs.viewer) return 0;
+      const rect = this.$refs.viewer.getBoundingClientRect();
+      return rect.top + (yPercent / 100) * rect.height;
+    },
+
     formatPoints(points) {
       return points.map(({ x, y }) => `${x},${y}`).join(" ");
     },
@@ -2183,9 +2545,9 @@ export default {
       return this.calculateAngle(pt1, vertex, mousePt);
     },
     
-    getAngleArcPath(vertex, pt1, pt2) {
+    getAngleArcPath(vertex, pt1, pt2, customRadius) {
       // Draw an arc from pt1 to pt2 around vertex
-      const radius = 30; // Arc radius in pixels
+      const radius = customRadius ?? 30 * this.svgInverseScale;
       
       // Calculate angles for both points relative to vertex
       const angle1 = Math.atan2(pt1.y - vertex.y, pt1.x - vertex.x);
@@ -2343,8 +2705,8 @@ export default {
         this.croppingStarted = false;
         this.cropButtonClicked = false;
         this.showStatsPanel = false;
-        // Close any open comment input when switching tools
-        this.showCommentInput = false;
+        // Close any open comment composer when switching tools
+        this._removeComposerOverlay();
         this.currentCommentText = "";
         // Clear cropped popup tool state
         this.croppedStartPoint = null;
@@ -2591,95 +2953,162 @@ cancelPenSelection() {
       this.showToolMessage(`Measuring "${this.selectedMeasurement}": click-start then click-end.`);
     },
 
-    /* ---------- Comments ---------- */
+    /* ---------- Comments (OSD overlay-based) ---------- */
+    _imageToViewportPoint(x, y) {
+      const tiledImage = this.osdViewer && this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) return null;
+      return tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(x, y));
+    },
+
     startComment(event) {
-      // Only proceed if comment mode is actually active
       if (!this.commentModeActive) return;
-      
-      if (this.suppressNextComment) {
-        this.suppressNextComment = false;
-        return;
-      }
+      if (this.suppressNextComment) { this.suppressNextComment = false; return; }
 
-      // Only respond if click is inside the page (anchor) bounds
-      const local = this.getMousePosition(event); // anchor-local coords
-      if (
-        local.x < 0 || local.y < 0 ||
-        local.x > this.baseFitWidth || local.y > this.baseFitHeight
-      ) return;
+      const local = this.getMousePosition(event);
+      const imgW = this.osdImageWidth || this.baseFitWidth;
+      const imgH = this.osdImageHeight || this.baseFitHeight;
+      if (local.x < 0 || local.y < 0 || local.x > imgW || local.y > imgH) return;
 
-      const isLeftHalf = local.x < (this.baseFitWidth / 2);
-      const side = isLeftHalf ? 'left' : 'right';
-      const t = Math.max(0, Math.min(1, local.y / this.baseFitHeight));
-
-      this.composerTarget = { side, t };
+      this._composerImageCoords = { x: local.x, y: local.y };
       this.currentCommentText = "";
-      this.showCommentInput = true;
+      // Deactivate comment mode and re-enable OSD navigation so the viewer
+      // isn't stuck in a disabled state after the composer appears
+      this.commentModeActive = false;
+      this.isOperationInProgress = false;
+      this.setOsdMouseNavEnabled(true);
+      this._showComposerOverlay();
+    },
+
+    _showComposerOverlay() {
+      this._removeComposerOverlay();
+
+      // Position composer as a fixed-position DOM element using screen coords
+      const tiledImage = this.osdViewer && this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) return;
+      const vp = tiledImage.imageToViewportCoordinates(
+        new OpenSeadragon.Point(this._composerImageCoords.x, this._composerImageCoords.y)
+      );
+      const screenPt = this.osdViewer.viewport.pixelFromPoint(vp, true);
+      const containerRect = this.osdViewer.container.getBoundingClientRect();
+
+      const el = document.createElement('div');
+      el.className = 'comment-composer';
+      el.style.position = 'fixed';
+      el.style.left = (containerRect.left + screenPt.x) + 'px';
+      el.style.top = (containerRect.top + screenPt.y) + 'px';
+      el.style.zIndex = '10000';
+      el.innerHTML = `
+        <textarea class="composer-textarea" placeholder="Add your comment…"></textarea>
+        <div class="composer-actions">
+          <button class="btn-blue comment-add-btn">Add</button>
+          <button class="btn-gray comment-cancel-btn">Cancel</button>
+        </div>
+      `;
+
+      const textarea = el.querySelector('textarea');
+      textarea.addEventListener('input', e => { this.currentCommentText = e.target.value; });
+      textarea.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.addComment(); }
+      });
+      el.querySelector('.comment-add-btn').addEventListener('click', () => this.addComment());
+      el.querySelector('.comment-cancel-btn').addEventListener('click', () => this.cancelComment());
+
+      document.body.appendChild(el);
+      this._composerOverlayEl = el;
+
+      this.$nextTick(() => textarea.focus());
+    },
+
+    _removeComposerOverlay() {
+      if (this._composerOverlayEl) {
+        try { this._composerOverlayEl.remove(); } catch(e) {}
+        this._composerOverlayEl = null;
+      }
     },
 
     addComment() {
       if (!this.currentCommentText.trim()) return;
       if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
 
-      this.comments[this.currentPage].push({
-        side: this.composerTarget.side,
-        t: Math.max(0, Math.min(1, this.composerTarget.t)),
+      const comment = {
+        id: crypto.randomUUID(),
+        pageIndex: this.currentPage,
+        x: this._composerImageCoords.x,
+        y: this._composerImageCoords.y,
         text: this.currentCommentText.trim(),
-      });
+      };
+
+      this.comments[this.currentPage].push(comment);
+
+      if (this.sessionConnected) {
+        this.syncAddAnnotation('comments', comment);
+      }
 
       this.currentCommentText = "";
-      this.showCommentInput = false;
-      this.commentModeActive = false; // <-- disable comment mode after adding one comment
-      this.suppressNextComment = true; // <-- prevents instant re-open
+      this._removeComposerOverlay();
+      this.commentModeActive = false;
+      this.suppressNextComment = true;
+      this.renderCommentOverlays();
     },
 
     cancelComment() {
       this.currentCommentText = "";
-      this.showCommentInput = false;
-      this.commentModeActive = false; // <-- disable comment mode when canceling
-      this.suppressNextComment = true; // <-- prevents instant re-open
+      this._removeComposerOverlay();
+      this.commentModeActive = false;
+      this.suppressNextComment = true;
     },
 
-    startDraggingComment(index, event) {
-      this.draggingCommentIndex = index;
-      // keep where the pointer is relative to card's top-left; we'll convert to side/t on move
-      const viewer = this.$refs.viewer.getBoundingClientRect();
-      this.dragOffset = {
-        x: event.clientX - viewer.left,
-        y: event.clientY - viewer.top,
-      };
+    toggleCommentExpand(id) {
+      this.expandedCommentId = this.expandedCommentId === id ? null : id;
+      this.renderCommentOverlays();
     },
 
-    dragComment(event) {
-      if (this.draggingCommentIndex === null) return;
-
-      // Pointer position in viewer space
-      const viewerRect = this.$refs.viewer.getBoundingClientRect();
-      const px = event.clientX - viewerRect.left;
-      const py = event.clientY - viewerRect.top;
-
-      // Snap horizontally to the closer page edge; map vertically to t
-      const box = this.anchorBoxInViewer;
-      // If page not ready, skip
-      if (box.width <= 0 || box.height <= 0) return;
-
-      const distLeft  = Math.abs(px - box.left);
-      const distRight = Math.abs(px - box.right);
-      const side = (distLeft <= distRight) ? 'left' : 'right';
-
-      // t is 0..1 within page box
-      const t = Math.max(0, Math.min(1, (py - box.top) / box.height));
-
-      const pageComments = this.comments[this.currentPage] || [];
-      const c = pageComments[this.draggingCommentIndex];
-      if (c) {
-        c.side = side;
-        c.t = t;
+    renderCommentOverlays() {
+      // Remove existing pin overlays
+      if (this._commentOverlayEls) {
+        this._commentOverlayEls.forEach(el => {
+          try { this.osdViewer.removeOverlay(el); } catch(e) {}
+        });
       }
+      this._commentOverlayEls = [];
+
+      const comments = this.comments[this.currentPage] || [];
+      if (!this.osdViewer) return;
+
+      comments.forEach(c => {
+        const vp = this._imageToViewportPoint(c.x, c.y);
+        if (!vp) return;
+
+        const el = document.createElement('div');
+        el.className = 'comment-pin-wrapper';
+        el.innerHTML = `<div class="comment-pin-icon">💬</div>`;
+
+        if (this.expandedCommentId === c.id) {
+          const bubble = document.createElement('div');
+          bubble.className = 'comment-expanded-bubble';
+          bubble.innerHTML = `<div class="comment-text">${this._escapeHtml(c.text)}</div>`;
+          el.appendChild(bubble);
+        }
+
+        const stopPin = e => e.stopPropagation();
+        ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup',
+         'dblclick', 'touchstart', 'touchend'
+        ].forEach(evt => el.addEventListener(evt, stopPin, true));
+        el.addEventListener('click', (e) => { e.stopPropagation(); this.toggleCommentExpand(c.id); });
+
+        this.osdViewer.addOverlay({
+          element: el,
+          location: vp,
+          placement: OpenSeadragon.Placement.CENTER,
+        });
+        this._commentOverlayEls.push(el);
+      });
     },
 
-    stopDraggingComment() {
-      this.draggingCommentIndex = null;
+    _escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
     },
 
     /* ---------- Theme dropdown ---------- */
@@ -2713,8 +3142,19 @@ cancelPenSelection() {
       this.showClearDropdown = false;
     },
     clearTraces() {
+      const tracesToDelete = (this.annotationsByPage[this.currentPage] || [])
+        .filter(a => a.type === "trace");
+      
       this.annotationsByPage[this.currentPage] = (this.annotationsByPage[this.currentPage] || [])
         .filter(a => a.type !== "trace");
+      
+      // Sync deletion to session if connected
+      if (this.sessionConnected && tracesToDelete.length > 0) {
+        tracesToDelete.forEach(trace => {
+          this.syncDeleteAnnotation('traces', trace.id, trace.pageIndex);
+        });
+      }
+      
       this.showToolMessage("Traces cleared.");
       this.showClearDropdown = false;
     },
@@ -2738,6 +3178,20 @@ cancelPenSelection() {
       this.showToolMessage("Vertical lengths cleared.");
       this.showClearDropdown = false;
     },
+    deleteLengthMeasurement(id) {
+      // Find and delete measurement by id across all labels
+      for (const label in this.lengthMeasurements) {
+        const pageArr = this.lengthMeasurements[label]?.[this.currentPage];
+        if (pageArr) {
+          const idx = pageArr.findIndex(m => String(m.id) === String(id));
+          if (idx !== -1) {
+            pageArr.splice(idx, 1);
+            this.showToolMessage("Measurement deleted.");
+            return;
+          }
+        }
+      }
+    },
     clearAll() {
       this.showClearDropdown = false;
       this.showClearConfirmation = true;
@@ -2759,6 +3213,496 @@ cancelPenSelection() {
       this.showClearConfirmation = false;
     },
 
+    /* ---------- Collaboration ---------- */
+    getAllAnnotations() {
+      // Gather all annotations for session sharing
+      const annotationsByPage = this.annotationsByPage || [];
+      const comments = this.comments || [];
+      const strokes = this.strokes || [];
+
+      // Collect bands from lengthMeasurements
+      const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'];
+      const verticalLabels = ['upperMargin', 'lowerMargin', 'internalMargin', 'intercolumnSpaces', 'externalMargin'];
+
+      const horizontalBands = [];
+      const verticalBands = [];
+
+      horizontalLabels.forEach(label => {
+        const measurements = this.lengthMeasurements[label] || {};
+        Object.entries(measurements).forEach(([pageIndex, bands]) => {
+          (bands || []).forEach(b => {
+            horizontalBands.push({ ...b, pageIndex: parseInt(pageIndex), label });
+          });
+        });
+      });
+
+      verticalLabels.forEach(label => {
+        const measurements = this.lengthMeasurements[label] || {};
+        Object.entries(measurements).forEach(([pageIndex, bands]) => {
+          (bands || []).forEach(b => {
+            verticalBands.push({ ...b, pageIndex: parseInt(pageIndex), label });
+          });
+        });
+      });
+
+      return {
+        highlights: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'highlight').map(a => ({ ...a, pageIndex }))
+        ),
+        underlines: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'underline').map(a => ({ ...a, pageIndex }))
+        ),
+        comments: comments.flatMap((pageComments, pageIndex) =>
+          (pageComments || []).map(c => ({ ...c, pageIndex }))
+        ),
+        traces: strokes.flatMap((pageStrokes, pageIndex) =>
+          (pageStrokes || []).map(s => ({ ...s, pageIndex }))
+        ),
+        angles: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'measure').map(a => ({ ...a, pageIndex }))
+        ),
+        horizontalBands,
+        verticalBands
+      };
+    },
+
+    // Build metadata for exports
+    getExportMetadata() {
+      return {
+        documentName: this.documentName,
+        iiifManifest: this.iiifManifest,
+        totalPages: this.images.length,
+        currentPage: this.currentPage
+      };
+    },
+
+    // JSON Export
+    handleExportJson() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+      const settings = { angleLabels: this.angleLabels };
+
+      exportAsJson(annotations, metadata, settings, this.documentName);
+      this.showToolMessage('Exported as JSON');
+    },
+
+    // TEI XML Export
+    handleExportTei() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+
+      exportAsTei(annotations, metadata, this.documentName);
+      this.showToolMessage('Exported as TEI XML');
+    },
+
+    // Plain Text Export
+    handleExportPlainText() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+
+      exportAsPlainText(annotations, metadata, this.documentName);
+      this.showToolMessage('Exported as Plain Text');
+    },
+
+    // W3C Web Annotation Export
+    handleExportWebAnnotation() {
+      const annotations = this.getAllAnnotations();
+      const metadata = this.getExportMetadata();
+
+      exportAsWebAnnotation(annotations, metadata, this.documentName);
+      this.showToolMessage('Exported as Web Annotation');
+    },
+
+    // JSON Import
+    handleImportJson(data) {
+      // Use existing loadAnnotationsFromSession()
+      this.loadAnnotationsFromSession(data.annotations);
+
+      // Restore settings if present
+      if (data.settings?.angleLabels) {
+        this.angleLabels = data.settings.angleLabels;
+      }
+
+      this.showImportDialog = false;
+      this.showToolMessage('Annotations imported successfully');
+    },
+
+    handleSessionCreated(session) {
+      this.sessionActive = true;
+      this.showToolMessage('Session created! Share the link to collaborate.');
+
+      // Update URL to session route without page reload
+      const newUrl = `/session/${session.id}`;
+      window.history.pushState({ sessionId: session.id }, '', newUrl);
+
+      // Initialize presence tracking (joinSession was called in ShareDialog)
+      this.initPresence();
+
+      // Initialize follow mode
+      this.initFollow();
+      this.setupFollowSyncHandlers();
+
+      // Subscribe to remote annotation changes (same as handleJoinSession)
+      this.annotationSyncUnsubscribe = this.onSessionMessage('annotation:sync', (payload) => {
+        this.handleRemoteAnnotationSync(payload);
+      });
+
+      // Subscribe to version restored events (from other participants)
+      this.versionRestoredUnsubscribe = this.onSessionMessage('version:restored', (payload) => {
+        if (payload.annotations) {
+          this.loadAnnotationsFromSession(payload.annotations);
+        }
+      });
+    },
+
+    applySessionComments(sessionComments) {
+      // Merge incoming comments with local state
+      // Group by pageIndex
+      sessionComments.forEach(comment => {
+        const pageIdx = comment.pageIndex || 0;
+        if (!this.comments[pageIdx]) {
+          this.comments[pageIdx] = [];
+        }
+        // Check if comment already exists locally
+        const exists = this.comments[pageIdx].some(c => c.id === comment.id);
+        if (!exists) {
+          this.comments[pageIdx].push(comment);
+        }
+      });
+    },
+
+    async loadFromSession(sessionId) {
+      try {
+        // Import the sessions API
+        const { sessionsApi } = await import('@/services/api');
+
+        // Fetch session data
+        const session = await sessionsApi.get(sessionId);
+
+        // Store session info
+        this.sessionActive = true;
+        this.iiifManifest = session.iiifManifest;
+        this.documentName = session.documentName || 'IIIF Document';
+
+        // Load images from session
+        if (session.iiifManifest.startsWith('[')) {
+          // JSON array of image URLs (from uploaded files)
+          this.images = JSON.parse(session.iiifManifest);
+          this.annotationsByPage = this.images.map(() => []);
+          this.comments = this.images.map(() => []);
+        } else if (session.iiifManifest.endsWith("manifest.json")) {
+          await this.fetchIIIFImages(session.iiifManifest);
+        } else {
+          this.images = [session.iiifManifest];
+          this.annotationsByPage = [ [] ];
+          this.comments = [ [] ];
+        }
+
+        // Load annotations from session
+        if (session.annotations) {
+          this.loadAnnotationsFromSession(session.annotations);
+        }
+
+        // Store session ID and show join dialog to ask for name
+        this.pendingSessionId = sessionId;
+        this.showJoinDialog = true;
+      } catch (error) {
+        console.error('Failed to load session:', error);
+        alert('Failed to load session. The session may not exist or has expired.');
+        this.$router.push({ name: 'IIIFInput' });
+      }
+    },
+
+    async handleJoinSession(displayName) {
+      if (!this.pendingSessionId) return;
+
+      try {
+        // Join session for real-time sync
+        await this.joinSession(this.pendingSessionId, displayName);
+
+        // Initialize presence tracking for cursors
+        this.initPresence();
+
+        // Initialize follow mode
+        this.initFollow();
+        this.setupFollowSyncHandlers();
+
+        // Subscribe to remote annotation changes
+        this.annotationSyncUnsubscribe = this.onSessionMessage('annotation:sync', (payload) => {
+          this.handleRemoteAnnotationSync(payload);
+        });
+
+        // Subscribe to version restored events (from other participants)
+        this.versionRestoredUnsubscribe = this.onSessionMessage('version:restored', (payload) => {
+          if (payload.annotations) {
+            this.loadAnnotationsFromSession(payload.annotations);
+          }
+        });
+
+        this.sessionActive = true;
+        this.pendingSessionId = null;
+        this.showToolMessage('Joined session successfully');
+      } catch (error) {
+        console.error('Failed to join session:', error);
+        this.showToolMessage('Failed to join session');
+      }
+    },
+
+    handleRemoteAnnotationSync(payload) {
+      const { action, annotationType, annotation, annotationId, updates, participantId } = payload;
+
+      // Skip if this is our own change (we already applied it locally)
+      if (participantId === this.localParticipant?.id) return;
+
+      const pageIndex = annotation?.pageIndex || 0;
+
+      // Ensure page array exists
+      if (!this.annotationsByPage[pageIndex]) {
+        this.annotationsByPage[pageIndex] = [];
+      }
+      if (!this.comments[pageIndex]) {
+        this.comments[pageIndex] = [];
+      }
+
+      // Helper for band operations
+      const handleBand = (band) => {
+        const label = band.label;
+        if (!label) return;
+        if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
+        if (!this.lengthMeasurements[label][pageIndex]) this.lengthMeasurements[label][pageIndex] = [];
+        return this.lengthMeasurements[label][pageIndex];
+      };
+
+      switch (action) {
+        case 'add':
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
+            this.annotationsByPage[pageIndex].push(annotation);
+          } else if (annotationType === 'comments') {
+            this.comments[pageIndex].push(annotation);
+          } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
+            const arr = handleBand(annotation);
+            if (arr) arr.push(annotation);
+          }
+          break;
+
+        case 'update':
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
+            const idx = this.annotationsByPage[pageIndex].findIndex(a => a.id === annotationId);
+            if (idx !== -1) {
+              this.annotationsByPage[pageIndex][idx] = {
+                ...this.annotationsByPage[pageIndex][idx],
+                ...updates
+              };
+            }
+          } else if (annotationType === 'comments') {
+            const idx = this.comments[pageIndex].findIndex(a => a.id === annotationId);
+            if (idx !== -1) {
+              this.comments[pageIndex][idx] = {
+                ...this.comments[pageIndex][idx],
+                ...updates
+              };
+            }
+          } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
+            // Find band by id across all labels
+            for (const label in this.lengthMeasurements) {
+              const arr = this.lengthMeasurements[label]?.[pageIndex];
+              if (arr) {
+                const idx = arr.findIndex(b => b.id === annotationId);
+                if (idx !== -1) {
+                  arr[idx] = { ...arr[idx], ...updates };
+                  break;
+                }
+              }
+            }
+          }
+          break;
+
+        case 'delete':
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
+            this.annotationsByPage[pageIndex] = this.annotationsByPage[pageIndex].filter(a => a.id !== annotationId);
+          } else if (annotationType === 'comments') {
+            this.comments[pageIndex] = this.comments[pageIndex].filter(a => a.id !== annotationId);
+          } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
+            // Find and remove band by id across all labels
+            for (const label in this.lengthMeasurements) {
+              const arr = this.lengthMeasurements[label]?.[pageIndex];
+              if (arr) {
+                const idx = arr.findIndex(b => b.id === annotationId);
+                if (idx !== -1) {
+                  arr.splice(idx, 1);
+                  break;
+                }
+              }
+            }
+          }
+          break;
+      }
+
+      // Re-render comment overlays if a comment was changed on the current page
+      if (annotationType === 'comments' && pageIndex === this.currentPage) {
+        this.$nextTick(() => this.renderCommentOverlays());
+      }
+    },
+
+    // ==================== FOLLOW MODE SYNC ====================
+
+    setupFollowSyncHandlers() {
+      this.cleanupFollowSyncHandlers();
+
+      this.followSyncUnsubscribers.push(
+        this.onViewportSync((payload) => this.applyViewportSync(payload)),
+        this.onFiltersSync((payload) => this.applyFiltersSync(payload))
+      );
+    },
+
+    cleanupFollowSyncHandlers() {
+      this.followSyncUnsubscribers.forEach(unsub => unsub());
+      this.followSyncUnsubscribers = [];
+    },
+
+    applyViewportSync(payload) {
+      const { pageIndex, zoom, bounds } = payload;
+
+      this.isApplyingFollowSync = true;
+
+      // Navigate to page if different
+      if (pageIndex !== this.currentPage) {
+        this.goToPage(pageIndex + 1);
+      }
+
+      // Apply zoom/pan using OpenSeadragon
+      if (this.osdViewer && bounds) {
+        const rect = new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height);
+        this.osdViewer.viewport.fitBounds(rect, true); // animated
+      } else if (this.osdViewer && zoom) {
+        this.osdViewer.viewport.zoomTo(zoom, null, true);
+      }
+
+      // Reset flag after animation
+      setTimeout(() => {
+        this.isApplyingFollowSync = false;
+      }, 300);
+    },
+
+    applyFiltersSync(payload) {
+      const { pageIndex, filters } = payload;
+
+      this.isApplyingFollowSync = true;
+
+      // Navigate to page if different
+      if (pageIndex !== this.currentPage) {
+        this.goToPage(pageIndex + 1);
+      }
+
+      // Apply all filters
+      if (filters) {
+        Object.entries(filters).forEach(([key, value]) => {
+          this.setFilter(key, value);
+        });
+      }
+
+      this.isApplyingFollowSync = false;
+    },
+
+    broadcastCurrentViewport() {
+      if (!this.sessionConnected || this.isApplyingFollowSync) return;
+      if (!this.osdViewer) return;
+
+      const bounds = this.osdViewer.viewport.getBounds();
+      const zoom = this.osdViewer.viewport.getZoom();
+
+      this.broadcastViewport(this.currentPage, zoom, {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height
+      });
+    },
+
+    broadcastCurrentFilters() {
+      if (!this.sessionConnected || this.isApplyingFollowSync) return;
+
+      this.broadcastFilters(this.currentPage, { ...this.currentFilters });
+    },
+
+    handleVersionRestored(result) {
+      // Restore annotations from version
+      if (result.annotations) {
+        this.loadAnnotationsFromSession(result.annotations);
+      }
+      this.showToolMessage(`Restored to version: ${result.restoredFrom.name}`);
+    },
+
+    loadAnnotationsFromSession(annotations) {
+      // Clear current annotations
+      this.annotationsByPage = [];
+      this.comments = [];
+      this.strokes = [];
+      this.annotations = [];
+      // Reset lengthMeasurements
+      for (const label in this.lengthMeasurements) {
+        this.lengthMeasurements[label] = {};
+      }
+
+      // Load highlights and underlines into annotationsByPage
+      if (annotations.highlights) {
+        annotations.highlights.forEach(h => {
+          const pageIndex = h.pageIndex || 0;
+          if (!this.annotationsByPage[pageIndex]) this.annotationsByPage[pageIndex] = [];
+          this.annotationsByPage[pageIndex].push({ ...h, type: 'highlight' });
+        });
+      }
+      if (annotations.underlines) {
+        annotations.underlines.forEach(u => {
+          const pageIndex = u.pageIndex || 0;
+          if (!this.annotationsByPage[pageIndex]) this.annotationsByPage[pageIndex] = [];
+          this.annotationsByPage[pageIndex].push({ ...u, type: 'underline' });
+        });
+      }
+
+      // Load comments
+      if (annotations.comments) {
+        annotations.comments.forEach(c => {
+          const pageIndex = c.pageIndex || 0;
+          if (!this.comments[pageIndex]) this.comments[pageIndex] = [];
+          this.comments[pageIndex].push(c);
+        });
+      }
+
+      // Load traces
+      if (annotations.traces) {
+        annotations.traces.forEach(t => {
+          const pageIndex = t.pageIndex || 0;
+          if (!this.strokes[pageIndex]) this.strokes[pageIndex] = [];
+          this.strokes[pageIndex].push(t);
+        });
+      }
+
+      // Load angles
+      if (annotations.angles) {
+        annotations.angles.forEach(a => {
+          const pageIndex = a.pageIndex || 0;
+          if (!this.annotations[pageIndex]) this.annotations[pageIndex] = [];
+          this.annotations[pageIndex].push(a);
+        });
+      }
+
+      // Load bands into lengthMeasurements
+      const loadBands = (bands) => {
+        if (!bands) return;
+        bands.forEach(b => {
+          const pageIndex = b.pageIndex || 0;
+          const label = b.label;
+          if (!label) return;
+          if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
+          if (!this.lengthMeasurements[label][pageIndex]) this.lengthMeasurements[label][pageIndex] = [];
+          this.lengthMeasurements[label][pageIndex].push(b);
+        });
+      };
+      loadBands(annotations.horizontalBands);
+      loadBands(annotations.verticalBands);
+    },
+
     /* ---------- Label drag for length badges ---------- */
     startLabelDrag(id, event) {
       this.draggedLabelIndex = id;
@@ -2777,6 +3721,30 @@ cancelPenSelection() {
       this.draggedLabelIndex = null;
       window.removeEventListener("mousemove", this._onLabelDragMove);
       window.removeEventListener("mouseup", this.stopLabelDrag);
+    },
+
+    /* ---------- Angle label drag ---------- */
+    startAngleLabelDrag(id, event) {
+      this.draggedLabelIndex = id;
+      const el = event.currentTarget;
+      const rect = el.getBoundingClientRect();
+      const parentRect = el.parentElement.getBoundingClientRect();
+      const currentX = rect.left - parentRect.left;
+      const currentY = rect.top - parentRect.top;
+      this.labelDragOffset = { x: event.clientX - currentX, y: event.clientY - currentY };
+      window.addEventListener("mousemove", this._onAngleLabelDragMove);
+      window.addEventListener("mouseup", this.stopAngleLabelDrag);
+    },
+    dragAngleLabel(id, event) {
+      if (this.draggedLabelIndex !== id) return;
+      const x = event.clientX - this.labelDragOffset.x;
+      const y = event.clientY - this.labelDragOffset.y;
+      this.angleLabelPositions[id] = { x, y };
+    },
+    stopAngleLabelDrag() {
+      this.draggedLabelIndex = null;
+      window.removeEventListener("mousemove", this._onAngleLabelDragMove);
+      window.removeEventListener("mouseup", this.stopAngleLabelDrag);
     },
 
     /* ---------- Paging ---------- */
@@ -2861,11 +3829,25 @@ cancelPenSelection() {
           const label = this.selectedMeasurement;
           if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
           if (!this.lengthMeasurements[label][this.currentPage]) this.lengthMeasurements[label][this.currentPage] = [];
-          this.lengthMeasurements[label][this.currentPage].push({
+
+          const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'];
+          const isHorizontal = horizontalLabels.includes(label);
+
+          const band = {
             ...this.currentSquare,
             type: "length",
-            id: Date.now() + Math.random(),
-          });
+            id: crypto.randomUUID(),
+            pageIndex: this.currentPage,
+            label
+          };
+
+          this.lengthMeasurements[label][this.currentPage].push(band);
+
+          // Sync to session if connected
+          if (this.sessionConnected) {
+            this.syncAddAnnotation(isHorizontal ? 'horizontalBands' : 'verticalBands', band);
+          }
+
           this.startPoint = null;
           this.currentSquare = null;
           return;
@@ -2889,11 +3871,35 @@ cancelPenSelection() {
           else this.currentUnderline = { x, y, width: 0, height: 2 };
           return;
         } else {
+          // Ensure array exists for current page
+          if (!this.annotationsByPage[this.currentPage]) {
+            this.annotationsByPage[this.currentPage] = [];
+          }
           if (this.highlightModeActive && this.currentSquare) {
-            this.annotationsByPage[this.currentPage].push({ type: "highlight", ...this.currentSquare });
+            const highlight = {
+              id: crypto.randomUUID(),
+              type: "highlight",
+              pageIndex: this.currentPage,
+              ...this.currentSquare
+            };
+            this.annotationsByPage[this.currentPage].push(highlight);
+            // Sync to session if connected
+            if (this.sessionConnected) {
+              this.syncAddAnnotation('highlights', highlight);
+            }
             this.currentSquare = null;
           } else if (this.underlineModeActive && this.currentUnderline) {
-            this.annotationsByPage[this.currentPage].push({ type: "underline", ...this.currentUnderline });
+            const underline = {
+              id: crypto.randomUUID(),
+              type: "underline",
+              pageIndex: this.currentPage,
+              ...this.currentUnderline
+            };
+            this.annotationsByPage[this.currentPage].push(underline);
+            // Sync to session if connected
+            if (this.sessionConnected) {
+              this.syncAddAnnotation('underlines', underline);
+            }
             this.currentUnderline = null;
           }
           this.startPoint = null;
@@ -2930,12 +3936,22 @@ cancelPenSelection() {
         this.measurePoints.push({ x, y });
         if (this.measurePoints.length === 3) {
           this.calculatedAngle = this.calculateAngle(this.measurePoints[0], this.measurePoints[1], this.measurePoints[2]);
-          this.annotationsByPage[this.currentPage].push({
+          if (!this.annotationsByPage[this.currentPage]) {
+            this.annotationsByPage[this.currentPage] = [];
+          }
+          const measure = {
+            id: crypto.randomUUID(),
             type: "measure",
+            pageIndex: this.currentPage,
             points: [...this.measurePoints],
             angle: this.calculatedAngle,
             label: this.activeAngleLabel || "Unlabeled",
-          });
+          };
+          this.annotationsByPage[this.currentPage].push(measure);
+          // Sync to session if connected
+          if (this.sessionConnected) {
+            this.syncAddAnnotation('measures', measure);
+          }
           // add label to list if new
           if (this.activeAngleLabel && !this.angleLabels.includes(this.activeAngleLabel)) {
             this.angleLabels.push(this.activeAngleLabel);
@@ -2945,6 +3961,18 @@ cancelPenSelection() {
           this.angleSnapGuide = null;
         }
         return;
+      }
+    },
+
+    // Track cursor for collaboration (runs on all mouse movement)
+    // Uses viewport-relative coordinates (percentage) so cursor shows across entire canvas
+    trackCursorForCollaboration(event) {
+      if (this.sessionConnected && this.$refs.viewer) {
+        const rect = this.$refs.viewer.getBoundingClientRect();
+        // Calculate percentage position within the viewer container
+        const xPercent = ((event.clientX - rect.left) / rect.width) * 100;
+        const yPercent = ((event.clientY - rect.top) / rect.height) * 100;
+        this.throttledCursorUpdate(xPercent, yPercent, this.currentPage);
       }
     },
 
@@ -3063,14 +4091,26 @@ cancelPenSelection() {
 
       // TRACE finalize
       if (this.traceModeActive && this.currentStroke) {
-        this.annotationsByPage[this.currentPage].push({
+        if (!this.annotationsByPage[this.currentPage]) {
+          this.annotationsByPage[this.currentPage] = [];
+        }
+        const trace = {
           type: "trace",
+          id: crypto.randomUUID(),
+          pageIndex: this.currentPage,
           points: this.currentStroke.points,
           color: this.currentStroke.color,
           penWidth: this.currentStroke.penWidth,
           penHeight: this.currentStroke.penHeight,
           nibAngle: this.currentStroke.nibAngle,
-        });
+        };
+        this.annotationsByPage[this.currentPage].push(trace);
+        
+        // Sync to session if connected
+        if (this.sessionConnected) {
+          this.syncAddAnnotation('traces', trace);
+        }
+        
         this.currentStroke = null;
       }
 
@@ -3164,6 +4204,12 @@ cancelPenSelection() {
               if (Array.isArray(a.points)) {
                 a.points = a.points.map((p) => ({ x: (p.x || 0) + dx, y: (p.y || 0) + dy }));
               }
+              if (a.id && this.angleLabelPositions[a.id]) {
+                this.angleLabelPositions[a.id] = {
+                  x: (this.angleLabelPositions[a.id].x || 0) + dx,
+                  y: (this.angleLabelPositions[a.id].y || 0) + dy,
+                };
+              }
             }
           }
           if (kind === "c") {
@@ -3234,7 +4280,11 @@ cancelPenSelection() {
         }
         const sorted = [...annIdxs].sort((a,b)=>b-a);
         sorted.forEach((i) => {
-          if (this.annotationsByPage[page][i] != null) {
+          const ann = this.annotationsByPage[page][i];
+          if (ann != null) {
+            if (ann.id && this.angleLabelPositions[ann.id]) {
+              delete this.angleLabelPositions[ann.id];
+            }
             this.annotationsByPage[page].splice(i, 1);
           }
         });
@@ -3265,6 +4315,9 @@ cancelPenSelection() {
           if (this.labelPositions[id]) delete this.labelPositions[id]; 
         });
       }
+
+      // Refresh comment overlays if any were deleted
+      if (cmtIdxs.length) this.renderCommentOverlays();
 
       // Clear selection after successful deletion
       this.bankSelectedKeys = [];
@@ -3405,20 +4458,118 @@ cancelPenSelection() {
         setTimeout(() => { this.toolMessage = ''; }, 3000);
       }
     },
-    saveCroppedImageAsPNG() {
+    _downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = this.croppedImage;
-      link.download = "cropped-image.png";
+      link.href = url;
+      link.download = filename;
       link.click();
+      URL.revokeObjectURL(url);
     },
-    saveCroppedImageAsSVG() {
-      if (!this.croppedSvg) return;
-      const svgBlob = new Blob([this.croppedSvg], { type: "image/svg+xml" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(svgBlob);
-      link.download = "cropped-image.svg";
-      link.click();
-      URL.revokeObjectURL(link.href);
+    _drawCroppedToCanvas(withAnnotations) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const w = img.naturalWidth;
+          const h = img.naturalHeight;
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+
+          if (withAnnotations) {
+            const sx = w / (this.croppedBaseW || w);
+            const sy = h / (this.croppedBaseH || h);
+
+            for (const a of this.croppedAnnotations) {
+              if (a.type === "highlight") {
+                ctx.fillStyle = "rgba(255, 255, 0, 0.3)";
+                ctx.strokeStyle = "rgba(255, 255, 0, 0.7)";
+                ctx.lineWidth = 2 * sx;
+                ctx.fillRect(a.x * sx, a.y * sy, a.width * sx, a.height * sy);
+                ctx.strokeRect(a.x * sx, a.y * sy, a.width * sx, a.height * sy);
+              } else if (a.type === "underline") {
+                ctx.strokeStyle = a.color || "#3b82f6";
+                ctx.lineWidth = (a.height || 3) * sy;
+                ctx.beginPath();
+                ctx.moveTo(a.x * sx, (a.y + (a.height || 3) / 2) * sy);
+                ctx.lineTo((a.x + a.width) * sx, (a.y + (a.height || 3) / 2) * sy);
+                ctx.stroke();
+              } else if (a.type === "trace" && Array.isArray(a.points) && a.points.length > 1) {
+                // Use calligraphic polygon for variable-width strokes
+                const polygon = generateCalligraphicPolygon(
+                  a.points,
+                  a.penWidth || 2,
+                  a.penHeight || a.penWidth || 2,
+                  a.nibAngle || 45,
+                  sx,
+                  sy
+                );
+                if (polygon.length > 0) {
+                  ctx.fillStyle = a.color || "#000";
+                  ctx.beginPath();
+                  ctx.moveTo(polygon[0].x, polygon[0].y);
+                  for (let i = 1; i < polygon.length; i++) {
+                    ctx.lineTo(polygon[i].x, polygon[i].y);
+                  }
+                  ctx.closePath();
+                  ctx.fill();
+                }
+              } else if (a.type === "measure" && Array.isArray(a.points)) {
+                ctx.strokeStyle = "blue";
+                ctx.lineWidth = 2 * sx;
+                if (a.points.length >= 2) {
+                  ctx.beginPath();
+                  ctx.moveTo(a.points[0].x * sx, a.points[0].y * sy);
+                  ctx.lineTo(a.points[1].x * sx, a.points[1].y * sy);
+                  ctx.stroke();
+                }
+                if (a.points.length === 3) {
+                  ctx.beginPath();
+                  ctx.moveTo(a.points[1].x * sx, a.points[1].y * sy);
+                  ctx.lineTo(a.points[2].x * sx, a.points[2].y * sy);
+                  ctx.stroke();
+                  const lx = a.points[1].x * sx + 10 * sx;
+                  const ly = a.points[1].y * sy - 10 * sy;
+                  ctx.font = `bold ${16 * sx}px sans-serif`;
+                  ctx.fillStyle = "#00ff87";
+                  ctx.strokeStyle = "#000";
+                  ctx.lineWidth = 0.5 * sx;
+                  const label = `${a.angle}°${a.label ? ' • ' + a.label : ''}`;
+                  ctx.strokeText(label, lx, ly);
+                  ctx.fillText(label, lx, ly);
+                }
+              }
+            }
+          }
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error("Canvas toBlob failed"));
+          }, "image/png");
+        };
+        img.onerror = () => reject(new Error("Failed to load image"));
+        img.src = this.croppedImage;
+      });
+    },
+    async saveCroppedImageAsPNG() {
+      try {
+        const blob = await this._drawCroppedToCanvas(false);
+        this._downloadBlob(blob, "cropped-image.png");
+      } catch (e) {
+        console.warn("PNG save failed:", e);
+        window.open(this.croppedImage, "_blank");
+      }
+    },
+    async saveCroppedImage() {
+      try {
+        const blob = await this._drawCroppedToCanvas(true);
+        this._downloadBlob(blob, "cropped-annotated.png");
+      } catch (e) {
+        console.warn("Annotated save failed:", e);
+        this.showToolMessage("Failed to save annotated image.");
+      }
     },
     calculateCroppedAngleStatistics() {
       const angleValues = this.collectAngleValuesFromAnnotations(this.croppedAnnotations);
@@ -3433,7 +4584,7 @@ cancelPenSelection() {
       this.showAngleStatistics = true;
     },
     handleCropDialogChange(open) {
-      if (!open) {
+      if (!open && !this.showAngleStatistics) {
         this.closeCroppedPopup();
       }
     },
@@ -3670,7 +4821,9 @@ cancelPenSelection() {
       if (this.traceModeActive) {
         this.croppedLive.trace = {
           color: this.generateRandomColor(),
-          penWidth: 2,
+          penWidth: this.penWidth,
+          penHeight: this.penHeight,
+          nibAngle: this.currentNibAngle,
           points: [{ x, y }]
         };
         return;
@@ -3831,9 +4984,11 @@ cancelPenSelection() {
           type: 'trace',
           points: [...this.croppedLive.trace.points],
           color: this.croppedLive.trace.color,
-          penWidth: this.croppedLive.trace.penWidth
+          penWidth: this.croppedLive.trace.penWidth,
+          penHeight: this.croppedLive.trace.penHeight,
+          nibAngle: this.croppedLive.trace.nibAngle
         });
-        
+
         this.croppedLive.trace = null;
         return;
       }
@@ -4247,7 +5402,7 @@ cancelPenSelection() {
 }
 
 .annotation-overlay .drawing-layer * {
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .bank { width: 300px; min-width: 300px; border-left: 1px solid hsl(var(--border)); }
@@ -4364,13 +5519,20 @@ cancelPenSelection() {
 
 .underline-line { position: absolute; background-color: blue; height: 2px; pointer-events: none; z-index: 1100; }
 
-.length-measurement { position: absolute; border: 2px solid rgba(0, 0, 0, 0.5); pointer-events: none; }
+.length-measurement { position: absolute; border: none; pointer-events: none; }
 .length-label {
   position: absolute; left: 15px; top: 15px; transform: translateY(0);
   color: hsl(var(--foreground)); font-size: 12px; background-color: hsl(var(--card)); padding: 2px 5px; border-radius: 3px;
 }
 .draggable-label { cursor: grab; user-select: none; }
 .draggable-label:active { cursor: grabbing; }
+.angle-label {
+  position: absolute; left: 15px; top: 15px;
+  color: #00ff87; font-size: 14px; font-weight: bold;
+  background-color: rgba(0, 0, 0, 0.6); padding: 2px 6px; border-radius: 3px;
+  text-shadow: 0 0 2px #000;
+  white-space: nowrap;
+}
 
 .highlight-rectangle { position: absolute; border: 2px solid rgba(255, 255, 0, 0.7); background-color: rgba(255, 255, 0, 0.3); pointer-events: none; }
 
@@ -4433,102 +5595,6 @@ body.cropped-popup-active *::-moz-selection {
 .cropped-popup-content button { margin-top: 10px; padding: 8px 16px; background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border: none; border-radius: 4px; cursor: pointer; }
 .cropped-popup-content button:hover { filter: brightness(0.9); }
 
-/* Comment card */
-.comment-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: grab;
-  user-select: none;
-}
-.comment-card:active { cursor: grabbing; }
-
-.comment-pin {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: hsl(var(--primary) / 0.1);
-  color: hsl(var(--primary));
-  border: 1px solid hsl(var(--primary) / 0.3);
-  font-size: 14px;
-  flex: 0 0 auto;
-}
-
-.comment-bubble {
-  flex: 1 1 auto;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
-  padding: 8px 10px;
-}
-.comment-text {
-  font-size: 13px;
-  color: hsl(var(--foreground));
-  line-height: 1.35;
-}
-
-/* Composer */
-.comment-composer {
-  width: 260px;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg, 0 10px 24px rgba(0, 0, 0, 0.18));
-  padding: 10px;
-}
-
-.composer-textarea {
-  width: 100%;
-  min-height: 86px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 13px;
-  resize: vertical;
-  outline: none;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-}
-.composer-textarea:focus {
-  border-color: hsl(var(--primary));
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
-}
-
-.composer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.btn-blue {
-  border: 1px solid hsl(var(--primary));
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: filter .15s, transform .02s;
-}
-.btn-blue:hover { filter: brightness(0.95); }
-.btn-blue:active { transform: translateY(1px); }
-
-.btn-gray {
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: filter .15s, transform .02s;
-}
-.btn-gray:hover { filter: brightness(0.97); }
-.btn-gray:active { transform: translateY(1px); }
 
 .clear-dropdown {
   position: absolute; top: 100%; left: 0; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); border: 1px solid hsl(var(--border)); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; min-width: 160px; padding: 4px 0; margin-top: 4px;
@@ -5406,4 +6472,101 @@ div.statistics-popup,
   visibility: hidden !important;
   pointer-events: none !important;
 }
+</style>
+
+<!-- Unscoped: styles for dynamically created OSD overlay elements -->
+<style>
+.comment-pin-wrapper {
+  cursor: pointer;
+  pointer-events: auto;
+}
+.comment-pin-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: hsl(var(--primary));
+  color: white;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  transition: transform 0.15s ease;
+}
+.comment-pin-icon:hover {
+  transform: scale(1.15);
+}
+.comment-expanded-bubble {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  width: 220px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+  padding: 8px 10px;
+  pointer-events: auto;
+}
+.comment-text {
+  font-size: 13px;
+  color: hsl(var(--foreground));
+  line-height: 1.35;
+}
+.comment-composer {
+  width: 260px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  padding: 10px;
+  pointer-events: auto;
+}
+.composer-textarea {
+  width: 100%;
+  min-height: 86px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: vertical;
+  outline: none;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+.composer-textarea:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+.composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.btn-blue {
+  border: 1px solid hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: filter .15s, transform .02s;
+}
+.btn-blue:hover { filter: brightness(0.95); }
+.btn-blue:active { transform: translateY(1px); }
+.btn-gray {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: filter .15s, transform .02s;
+}
+.btn-gray:hover { filter: brightness(0.97); }
+.btn-gray:active { transform: translateY(1px); }
 </style>

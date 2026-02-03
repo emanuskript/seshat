@@ -1,10 +1,17 @@
 <template>
-  <router-view />
+  <TourProvider>
+    <router-view />
+  </TourProvider>
 </template>
 
 <script>
+import TourProvider from '@/components/tour/TourProvider.vue'
+
 export default {
   name: "App",
+  components: {
+    TourProvider
+  }
 };
 </script>
 

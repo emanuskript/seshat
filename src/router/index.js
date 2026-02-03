@@ -14,6 +14,12 @@ const routes = [
         component: IIIFViewer,
         props: true, // Automatically pass route params as props
     },
+    {
+        path: "/session/:sessionId",
+        name: "SessionViewer",
+        component: IIIFViewer,
+        props: true, // Session ID passed as prop
+    },
 ];
 
 
