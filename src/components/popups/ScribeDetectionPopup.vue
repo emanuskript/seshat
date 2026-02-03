@@ -327,6 +327,21 @@
               :scribes="results.scribe_changes"
               :feature-names="results.feature_names || []"
             />
+            
+            <!-- AI Disclaimer -->
+            <div class="ai-disclaimer-box">
+              <div class="disclaimer-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="16" x2="12" y2="12"></line>
+                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+              </div>
+              <div class="disclaimer-content">
+                <strong>AI-Generated Analysis</strong>
+                <p>These results were generated using artificial intelligence and may not be 100% accurate. Please verify important findings manually.</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2499,6 +2514,7 @@ export default {
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
+  overflow: visible;
 }
 
 .comparison-header {
@@ -2516,6 +2532,47 @@ export default {
   font-weight: 600;
   color: hsl(var(--foreground));
 }
+
+/* AI Disclaimer Box */
+.ai-disclaimer-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: hsl(var(--muted) / 0.5);
+  border: 1px solid hsl(var(--border));
+  border-left: 3px solid hsl(var(--primary));
+  border-radius: 8px;
+}
+
+.disclaimer-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: hsl(var(--primary));
+  margin-top: 2px;
+}
+
+.disclaimer-content {
+  flex: 1;
+}
+
+.disclaimer-content strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin-bottom: 4px;
+}
+
+.disclaimer-content p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+
 
 /* Single Scribe Section */
 .single-scribe-section {
@@ -2904,6 +2961,7 @@ export default {
 
 .results-section {
   flex: 1;
+  overflow: visible;
 }
 
 .results-section h4 {

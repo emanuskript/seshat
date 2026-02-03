@@ -18,7 +18,7 @@
     </div>
 
     <!-- Table View -->
-    <div v-if="viewMode === 'table'" class="overflow-x-auto">
+    <div v-if="viewMode === 'table'" class="overflow-x-auto tooltip-container">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-border">
@@ -35,6 +35,13 @@
               class="border-b border-muted hover:bg-muted/50 transition-colors">
             <td class="py-2 px-3 text-muted-foreground">
               <div class="flex items-center gap-2">
+                <div class="feature-info-icon" :title="feature.description">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                  </svg>
+                </div>
                 <span>{{ feature.label }}</span>
                 <span v-if="feature.unit" class="text-xs opacity-60">({{ feature.unit }})</span>
               </div>
@@ -152,19 +159,84 @@ export default {
   computed: {
     displayFeatures() {
       return [
-        { key: 'avg_stroke_width', label: 'Stroke Width', unit: 'px' },
-        { key: 'stroke_width_variance', label: 'Stroke Variance', unit: null },
-        { key: 'curvature_avg', label: 'Curvature', unit: null },
-        { key: 'angularity_score', label: 'Angularity', unit: null },
-        { key: 'letter_spacing', label: 'Letter Spacing', unit: 'px' },
-        { key: 'word_spacing', label: 'Word Spacing', unit: 'px' },
-        { key: 'slant_angle', label: 'Slant Angle', unit: 'deg' },
-        { key: 'slant_consistency', label: 'Slant Consistency', unit: null },
-        { key: 'pressure_avg', label: 'Pressure', unit: null },
-        { key: 'pressure_variance', label: 'Pressure Variance', unit: null },
-        { key: 'letter_height_avg', label: 'Letter Height', unit: 'px' },
-        { key: 'letter_height_variance', label: 'Height Variance', unit: null },
-        { key: 'baseline_straightness', label: 'Baseline Straightness', unit: null }
+        { 
+          key: 'avg_stroke_width', 
+          label: 'Stroke Width', 
+          unit: 'px',
+          description: 'Average thickness of pen strokes in pixels. Higher values indicate thicker writing.'
+        },
+        { 
+          key: 'stroke_width_variance', 
+          label: 'Stroke Variance', 
+          unit: null,
+          description: 'Variation in stroke thickness throughout the text. Higher values indicate more inconsistent pressure or pen angle.'
+        },
+        { 
+          key: 'curvature_avg', 
+          label: 'Curvature', 
+          unit: null,
+          description: 'Average roundness of strokes. Higher values indicate more curved, flowing writing; lower values indicate straighter strokes.'
+        },
+        { 
+          key: 'angularity_score', 
+          label: 'Angularity', 
+          unit: null,
+          description: 'Measure of sharp angles in the writing. Higher values indicate more angular, pointed letterforms.'
+        },
+        { 
+          key: 'letter_spacing', 
+          label: 'Letter Spacing', 
+          unit: 'px',
+          description: 'Average horizontal distance between individual letters within words.'
+        },
+        { 
+          key: 'word_spacing', 
+          label: 'Word Spacing', 
+          unit: 'px',
+          description: 'Average horizontal distance between words in the text.'
+        },
+        { 
+          key: 'slant_angle', 
+          label: 'Slant Angle', 
+          unit: 'deg',
+          description: 'Average angle of letter slant. Negative values lean left, positive values lean right, 0° is vertical.'
+        },
+        { 
+          key: 'slant_consistency', 
+          label: 'Slant Consistency', 
+          unit: null,
+          description: 'Uniformity of slant angle across the text. Higher percentages indicate more consistent slant.'
+        },
+        { 
+          key: 'pressure_avg', 
+          label: 'Pressure', 
+          unit: null,
+          description: 'Average writing pressure inferred from stroke intensity. Higher values suggest heavier pen pressure.'
+        },
+        { 
+          key: 'pressure_variance', 
+          label: 'Pressure Variance', 
+          unit: null,
+          description: 'Variation in writing pressure. Higher values indicate more dynamic pressure changes during writing.'
+        },
+        { 
+          key: 'letter_height_avg', 
+          label: 'Letter Height', 
+          unit: 'px',
+          description: 'Average vertical height of letters in the text.'
+        },
+        { 
+          key: 'letter_height_variance', 
+          label: 'Height Variance', 
+          unit: null,
+          description: 'Variation in letter heights. Higher values indicate less uniform letter sizing.'
+        },
+        { 
+          key: 'baseline_straightness', 
+          label: 'Baseline Straightness', 
+          unit: null,
+          description: 'How straight the baseline of the text is. Higher values indicate more consistent baseline alignment.'
+        }
       ]
     },
 
@@ -322,6 +394,10 @@ export default {
   @apply w-full;
 }
 
+.tooltip-container {
+  overflow-y: visible !important;
+}
+
 table {
   border-collapse: collapse;
 }
@@ -329,4 +405,75 @@ table {
 th, td {
   white-space: nowrap;
 }
+
+/* Feature Info Icon */
+.feature-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: hsl(var(--primary));
+  cursor: help;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  position: relative;
+}
+
+.feature-info-icon:hover {
+  opacity: 1;
+}
+
+.feature-info-icon::after {
+  content: attr(title);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  padding: 8px 12px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  width: 240px;
+  max-width: 90vw;
+  text-align: left;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 9999;
+}
+
+.feature-info-icon:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Tooltip arrow */
+.feature-info-icon::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  bottom: calc(100% + 4px);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid hsl(var(--border));
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 10000;
+}
+
+.feature-info-icon:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
 </style>
+

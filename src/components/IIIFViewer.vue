@@ -3142,8 +3142,19 @@ cancelPenSelection() {
       this.showClearDropdown = false;
     },
     clearTraces() {
+      const tracesToDelete = (this.annotationsByPage[this.currentPage] || [])
+        .filter(a => a.type === "trace");
+      
       this.annotationsByPage[this.currentPage] = (this.annotationsByPage[this.currentPage] || [])
         .filter(a => a.type !== "trace");
+      
+      // Sync deletion to session if connected
+      if (this.sessionConnected && tracesToDelete.length > 0) {
+        tracesToDelete.forEach(trace => {
+          this.syncDeleteAnnotation('traces', trace.id, trace.pageIndex);
+        });
+      }
+      
       this.showToolMessage("Traces cleared.");
       this.showClearDropdown = false;
     },
@@ -3464,7 +3475,7 @@ cancelPenSelection() {
 
       switch (action) {
         case 'add':
-          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures') {
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
             this.annotationsByPage[pageIndex].push(annotation);
           } else if (annotationType === 'comments') {
             this.comments[pageIndex].push(annotation);
@@ -3475,7 +3486,7 @@ cancelPenSelection() {
           break;
 
         case 'update':
-          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures') {
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
             const idx = this.annotationsByPage[pageIndex].findIndex(a => a.id === annotationId);
             if (idx !== -1) {
               this.annotationsByPage[pageIndex][idx] = {
@@ -3507,7 +3518,7 @@ cancelPenSelection() {
           break;
 
         case 'delete':
-          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures') {
+          if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
             this.annotationsByPage[pageIndex] = this.annotationsByPage[pageIndex].filter(a => a.id !== annotationId);
           } else if (annotationType === 'comments') {
             this.comments[pageIndex] = this.comments[pageIndex].filter(a => a.id !== annotationId);
@@ -4083,14 +4094,23 @@ cancelPenSelection() {
         if (!this.annotationsByPage[this.currentPage]) {
           this.annotationsByPage[this.currentPage] = [];
         }
-        this.annotationsByPage[this.currentPage].push({
+        const trace = {
           type: "trace",
+          id: crypto.randomUUID(),
+          pageIndex: this.currentPage,
           points: this.currentStroke.points,
           color: this.currentStroke.color,
           penWidth: this.currentStroke.penWidth,
           penHeight: this.currentStroke.penHeight,
           nibAngle: this.currentStroke.nibAngle,
-        });
+        };
+        this.annotationsByPage[this.currentPage].push(trace);
+        
+        // Sync to session if connected
+        if (this.sessionConnected) {
+          this.syncAddAnnotation('traces', trace);
+        }
+        
         this.currentStroke = null;
       }
 
