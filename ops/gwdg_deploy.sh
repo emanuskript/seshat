@@ -1,4 +1,3 @@
-echo "If HTTPS fails, check:"
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -31,10 +30,6 @@ WEB_ROOT="${WEB_ROOT:-/var/www/${APP_NAME}}"
 
 NODE_PORT="${NODE_PORT:-3001}"
 PY_PORT="${PY_PORT:-5001}"
-
-DB_NAME="${DB_NAME:-quillapp}"
-DB_USER="${DB_USER:-quillapp}"
-DB_PASS_FILE="${DB_PASS_FILE:-${APP_ROOT}/.db_pass}"
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -92,6 +87,9 @@ clone_or_update_repo() {
     git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_ROOT}/app"
   fi
 
+  # Fix dubious ownership warning on rerun
+  git config --global --add safe.directory "${APP_ROOT}/app" || true
+
   # Repo can contain huge committed artifacts under python-backend/static.
   # Safe to delete: backend recreates needed folders at runtime.
   if [[ -d "${APP_ROOT}/app/python-backend/static" ]]; then
@@ -102,40 +100,24 @@ clone_or_update_repo() {
 }
 
 ensure_postgres() {
-  log "PostgreSQL: ensure role + database"
-  systemctl enable --now postgresql
+  log "PostgreSQL: ensure role + database (idempotent)"
+  systemctl is-active --quiet postgresql || systemctl start postgresql
 
-  local db_pass
-  if [[ -f "${DB_PASS_FILE}" ]]; then
-    db_pass="$(cat "${DB_PASS_FILE}")"
+  # role
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='quillapp'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE ROLE quillapp LOGIN PASSWORD 'quillapp';"
   else
-    db_pass="$(python3 - <<'PY'
-import secrets, string
-alphabet = string.ascii_letters + string.digits
-print(''.join(secrets.choice(alphabet) for _ in range(32)))
-PY
-)"
-    mkdir -p "$(dirname "${DB_PASS_FILE}")"
-    printf "%s" "${db_pass}" > "${DB_PASS_FILE}"
-    chmod 600 "${DB_PASS_FILE}"
+    # keep password in sync (fixes Prisma P1000)
+    sudo -u postgres psql -c "ALTER USER quillapp WITH PASSWORD 'quillapp';"
   fi
 
-  runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<SQL
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN
-    CREATE ROLE ${DB_USER} LOGIN PASSWORD '${db_pass}';
-  END IF;
+  # database
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='quillapp'" | grep -q 1; then
+    sudo -u postgres createdb -O quillapp quillapp
+  fi
 
-  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}') THEN
-    CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-  END IF;
-END
-\$\$;
-SQL
-
-  export DATABASE_URL="postgresql://${DB_USER}:${db_pass}@127.0.0.1:5432/${DB_NAME}?schema=public"
-  log "DATABASE_URL set (password stored at ${DB_PASS_FILE})"
+  export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
+  log "DATABASE_URL set"
 }
 
 build_frontend() {
@@ -170,8 +152,16 @@ EOF
 }
 
 setup_node_backend() {
+  log "Node backend: write .env for Prisma (DATABASE_URL)"
+  local NODE_DIR="${APP_ROOT}/app/server"
+  mkdir -p "$NODE_DIR"
+  cat > "${NODE_DIR}/.env" <<'EOF'
+DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
+PORT=3001
+EOF
+
   log "Node backend: install deps + migrate + systemd"
-  cd "${APP_ROOT}/app/server" || { echo "ERROR: expected Node backend at ${APP_ROOT}/app/server"; exit 3; }
+  cd "${NODE_DIR}" || { echo "ERROR: expected Node backend at ${NODE_DIR}"; exit 3; }
 
   mkdir -p "${APP_ROOT}/env"
   cat > "${APP_ROOT}/env/node.env" <<EOF
