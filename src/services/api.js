@@ -1,4 +1,12 @@
-const API_URL = process.env.VUE_APP_API_URL || 'http://localhost:3001'
+// src/services/api.js
+
+const RAW_BASE =
+  (typeof process !== 'undefined' && process.env && process.env.VUE_APP_API_URL) ||
+  (typeof window !== 'undefined' && window.location && window.location.origin) ||
+  'http://localhost:3001'
+
+// Normalize: trim trailing slashes, and if someone sets ".../api" avoid "/api/api/..."
+const API_URL = RAW_BASE.replace(/\/+$/, '').replace(/\/api$/, '')
 
 class ApiError extends Error {
   constructor(message, status, code) {
@@ -10,17 +18,16 @@ class ApiError extends Error {
 
 async function request(endpoint, options = {}) {
   const url = `${API_URL}${endpoint}`
+  const config = { ...options }
 
-  const config = {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
+  // Only set JSON content-type when sending JSON
+  if (config.body !== undefined) {
+    if (config.body instanceof FormData) {
+      // Let browser set multipart boundary
+    } else if (typeof config.body === 'object') {
+      config.headers = { 'Content-Type': 'application/json', ...(config.headers || {}) }
+      config.body = JSON.stringify(config.body)
     }
-  }
-
-  if (options.body && typeof options.body === 'object') {
-    config.body = JSON.stringify(options.body)
   }
 
   const response = await fetch(url, config)
@@ -34,77 +41,51 @@ async function request(endpoint, options = {}) {
     )
   }
 
-  if (response.status === 204) {
-    return null
-  }
-
+  if (response.status === 204) return null
   return response.json()
 }
 
-// Sessions API
 export const sessionsApi = {
-  create(data) {
-    return request('/api/sessions', {
+  createSession: (data) =>
+    request('/api/sessions', {
       method: 'POST',
       body: data
-    })
-  },
+    }),
 
-  get(sessionId) {
-    return request(`/api/sessions/${sessionId}`)
-  },
+  joinSession: (sessionId, data) =>
+    request(`/api/sessions/${sessionId}/join`, {
+      method: 'POST',
+      body: data
+    }),
 
-  updateAnnotations(sessionId, annotations) {
-    return request(`/api/sessions/${sessionId}/annotations`, {
+  getSession: (sessionId) => request(`/api/sessions/${sessionId}`),
+
+  updateAnnotations: (sessionId, data) =>
+    request(`/api/sessions/${sessionId}/annotations`, {
       method: 'PUT',
-      body: { annotations }
-    })
-  },
+      body: data
+    }),
 
-  getByDevice(deviceId) {
-    return request(`/api/sessions/device/${deviceId}`)
-  },
-
-  delete(sessionId) {
-    return request(`/api/sessions/${sessionId}`, {
-      method: 'DELETE'
-    })
-  }
+  getSessionVersions: (sessionId) => request(`/api/sessions/${sessionId}/versions`)
 }
 
-// Versions API
 export const versionsApi = {
-  create(sessionId, data) {
-    return request(`/api/sessions/${sessionId}/versions`, {
+  createVersion: (sessionId, data) =>
+    request(`/api/sessions/${sessionId}/versions`, {
       method: 'POST',
       body: data
-    })
-  },
+    }),
 
-  list(sessionId) {
-    return request(`/api/sessions/${sessionId}/versions`)
-  },
-
-  checkUnsaved(sessionId) {
-    return request(`/api/sessions/${sessionId}/versions/check-unsaved`)
-  },
-
-  get(sessionId, versionId) {
-    return request(`/api/sessions/${sessionId}/versions/${versionId}`)
-  },
-
-  restore(sessionId, versionId, restoredBy) {
-    return request(`/api/sessions/${sessionId}/versions/${versionId}/restore`, {
+  restoreVersion: (sessionId, versionId, data) =>
+    request(`/api/sessions/${sessionId}/versions/${versionId}/restore`, {
       method: 'POST',
-      body: { restoredBy }
-    })
-  },
+      body: data
+    }),
 
-  delete(sessionId, versionId) {
-    return request(`/api/sessions/${sessionId}/versions/${versionId}`, {
+  deleteVersion: (sessionId, versionId) =>
+    request(`/api/sessions/${sessionId}/versions/${versionId}`, {
       method: 'DELETE'
     })
-  }
 }
 
 export { ApiError }

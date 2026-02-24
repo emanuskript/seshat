@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# QuillApp one-shot deploy for Ubuntu 22.04+
-# Serves: Frontend on :80
-# Proxies:
-#   /api/*  -> Node backend (localhost:3001)
-#   /ws     -> Node websocket
-#   /ml/*   -> Python backend (localhost:5001)
-#
-# Run:
-#   APP_HOST=v021067.vm.gwdguser.de sudo bash ops/gwdg_deploy.sh
-
 APP_NAME="${APP_NAME:-quillapp}"
 REPO_URL="${REPO_URL:-https://github.com/emanuskript/QuillApp.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
@@ -80,8 +70,6 @@ ensure_dirs() {
 clone_or_update_repo() {
   log "Clone or update repo"
   mkdir -p "${APP_ROOT}"
-
-  # Make git treat this path as safe even when running under sudo/root
   git config --global --add safe.directory "${APP_ROOT}/app" || true
 
   if [[ -d "${APP_ROOT}/app/.git" ]]; then
@@ -93,8 +81,6 @@ clone_or_update_repo() {
     git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_ROOT}/app"
   fi
 
-  # Repo can contain huge committed artifacts under python-backend/static.
-  # Safe to delete: backend recreates needed folders at runtime.
   if [[ -d "${APP_ROOT}/app/python-backend/static" ]]; then
     log "Prune python-backend/static (large committed artifacts)"
     rm -rf "${APP_ROOT}/app/python-backend/static"
@@ -117,9 +103,10 @@ ensure_postgres() {
     sudo -u postgres createdb -O quillapp quillapp
   fi
 
-  # Prisma wants schema=public, but psql/libpq does NOT understand ?schema=
   export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
-  export DATABASE_URL_PSQL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?options=-csearch_path%3Dpublic"
+  # psql/libpq DOES NOT understand Prisma's `?schema=public` param -> strip for CLI checks
+  export DATABASE_URL_PSQL="${DATABASE_URL%%\?*}"
+
   log "DATABASE_URL set"
 }
 
@@ -128,17 +115,18 @@ build_frontend() {
   cd "${APP_ROOT}/app"
 
   local BASE_URL="http://${APP_HOST}"
+
+  # IMPORTANT: api.js already calls /api/... endpoints, so base must be host only.
   cat > .env.production.local <<EOF
-VUE_APP_API_URL=${BASE_URL}/api
+VUE_APP_API_URL=${BASE_URL}
 VUE_APP_WS_URL=ws://${APP_HOST}/ws
 EOF
 
-  # Replace the hardcoded HF Space backend URL with our local /ml proxy.
+  # Replace HF Space backend URL with our local /ml proxy
   if [[ -f "src/main.js" ]]; then
     sed -i "s|https://basuony-pharosight.hf.space|${BASE_URL}/ml|g" src/main.js || true
   fi
 
-  # Patch any hardcoded localhost WS URLs if they exist.
   if command -v grep >/dev/null 2>&1; then
     while IFS= read -r -d '' f; do
       sed -i "s|ws://localhost:3001/ws|ws://${APP_HOST}/ws|g" "$f" || true
@@ -164,13 +152,11 @@ NODE_ENV=production
 PORT=${NODE_PORT}
 DATABASE_URL=${DATABASE_URL}
 CORS_ORIGIN=http://${APP_HOST}
-CORS_ORIGINS=http://${APP_HOST}
 EOF
 
   npm ci
 
   log "Node backend: DB auth precheck (before Prisma)"
-  # use libpq-compatible URL (no schema=)
   psql "${DATABASE_URL_PSQL}" -c "select 1" >/dev/null
 
   if [[ -d prisma/migrations ]] && ls -1 prisma/migrations/*/migration.sql >/dev/null 2>&1; then
@@ -218,7 +204,7 @@ After=network.target
 Type=simple
 WorkingDirectory=${py_dir}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=${APP_ROOT}/venv/bin/gunicorn --workers 2 --threads 2 --timeout 300 --bind 127.0.0.1:${PY_PORT} app:app
+ExecStart=${APP_ROOT}/venv/bin/gunicorn --workers 2 --threads 2 --timeout 600 --bind 127.0.0.1:${PY_PORT} app:app
 Restart=always
 RestartSec=2
 
@@ -234,57 +220,65 @@ setup_nginx() {
   log "Nginx: serve frontend + proxy /api /ws /ml"
   rm -f /etc/nginx/sites-enabled/default || true
 
-  cat > "/etc/nginx/sites-available/${APP_NAME}" <<EOF
+  cat > "/etc/nginx/sites-available/${APP_NAME}" <<'NGINXEOF'
 server {
   listen 80;
-  server_name ${APP_HOST} _;
+  server_name %%APP_HOST%% _;
 
-  root ${WEB_ROOT};
+  # FIX: allow large POST bodies (PharoSight sends multi-MB images)
+  client_max_body_size 60m;
+
+  root %%WEB_ROOT%%;
   index index.html;
 
   location / {
-    try_files \$uri \$uri/ /index.html;
+    try_files $uri $uri/ /index.html;
   }
 
-  # IMPORTANT: trailing slash strips /api/ prefix so Node sees /health not /api/health
   location /api/ {
-    proxy_pass http://127.0.0.1:${NODE_PORT}/;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
   }
 
-  # convenience: direct health
   location = /health {
-    proxy_pass http://127.0.0.1:${NODE_PORT}/health;
-    proxy_set_header Host \$host;
-  }
-
-  # and also /api/health explicitly
-  location = /api/health {
-    proxy_pass http://127.0.0.1:${NODE_PORT}/health;
-    proxy_set_header Host \$host;
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%/health;
+    proxy_set_header Host $host;
   }
 
   location /ws {
-    proxy_pass http://127.0.0.1:${NODE_PORT};
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%;
     proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
-    proxy_set_header Host \$host;
-    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
   }
 
   location /ml/ {
-    proxy_pass http://127.0.0.1:${PY_PORT}/;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
+    # FIX: 413 on /ml/analyze
+    client_max_body_size 60m;
+
+    proxy_request_buffering off;
+    proxy_read_timeout 600;
+    proxy_send_timeout 600;
+
+    proxy_pass http://127.0.0.1:%%PY_PORT%%/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
   }
 }
-EOF
+NGINXEOF
+
+  # Replace placeholders with actual values
+  sed -i "s|%%APP_HOST%%|${APP_HOST}|g"   "/etc/nginx/sites-available/${APP_NAME}"
+  sed -i "s|%%WEB_ROOT%%|${WEB_ROOT}|g"   "/etc/nginx/sites-available/${APP_NAME}"
+  sed -i "s|%%NODE_PORT%%|${NODE_PORT}|g" "/etc/nginx/sites-available/${APP_NAME}"
+  sed -i "s|%%PY_PORT%%|${PY_PORT}|g"     "/etc/nginx/sites-available/${APP_NAME}"
 
   ln -sf "/etc/nginx/sites-available/${APP_NAME}" "/etc/nginx/sites-enabled/${APP_NAME}"
   nginx -t
@@ -295,14 +289,9 @@ EOF
 print_done() {
   log "DONE"
   echo "Frontend:   http://${APP_HOST}/"
-  echo "Node API:   http://${APP_HOST}/health  (also http://${APP_HOST}/api/health)"
+  echo "Node API:   http://${APP_HOST}/health"
   echo "WebSocket:  ws://${APP_HOST}/ws"
-  echo "Python API: http://${APP_HOST}/ml/  (proxied to localhost:${PY_PORT})"
-  echo
-  echo "If something fails, logs:"
-  echo "  journalctl -u ${APP_NAME}-node.service -n 200 --no-pager"
-  echo "  journalctl -u ${APP_NAME}-ml.service -n 200 --no-pager"
-  echo "  tail -n 200 /var/log/nginx/error.log"
+  echo "Python API: http://${APP_HOST}/ml/"
 }
 
 main() {

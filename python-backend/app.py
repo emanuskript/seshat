@@ -50,7 +50,7 @@ UPLOADS_DIR = BASE_DIR / "uploads"
 JOBS_DIR = STATIC_DIR / "jobs"
 
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
-MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20MB
+MAX_CONTENT_LENGTH = 60 * 1024 * 1024  # 60MB
 MAX_IMAGE_DIM = int(os.getenv("QUILLAPP_MAX_IMAGE_DIM", "0"))  # 0 = disabled
 
 # ------------------ Morphological Line Segmentation ------------------
