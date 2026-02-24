@@ -2,235 +2,202 @@ echo "If HTTPS fails, check:"
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ----------------------------
-# Config (override via env)
-# ----------------------------
+# QuillApp one-shot deploy for Ubuntu 22.04+
+# Serves: Frontend on :80
+# Proxies:
+#   /api/*  -> Node backend (localhost:3001)
+#   /ws     -> Node websocket
+#   /ml/*   -> Python backend (localhost:5001)
+#
+# Run:
+#   APP_HOST=v021067.vm.gwdguser.de sudo bash ops/gwdg_deploy.sh
+
 APP_NAME="${APP_NAME:-quillapp}"
-RUN_USER="${RUN_USER:-quillapp}"
-APP_ROOT="${APP_ROOT:-/opt/${APP_NAME}}"
-WEB_ROOT="${WEB_ROOT:-/var/www/${APP_NAME}}"
 REPO_URL="${REPO_URL:-https://github.com/emanuskript/QuillApp.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
-# Hostname to print at the end (your public DNS)
-APP_HOST="${APP_HOST:-v021067.vm.gwdguser.de}"
+APP_HOST="${APP_HOST:-}"
+if [[ -z "$APP_HOST" ]]; then
+  APP_HOST="$(hostname -f 2>/dev/null || true)"
+fi
+if [[ -z "$APP_HOST" || "$APP_HOST" != *.* ]]; then
+  echo "ERROR: APP_HOST is not set (or not a FQDN)."
+  echo "Run like: APP_HOST=v021067.vm.gwdguser.de sudo bash $0"
+  exit 2
+fi
+
+APP_ROOT="${APP_ROOT:-/opt/${APP_NAME}}"
+WEB_ROOT="${WEB_ROOT:-/var/www/${APP_NAME}}"
 
 NODE_PORT="${NODE_PORT:-3001}"
 PY_PORT="${PY_PORT:-5001}"
 
-# Python backend runtime data directory (avoid writing into the git repo)
-PHAROSIGHT_DATA_DIR="${PHAROSIGHT_DATA_DIR:-${APP_ROOT}/data}"
+DB_NAME="${DB_NAME:-quillapp}"
+DB_USER="${DB_USER:-quillapp}"
+DB_PASS_FILE="${DB_PASS_FILE:-${APP_ROOT}/.db_pass}"
+
+export DEBIAN_FRONTEND=noninteractive
 
 log() { echo -e "\n==> $*"; }
 
 need_root() {
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "ERROR: run as root (use sudo)." >&2
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "ERROR: run as root (use sudo)."
     exit 1
   fi
 }
 
-detect_public_ip() {
-  # best-effort
-  curl -fsSL https://api.ipify.org 2>/dev/null || true
+install_apt() {
+  log "APT: install base packages"
+  apt-get update -y
+  apt-get install -y --no-install-recommends \
+    ca-certificates curl git gnupg lsb-release \
+    nginx \
+    python3 python3-venv python3-pip \
+    build-essential \
+    libgl1 libglib2.0-0 \
+    postgresql postgresql-contrib
 }
 
-# ----------------------------
-# Main
-# ----------------------------
-need_root
+install_node() {
+  if command -v node >/dev/null 2>&1; then
+    local major
+    major="$(node -v | sed 's/^v//' | cut -d. -f1 || true)"
+    if [[ "${major:-0}" -ge 18 ]]; then
+      log "Node.js already present: $(node -v)"
+      return 0
+    fi
+  fi
 
-log "Install base packages"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y \
-  ca-certificates curl git nginx \
-  python3 python3-venv python3-pip \
-  build-essential openssl
-
-log "Install Node.js (NodeSource 20.x) if needed"
-if ! command -v node >/dev/null 2>&1; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  log "Install Node.js 20.x (NodeSource)"
+  curl -fsSL -o /tmp/nodesource_setup.sh https://deb.nodesource.com/setup_20.x
+  bash /tmp/nodesource_setup.sh
   apt-get install -y nodejs
-fi
+  log "Node.js installed: $(node -v), npm $(npm -v)"
+}
 
-log "Create service user and directories"
-if ! id -u "${RUN_USER}" >/dev/null 2>&1; then
-  useradd --system --create-home --shell /bin/bash "${RUN_USER}"
-fi
-mkdir -p "${APP_ROOT}" "${WEB_ROOT}" "${PHAROSIGHT_DATA_DIR}"
-chown -R "${RUN_USER}:${RUN_USER}" "${APP_ROOT}" "${WEB_ROOT}" "${PHAROSIGHT_DATA_DIR}"
+ensure_dirs() {
+  log "Create directories"
+  mkdir -p "${APP_ROOT}" "${WEB_ROOT}"
+}
 
-# If previous failed clone exists, remove it to recover automatically
-if [ -d "${APP_ROOT}/app" ]; then
-  rm -rf "${APP_ROOT}/app"
-fi
+clone_or_update_repo() {
+  log "Clone or update repo"
+  if [[ -d "${APP_ROOT}/app/.git" ]]; then
+    git -C "${APP_ROOT}/app" fetch --prune origin
+    git -C "${APP_ROOT}/app" checkout "${REPO_BRANCH}"
+    git -C "${APP_ROOT}/app" reset --hard "origin/${REPO_BRANCH}"
+  else
+    rm -rf "${APP_ROOT}/app"
+    git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_ROOT}/app"
+  fi
 
-log "Clone repo with sparse checkout (exclude python-backend/static/** to avoid huge committed artifacts)"
-sudo -u "${RUN_USER}" bash -lc "
-  set -e
-  cd '${APP_ROOT}'
-  git clone --depth 1 --filter=blob:none --no-checkout '${REPO_URL}' app
-  cd app
-  git sparse-checkout init --no-cone
-  cat > .git/info/sparse-checkout <<'EOF'
-/*
-!/python-backend/static/
-!/python-backend/static/**
+  # Repo can contain huge committed artifacts under python-backend/static.
+  # Safe to delete: backend recreates needed folders at runtime.
+  if [[ -d "${APP_ROOT}/app/python-backend/static" ]]; then
+    log "Prune python-backend/static (large committed artifacts)"
+    rm -rf "${APP_ROOT}/app/python-backend/static"
+  fi
+  mkdir -p "${APP_ROOT}/app/python-backend/static" "${APP_ROOT}/app/python-backend/uploads"
+}
+
+ensure_postgres() {
+  log "PostgreSQL: ensure role + database"
+  systemctl enable --now postgresql
+
+  local db_pass
+  if [[ -f "${DB_PASS_FILE}" ]]; then
+    db_pass="$(cat "${DB_PASS_FILE}")"
+  else
+    db_pass="$(python3 - <<'PY'
+import secrets, string
+alphabet = string.ascii_letters + string.digits
+print(''.join(secrets.choice(alphabet) for _ in range(32)))
+PY
+)"
+    mkdir -p "$(dirname "${DB_PASS_FILE}")"
+    printf "%s" "${db_pass}" > "${DB_PASS_FILE}"
+    chmod 600 "${DB_PASS_FILE}"
+  fi
+
+  runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN
+    CREATE ROLE ${DB_USER} LOGIN PASSWORD '${db_pass}';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}') THEN
+    CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
+  END IF;
+END
+\$\$;
+SQL
+
+  export DATABASE_URL="postgresql://${DB_USER}:${db_pass}@127.0.0.1:5432/${DB_NAME}?schema=public"
+  log "DATABASE_URL set (password stored at ${DB_PASS_FILE})"
+}
+
+build_frontend() {
+  log "Frontend: configure + build"
+  cd "${APP_ROOT}/app"
+
+  # Frontend should talk to the same host (nginx proxies /api and /ml).
+  local BASE_URL="http://${APP_HOST}"
+  cat > .env.production.local <<EOF
+VUE_APP_API_URL=${BASE_URL}
+VUE_APP_WS_URL=ws://${APP_HOST}/ws
 EOF
-  git checkout '${REPO_BRANCH}'
-  mkdir -p python-backend/static
-"
 
-REPO_DIR="${APP_ROOT}/app"
+  # Replace the hardcoded HF Space backend URL with our local /ml proxy.
+  if [[ -f "src/main.js" ]]; then
+    sed -i "s|https://basuony-pharosight.hf.space|${BASE_URL}/ml|g" src/main.js || true
+  fi
 
-log "Prepare frontend env for same-origin deployment"
-sudo -u "${RUN_USER}" bash -lc "
-  set -e
-  cd '${REPO_DIR}'
-  cat > .env.production <<'EOF'
-VUE_APP_API_URL=/api
-VUE_APP_WS_URL=/ws
-VUE_APP_PHAROSIGHT_API_BASE=/ml
-VITE_API_URL=/api
-VITE_WS_URL=/ws
-VITE_PHAROSIGHT_API_BASE=/ml
-EOF
-"
+  # Patch any hardcoded localhost WS URLs if they exist.
+  if command -v grep >/dev/null 2>&1; then
+    while IFS= read -r -d '' f; do
+      sed -i "s|ws://localhost:3001/ws|ws://${APP_HOST}/ws|g" "$f" || true
+    done < <(grep -RIlZ "ws://localhost:3001/ws" src 2>/dev/null || true)
+  fi
 
-log "Build frontend"
-sudo -u "${RUN_USER}" bash -lc "
-  set -e
-  cd '${REPO_DIR}'
-  if [ -f package-lock.json ]; then npm ci; else npm install; fi
+  npm ci
   npm run build
-"
 
-# Vue/Vite both typically output dist/
-if [ ! -d "${REPO_DIR}/dist" ]; then
-  echo "ERROR: frontend build did not produce ${REPO_DIR}/dist" >&2
-  exit 1
-fi
+  rm -rf "${WEB_ROOT:?}/"* || true
+  mkdir -p "${WEB_ROOT}"
+  cp -a dist/. "${WEB_ROOT}/"
+}
 
-rm -rf "${WEB_ROOT:?}/"*
-cp -a "${REPO_DIR}/dist/." "${WEB_ROOT}/"
-chown -R "${RUN_USER}:${RUN_USER}" "${WEB_ROOT}"
+setup_node_backend() {
+  log "Node backend: install deps + migrate + systemd"
+  cd "${APP_ROOT}/app/server" || { echo "ERROR: expected Node backend at ${APP_ROOT}/app/server"; exit 3; }
 
-log "Locate Node collaboration backend directory (auto-detect)"
-NODE_BACKEND_DIR="$(sudo -u "${RUN_USER}" bash -lc "
-  set -e
-  cd '${REPO_DIR}'
-  # Prefer directories that contain sessions.js/versions.js
-  f=\$(find . -maxdepth 6 -type f -name sessions.js -o -name versions.js | head -n 1 || true)
-  if [ -n \"\$f\" ]; then
-    d=\$(dirname \"\$f\")
-    # climb to a folder that has a package.json
-    while [ \"\$d\" != \".\" ] && [ ! -f \"\$d/package.json\" ]; do d=\$(dirname \"\$d\"); done
-    if [ -f \"\$d/package.json\" ]; then echo \"\$d\"; exit 0; fi
-  fi
-
-  # Fallback: first non-root package.json that isn't the frontend root
-  p=\$(find . -mindepth 2 -maxdepth 4 -type f -name package.json | head -n 1 || true)
-  if [ -n \"\$p\" ]; then echo \$(dirname \"\$p\"); exit 0; fi
-
-  echo ''
-")"
-
-if [ -z "${NODE_BACKEND_DIR}" ]; then
-  echo "ERROR: could not auto-detect Node backend directory (sessions.js/versions.js not found)." >&2
-  exit 1
-fi
-NODE_BACKEND_DIR="${REPO_DIR}/${NODE_BACKEND_DIR#./}"
-
-log "Install Node backend deps"
-sudo -u "${RUN_USER}" bash -lc "
-  set -e
-  cd '${NODE_BACKEND_DIR}'
-  if [ -f package-lock.json ]; then npm ci; else npm install; fi
-"
-
-# Optional Postgres/Prisma bootstrapping if schema exists
-if [ -f "${NODE_BACKEND_DIR}/prisma/schema.prisma" ]; then
-  log "Detected Prisma schema -> install PostgreSQL and run migrations"
-  apt-get install -y postgresql postgresql-contrib
-
-  DB_USER="${APP_NAME}"
-  DB_NAME="${APP_NAME}"
-  DB_PASS_FILE="${APP_ROOT}/.db_pass"
-  if [ ! -f "${DB_PASS_FILE}" ]; then
-    umask 077
-    openssl rand -hex 18 > "${DB_PASS_FILE}"
-    chown "${RUN_USER}:${RUN_USER}" "${DB_PASS_FILE}"
-  fi
-  DB_PASS="$(cat "${DB_PASS_FILE}")"
-
-  sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 \
-    || sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
-
-  sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
-    || sudo -u postgres createdb -O "${DB_USER}" "${DB_NAME}"
-
-  NODE_ENV_FILE="${APP_ROOT}/.env.node"
-  cat > "${NODE_ENV_FILE}" <<EOF
+  mkdir -p "${APP_ROOT}/env"
+  cat > "${APP_ROOT}/env/node.env" <<EOF
 NODE_ENV=production
 PORT=${NODE_PORT}
-DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}?schema=public
-CORS_ORIGIN=https://${APP_HOST} http://${APP_HOST}
+DATABASE_URL=${DATABASE_URL}
+CORS_ORIGINS=http://${APP_HOST}
 EOF
-  chown "${RUN_USER}:${RUN_USER}" "${NODE_ENV_FILE}"
 
-  sudo -u "${RUN_USER}" bash -lc "
-    set -e
-    set -a
-    source '${NODE_ENV_FILE}'
-    set +a
-    cd '${NODE_BACKEND_DIR}'
-    npx prisma generate
-    npx prisma migrate deploy || npx prisma db push
-  "
-else
-  NODE_ENV_FILE="${APP_ROOT}/.env.node"
-  cat > "${NODE_ENV_FILE}" <<EOF
-NODE_ENV=production
-PORT=${NODE_PORT}
-CORS_ORIGIN=https://${APP_HOST} http://${APP_HOST}
-EOF
-  chown "${RUN_USER}:${RUN_USER}" "${NODE_ENV_FILE}"
-fi
+  npm ci
 
-log "Set up Python backend venv + deps"
-PY_DIR="${REPO_DIR}/python-backend"
-if [ ! -f "${PY_DIR}/requirements.txt" ]; then
-  echo "ERROR: python-backend/requirements.txt not found." >&2
-  exit 1
-fi
+  if [[ -d prisma/migrations ]] && ls -1 prisma/migrations/*/migration.sql >/dev/null 2>&1; then
+    npx prisma migrate deploy
+  fi
+  npx prisma generate || true
 
-sudo -u "${RUN_USER}" bash -lc "
-  set -e
-  python3 -m venv '${APP_ROOT}/venv'
-  source '${APP_ROOT}/venv/bin/activate'
-  pip install -U pip wheel
-  pip install -r '${PY_DIR}/requirements.txt'
-"
-
-PY_ENV_FILE="${APP_ROOT}/.env.python"
-cat > "${PY_ENV_FILE}" <<EOF
-PHAROSIGHT_DATA_DIR=${PHAROSIGHT_DATA_DIR}
-PORT=${PY_PORT}
-EOF
-chown "${RUN_USER}:${RUN_USER}" "${PY_ENV_FILE}"
-
-log "Create systemd services"
-cat > "/etc/systemd/system/${APP_NAME}-node.service" <<EOF
+  cat > "/etc/systemd/system/${APP_NAME}-node.service" <<EOF
 [Unit]
-Description=${APP_NAME} Node collaboration backend
-After=network.target
+Description=QuillApp Node collaboration backend
+After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 Type=simple
-User=${RUN_USER}
-WorkingDirectory=${NODE_BACKEND_DIR}
-EnvironmentFile=${NODE_ENV_FILE}
+WorkingDirectory=${APP_ROOT}/app/server
+EnvironmentFile=${APP_ROOT}/env/node.env
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=2
@@ -239,25 +206,29 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-# Use Flask app from simple_backend.py by default
-PY_APP_MODULE="simple_backend:app"
-if [ -f "${PY_DIR}/app.py" ]; then
-  # If app.py defines `app = Flask(...)`, you can switch to app:app later.
-  # Keep default as simple_backend unless you explicitly want app.py.
-  true
-fi
+  systemctl daemon-reload
+  systemctl enable --now "${APP_NAME}-node.service"
+}
 
-cat > "/etc/systemd/system/${APP_NAME}-python.service" <<EOF
+setup_python_backend() {
+  log "Python backend: venv + deps + systemd"
+  local py_dir="${APP_ROOT}/app/python-backend"
+  cd "${py_dir}" || { echo "ERROR: expected Python backend at ${py_dir}"; exit 4; }
+
+  python3 -m venv "${APP_ROOT}/venv"
+  "${APP_ROOT}/venv/bin/pip" install -U pip wheel
+  "${APP_ROOT}/venv/bin/pip" install -r requirements.txt
+
+  cat > "/etc/systemd/system/${APP_NAME}-ml.service" <<EOF
 [Unit]
-Description=${APP_NAME} Python backend
+Description=QuillApp Python (scribe/ML) backend
 After=network.target
 
 [Service]
 Type=simple
-User=${RUN_USER}
-WorkingDirectory=${PY_DIR}
-EnvironmentFile=${PY_ENV_FILE}
-ExecStart=${APP_ROOT}/venv/bin/gunicorn -b 127.0.0.1:${PY_PORT} ${PY_APP_MODULE}
+WorkingDirectory=${py_dir}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=${APP_ROOT}/venv/bin/gunicorn --workers 2 --threads 2 --timeout 300 --bind 127.0.0.1:${PY_PORT} app:app
 Restart=always
 RestartSec=2
 
@@ -265,77 +236,89 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now "${APP_NAME}-python.service"
-systemctl enable --now "${APP_NAME}-node.service"
+  systemctl daemon-reload
+  systemctl enable --now "${APP_NAME}-ml.service"
+}
 
-log "Configure Nginx (SPA + /api + /ws + /ml reverse proxy)"
-cat > "/etc/nginx/sites-available/${APP_NAME}" <<EOF
+setup_nginx() {
+  log "Nginx: serve frontend + proxy /api /ws /ml"
+  rm -f /etc/nginx/sites-enabled/default || true
+
+  cat > "/etc/nginx/sites-available/${APP_NAME}" <<EOF
 server {
   listen 80;
-  server_name ${APP_HOST};
+  server_name ${APP_HOST} _;
 
   root ${WEB_ROOT};
   index index.html;
 
-  client_max_body_size 50m;
+  location / {
+    try_files \$uri \$uri/ /index.html;
+  }
 
-  # Node HTTP API (strip /api prefix)
   location /api/ {
-    proxy_pass http://127.0.0.1:${NODE_PORT}/;
-    proxy_http_version 1.1;
+    proxy_pass http://127.0.0.1:${NODE_PORT};
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
   }
 
-  # Node WebSocket
-  location /ws {
-    proxy_pass http://127.0.0.1:${NODE_PORT}/ws;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host \$host;
-  }
-
-  # Python backend (strip /ml prefix)
-  location /ml/ {
-    proxy_pass http://127.0.0.1:${PY_PORT}/;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-  }
-
-  # Helpful: expose Node /health at the edge too
   location = /health {
     proxy_pass http://127.0.0.1:${NODE_PORT}/health;
     proxy_set_header Host \$host;
   }
 
-  # SPA fallback
-  location / {
-    try_files \$uri \$uri/ /index.html;
+  location /ws {
+    proxy_pass http://127.0.0.1:${NODE_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
+
+  location /ml/ {
+    proxy_pass http://127.0.0.1:${PY_PORT}/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
   }
 }
 EOF
 
-ln -sf "/etc/nginx/sites-available/${APP_NAME}" "/etc/nginx/sites-enabled/${APP_NAME}"
-rm -f /etc/nginx/sites-enabled/default || true
-nginx -t
-systemctl restart nginx
+  ln -sf "/etc/nginx/sites-available/${APP_NAME}" "/etc/nginx/sites-enabled/${APP_NAME}"
+  nginx -t
+  systemctl enable --now nginx
+  systemctl reload nginx
+}
 
-PUBLIC_IP="$(detect_public_ip)"
-log "DONE"
-echo "Frontend:    http://${APP_HOST}/"
-echo "Node health: http://${APP_HOST}/health"
-echo "API base:    http://${APP_HOST}/api/"
-echo "WS:          ws://${APP_HOST}/ws"
-echo "ML base:     http://${APP_HOST}/ml/"
-if [ -n "${PUBLIC_IP}" ]; then
-  echo "Public IP:   http://${PUBLIC_IP}/"
-fi
-echo ""
-echo "Logs:"
-echo "  journalctl -u ${APP_NAME}-node -f"
-echo "  journalctl -u ${APP_NAME}-python -f"
-echo "  tail -f /var/log/nginx/access.log /var/log/nginx/error.log"
+print_done() {
+  log "DONE"
+  echo "Frontend:   http://${APP_HOST}/"
+  echo "Node API:   http://${APP_HOST}/api/health   (or http://${APP_HOST}/health)"
+  echo "WebSocket:  ws://${APP_HOST}/ws"
+  echo "Python API: http://${APP_HOST}/ml/  (proxied to localhost:${PY_PORT})"
+  echo
+  echo "If something fails, logs:"
+  echo "  journalctl -u ${APP_NAME}-node.service -n 100 --no-pager"
+  echo "  journalctl -u ${APP_NAME}-ml.service -n 100 --no-pager"
+  echo "  tail -n 200 /var/log/nginx/error.log"
+}
+
+main() {
+  need_root
+  install_apt
+  install_node
+  ensure_dirs
+  clone_or_update_repo
+  ensure_postgres
+  build_frontend
+  setup_node_backend
+  setup_python_backend
+  setup_nginx
+  print_done
+}
+
+main "$@"
