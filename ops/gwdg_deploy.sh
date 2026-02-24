@@ -51,7 +51,8 @@ install_apt() {
     python3 python3-venv python3-pip \
     build-essential \
     libgl1 libglib2.0-0 \
-    postgresql postgresql-contrib
+    postgresql postgresql-contrib \
+    jq
 }
 
 install_node() {
@@ -78,6 +79,10 @@ ensure_dirs() {
 
 clone_or_update_repo() {
   log "Clone or update repo"
+  mkdir -p "${APP_ROOT}"
+  # Make git treat this path as safe even when running under sudo/root
+  git config --global --add safe.directory "${APP_ROOT}/app" || true
+
   if [[ -d "${APP_ROOT}/app/.git" ]]; then
     git -C "${APP_ROOT}/app" fetch --prune origin
     git -C "${APP_ROOT}/app" checkout "${REPO_BRANCH}"
@@ -86,9 +91,6 @@ clone_or_update_repo() {
     rm -rf "${APP_ROOT}/app"
     git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_ROOT}/app"
   fi
-
-  # Fix dubious ownership warning on rerun
-  git config --global --add safe.directory "${APP_ROOT}/app" || true
 
   # Repo can contain huge committed artifacts under python-backend/static.
   # Safe to delete: backend recreates needed folders at runtime.
@@ -100,34 +102,36 @@ clone_or_update_repo() {
 }
 
 ensure_postgres() {
-  log "PostgreSQL: ensure role + database (idempotent)"
+  log "PostgreSQL: ensure service running"
   systemctl is-active --quiet postgresql || systemctl start postgresql
 
-  # role
+  log "PostgreSQL: ensure role + database (idempotent)"
+  # Role exists?
   if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='quillapp'" | grep -q 1; then
     sudo -u postgres psql -c "CREATE ROLE quillapp LOGIN PASSWORD 'quillapp';"
   else
-    # keep password in sync (fixes Prisma P1000)
-    sudo -u postgres psql -c "ALTER USER quillapp WITH PASSWORD 'quillapp';"
+    # Keep password in sync (fixes Prisma P1000 if password drifted)
+    sudo -u postgres psql -c "ALTER ROLE quillapp WITH PASSWORD 'quillapp';"
   fi
 
-  # database
+  # Database exists?
   if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='quillapp'" | grep -q 1; then
     sudo -u postgres createdb -O quillapp quillapp
   fi
 
   export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
-  log "DATABASE_URL set"
+  log "DATABASE_URL set: ${DATABASE_URL}"
 }
 
 build_frontend() {
   log "Frontend: configure + build"
   cd "${APP_ROOT}/app"
 
-  # Frontend should talk to the same host (nginx proxies /api and /ml).
+  # Frontend should talk to the same host.
+  # Nginx proxies /api and /ml.
   local BASE_URL="http://${APP_HOST}"
   cat > .env.production.local <<EOF
-VUE_APP_API_URL=${BASE_URL}
+VUE_APP_API_URL=${BASE_URL}/api
 VUE_APP_WS_URL=ws://${APP_HOST}/ws
 EOF
 
@@ -152,27 +156,26 @@ EOF
 }
 
 setup_node_backend() {
-  log "Node backend: write .env for Prisma (DATABASE_URL)"
-  local NODE_DIR="${APP_ROOT}/app/server"
-  mkdir -p "$NODE_DIR"
-  cat > "${NODE_DIR}/.env" <<'EOF'
-DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
-PORT=3001
-EOF
-
   log "Node backend: install deps + migrate + systemd"
+  local NODE_DIR="${APP_ROOT}/app/server"
   cd "${NODE_DIR}" || { echo "ERROR: expected Node backend at ${NODE_DIR}"; exit 3; }
 
+  # Environment file used by systemd service
   mkdir -p "${APP_ROOT}/env"
   cat > "${APP_ROOT}/env/node.env" <<EOF
 NODE_ENV=production
 PORT=${NODE_PORT}
 DATABASE_URL=${DATABASE_URL}
+CORS_ORIGIN=http://${APP_HOST}
 CORS_ORIGINS=http://${APP_HOST}
 EOF
 
   npm ci
 
+  log "Node backend: DB auth precheck (before Prisma)"
+  psql "${DATABASE_URL}" -c "select 1" >/dev/null
+
+  # Prisma migrations (only if present)
   if [[ -d prisma/migrations ]] && ls -1 prisma/migrations/*/migration.sql >/dev/null 2>&1; then
     npx prisma migrate deploy
   fi
@@ -287,13 +290,17 @@ EOF
 print_done() {
   log "DONE"
   echo "Frontend:   http://${APP_HOST}/"
-  echo "Node API:   http://${APP_HOST}/api/health   (or http://${APP_HOST}/health)"
+  echo "Node API:   http://${APP_HOST}/health  (or http://${APP_HOST}/api/health if implemented)"
   echo "WebSocket:  ws://${APP_HOST}/ws"
   echo "Python API: http://${APP_HOST}/ml/  (proxied to localhost:${PY_PORT})"
   echo
+  echo "Service status:"
+  systemctl --no-pager --full status "${APP_NAME}-node.service" || true
+  systemctl --no-pager --full status "${APP_NAME}-ml.service" || true
+  echo
   echo "If something fails, logs:"
-  echo "  journalctl -u ${APP_NAME}-node.service -n 100 --no-pager"
-  echo "  journalctl -u ${APP_NAME}-ml.service -n 100 --no-pager"
+  echo "  journalctl -u ${APP_NAME}-node.service -n 200 --no-pager"
+  echo "  journalctl -u ${APP_NAME}-ml.service -n 200 --no-pager"
   echo "  tail -n 200 /var/log/nginx/error.log"
 }
 
