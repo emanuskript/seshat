@@ -206,11 +206,8 @@
           <div class="pdf-layout" ref="exportWrapper">
             <div class="pdf-left" v-if="currentPageImage">
               <div class="analyzed-card" data-scribe-tour="analyzed-card">
-                <div class="analyzed-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div class="analyzed-card-header">
                   <span>Analyzed Page</span>
-                  <label class="param-label" style="display:flex;align-items:center;gap:6px;font-size:12px;">
-                    <input type="checkbox" v-model="debugOverlayEnabled" @change="drawPageOverlay" /> Debug overlay
-                  </label>
                 </div>
                 <div class="analyzed-card-body">
                   <div class="page-stage">
@@ -230,14 +227,11 @@
               <!-- Results content -->
               <div class="scribe-results" data-scribe-tour="results-accordion">
                 <div v-if="results.scribe_changes && results.scribe_changes.length > 1" class="detected-scribes">
-                  <h5>Detected Scribes</h5>
+                  <h5>Detected Hands</h5>
                   <div v-for="(change, index) in results.scribe_changes" :key="index" class="scribe-item-card">
                     <div class="scribe-item-header">
                       <h6 class="scribe-name">{{ change.scribe }}</h6>
                       <div class="scribe-meta">
-                        <span v-if="change.start_line && change.end_line" class="scribe-badge">
-                          Lines {{ change.start_line }}-{{ change.end_line }}
-                        </span>
                         <!-- NEVER show confidence for initial scribe (index 0) -->
                         <span v-if="index > 0 && change.confidence && !change.is_initial" class="scribe-badge confidence">
                           {{ Math.round(change.confidence) }}%
@@ -251,8 +245,8 @@
                     <div class="scribe-item-body">
                       <p class="scribe-explanation">{{ explain(change, index) }}</p>
 
-                      <!-- Consolidated Samples -->
-                      <div v-if="getScribeSamples(change).length > 0" class="samples-section">
+                      <!-- Consolidated Samples (only shown in manual/json modes) -->
+                      <div v-if="mode !== 'auto' && getScribeSamples(change).length > 0" class="samples-section">
                         <h6 class="samples-title">Sample Handwriting</h6>
                         <div class="samples-gallery">
                           <div v-for="(src, idx) in getScribeSamples(change).slice(0, 3)" :key="idx" class="sample-tile">
@@ -287,10 +281,7 @@
                     <div class="single-scribe-icon">
                       <Icon name="user-check" :size="28" />
                     </div>
-                    <h6>Single Scribal Hand Detected — {{ results.scribe_changes[0].scribe }}</h6>
-                    <span v-if="results.scribe_changes[0].start_line && results.scribe_changes[0].end_line" class="scribe-badge" style="margin-bottom: 8px;">
-                      Lines {{ results.scribe_changes[0].start_line }}-{{ results.scribe_changes[0].end_line }}
-                    </span>
+                    <h6>Single Hand Detected — {{ results.scribe_changes[0].scribe }}</h6>
                     <p>No handwriting changes were detected across the selection.</p>
                     <p v-if="singleScribeProfile" class="scribe-profile">Handwriting profile: {{ singleScribeProfile }}</p>
 
@@ -316,30 +307,31 @@
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Feature Comparison - Full Width Below Split View -->
-          <div v-if="results.scribe_changes && results.scribe_changes.length > 1" class="results-comparison-panel">
-            <div class="comparison-header">
-              <h5 class="comparison-title">Feature Comparison</h5>
-            </div>
-            <ScribeFeatureComparison
-              :scribes="results.scribe_changes"
-              :feature-names="results.feature_names || []"
-            />
-            
-            <!-- AI Disclaimer -->
-            <div class="ai-disclaimer-box">
-              <div class="disclaimer-icon">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="16" x2="12" y2="12"></line>
-                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                </svg>
+            <!-- Feature Comparison - Full Width Below Split View (Inside Export Wrapper) -->
+            <div v-if="results.scribe_changes && results.scribe_changes.length > 1" class="results-comparison-panel">
+              <div class="comparison-header">
+                <h5 class="comparison-title">Feature Comparison</h5>
               </div>
-              <div class="disclaimer-content">
-                <strong>AI-Generated Analysis</strong>
-                <p>These results were generated using artificial intelligence and may not be 100% accurate. Please verify important findings manually.</p>
+              <ScribeFeatureComparison
+                ref="featureComparison"
+                :scribes="results.scribe_changes"
+                :feature-names="results.feature_names || []"
+              />
+              
+              <!-- AI Disclaimer -->
+              <div class="ai-disclaimer-box">
+                <div class="disclaimer-icon">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                  </svg>
+                </div>
+                <div class="disclaimer-content">
+                  <strong>AI-Generated Analysis</strong>
+                  <p>These results were generated using artificial intelligence and may not be 100% accurate. Please verify important findings manually.</p>
+                </div>
               </div>
             </div>
           </div>
@@ -522,8 +514,7 @@ export default {
       preparedJobId: null,
       preparedPageUrl: null,
       isPreparingPage: false,
-      // Debug overlay
-      debugOverlayEnabled: false,
+
       // Fallback/preview cache when OCR line crops aren't present
       segmentPreviews: Object.create(null),
       // Track expanded feature sections
@@ -1535,7 +1526,7 @@ export default {
       } else {
         const prevRange = this.lastRangeForScribe(change.scribe, index)
         if (prevRange) {
-          lines.push(`Scribe ${change.scribe} returns — previously ${prevRange}. Now ${rangeText}.`)
+          lines.push(`${change.scribe} returns — previously ${prevRange}. Now ${rangeText}.`)
         } else {
           lines.push(`New hand detected: ${change.scribe} takes over ${rangeText}.`)
         }
@@ -2975,16 +2966,26 @@ export default {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .pdf-left {
   flex: 1;
   max-width: 45%;
+  min-width: 300px;
 }
 
 .pdf-right {
   flex: 1.4;
   max-width: 55%;
+  min-width: 300px;
+}
+
+/* Feature Comparison inside PDF export - full width */
+.pdf-layout .results-comparison-panel {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: 100%;
 }
 
 .analyzed-card {

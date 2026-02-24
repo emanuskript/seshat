@@ -38,10 +38,10 @@ def convert_numpy_types(obj):
     return obj
 
 def assign_scribe_name(index: int) -> str:
-    """Generate alphabetic scribe labels (A, B, C... Z, then Scribe 27, 28, etc.)"""
+    """Generate alphabetic hand labels (A, B, C... Z, then Hand 27, 28, etc.)"""
     if index < 26:
-        return f"Scribe {chr(ord('A') + index)}"
-    return f"Scribe {index + 1}"
+        return f"Hand {chr(ord('A') + index)}"
+    return f"Hand {index + 1}"
 
 # ------------------ Config ------------------
 BASE_DIR = Path(__file__).resolve().parent

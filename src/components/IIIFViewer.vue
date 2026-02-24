@@ -1682,6 +1682,10 @@ export default {
       // Annotations
       ann.forEach((a, i) => {
         if (!a) return;
+        
+        // Get creator name if available
+        const creatorName = this.getCreatorName(a.createdBy);
+        const creatorSuffix = creatorName ? ` • By ${creatorName}` : '';
 
         if (a.type === "measure") {
           // Angle(Label)(number)
@@ -1693,7 +1697,7 @@ export default {
             key: `a:${i}`,
             category: "angle",
             title: `Angle (${label}) (${num})`,
-            subtitle: "",
+            subtitle: creatorSuffix.trim(),
             color: "#0d6efd", // blue accent for angles
           });
           return;
@@ -1706,7 +1710,7 @@ export default {
             key: `a:${i}`,
             category: "trace",
             title: `Trace (${colorName})`,
-            subtitle: `${a.points?.length || 0} pts`,
+            subtitle: `${a.points?.length || 0} pts${creatorSuffix}`,
             color: a.color || "#0d6efd",
           });
           return;
@@ -1717,7 +1721,7 @@ export default {
             key: `a:${i}`,
             category: "highlight",
             title: "Highlight",
-            subtitle: this.formatDimensions(a.width, a.height),
+            subtitle: `${this.formatDimensions(a.width, a.height)}${creatorSuffix}`,
             color: "rgba(255, 255, 0, 0.8)",
           });
           return;
@@ -1728,7 +1732,7 @@ export default {
             key: `a:${i}`,
             category: "underline",
             title: "Underline",
-            subtitle: this.formatMeasurement(a.width),
+            subtitle: `${this.formatMeasurement(a.width)}${creatorSuffix}`,
             color: "red",
           });
           return;
@@ -1738,11 +1742,13 @@ export default {
       // Length bands (name according to actual type)
       const pageLengths = this.currentPageLengthMeasurements || [];
       pageLengths.forEach((m) => {
+        const creatorName = this.getCreatorName(m.createdBy);
+        const creatorSuffix = creatorName ? ` • By ${creatorName}` : '';
         items.push({
           key: `l:${m.id}`,
           category: "length",
           title: this.camelToTitle(m.label || "Length"),
-          subtitle: this.formatDimensions(m.width, m.height),
+          subtitle: `${this.formatDimensions(m.width, m.height)}${creatorSuffix}`,
           color: m.color || this.measurementColors[m.label] || "#6ea8fe",
         });
       });
@@ -1750,11 +1756,14 @@ export default {
       // Comments
       const cmts = this.comments[this.currentPage] || [];
       cmts.forEach((c, i) => {
+        const creatorName = this.getCreatorName(c.createdBy);
+        const creatorSuffix = creatorName ? ` • By ${creatorName}` : '';
+        const commentText = (c.text || "").slice(0, 60);
         items.push({
           key: `c:${i}`,
           category: "comment",
           title: "Comment",
-          subtitle: (c.text || "").slice(0, 60),
+          subtitle: commentText + creatorSuffix,
           color: "#6ea8fe",
         });
       });
@@ -1827,15 +1836,27 @@ export default {
       return this.croppedAnnotations.filter(a => a.type === 'measure');
     },
     croppedBankItems() {
-      return this.croppedAnnotations.map((a, i) => ({
-        key: `c${i}`,
-        category: a.type,
-        title: a.type === 'trace' ? 'Trace' :
-               a.type === 'measure' ? `Angle (${a.angle || ''}°)` :
-               a.type === 'highlight' ? 'Highlight' : 'Underline',
-        subtitle: a.type === 'trace' ? `${a.points?.length || 0} pts` : '',
-        color: a.color || (a.type === 'measure' ? 'blue' : a.type === 'highlight' ? 'rgba(255,255,0,0.8)' : '#3b82f6')
-      }));
+      return this.croppedAnnotations.map((a, i) => {
+        const creatorName = this.getCreatorName(a.createdBy);
+        const creatorSuffix = creatorName ? ` • By ${creatorName}` : '';
+        
+        let subtitle = '';
+        if (a.type === 'trace') {
+          subtitle = `${a.points?.length || 0} pts${creatorSuffix}`;
+        } else {
+          subtitle = creatorSuffix.trim();
+        }
+        
+        return {
+          key: `c${i}`,
+          category: a.type,
+          title: a.type === 'trace' ? 'Trace' :
+                 a.type === 'measure' ? `Angle (${a.angle || ''}°)` :
+                 a.type === 'highlight' ? 'Highlight' : 'Underline',
+          subtitle,
+          color: a.color || (a.type === 'measure' ? 'blue' : a.type === 'highlight' ? 'rgba(255,255,0,0.8)' : '#3b82f6')
+        };
+      });
     },
     // Check if any annotations exist (for import confirmation)
     hasAnyAnnotations() {
@@ -2060,6 +2081,21 @@ export default {
       if (isDev) return 'http://localhost:5001';
       return window.__PHAROSIGHT_API_BASE__ || 'https://basuony-pharosight.hf.space';
     },
+    
+    // Get creator display name for an annotation
+    getCreatorName(createdBy) {
+      if (!createdBy) return null;
+      
+      // Check if it's the local participant
+      if (createdBy === this.localParticipant?.id) {
+        return 'You';
+      }
+      
+      // Get participant from the presence list
+      const participant = this.getParticipant(createdBy);
+      return participant?.displayName || 'Unknown User';
+    },
+    
     async handleAddImages(e) {
       const files = Array.from(e.target.files || []);
       if (!files.length) return;
@@ -3036,6 +3072,7 @@ cancelPenSelection() {
         x: this._composerImageCoords.x,
         y: this._composerImageCoords.y,
         text: this.currentCommentText.trim(),
+        createdBy: this.localParticipant?.id || null,
       };
 
       this.comments[this.currentPage].push(comment);
@@ -3475,13 +3512,16 @@ cancelPenSelection() {
 
       switch (action) {
         case 'add':
+          // Add createdBy field from the participantId
+          const annotationWithCreator = { ...annotation, createdBy: participantId };
+          
           if (annotationType === 'highlights' || annotationType === 'underlines' || annotationType === 'measures' || annotationType === 'traces') {
-            this.annotationsByPage[pageIndex].push(annotation);
+            this.annotationsByPage[pageIndex].push(annotationWithCreator);
           } else if (annotationType === 'comments') {
-            this.comments[pageIndex].push(annotation);
+            this.comments[pageIndex].push(annotationWithCreator);
           } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
-            const arr = handleBand(annotation);
-            if (arr) arr.push(annotation);
+            const arr = handleBand(annotationWithCreator);
+            if (arr) arr.push(annotationWithCreator);
           }
           break;
 
@@ -3838,7 +3878,8 @@ cancelPenSelection() {
             type: "length",
             id: crypto.randomUUID(),
             pageIndex: this.currentPage,
-            label
+            label,
+            createdBy: this.localParticipant?.id || null,
           };
 
           this.lengthMeasurements[label][this.currentPage].push(band);
@@ -3880,7 +3921,8 @@ cancelPenSelection() {
               id: crypto.randomUUID(),
               type: "highlight",
               pageIndex: this.currentPage,
-              ...this.currentSquare
+              ...this.currentSquare,
+              createdBy: this.localParticipant?.id || null,
             };
             this.annotationsByPage[this.currentPage].push(highlight);
             // Sync to session if connected
@@ -3893,7 +3935,8 @@ cancelPenSelection() {
               id: crypto.randomUUID(),
               type: "underline",
               pageIndex: this.currentPage,
-              ...this.currentUnderline
+              ...this.currentUnderline,
+              createdBy: this.localParticipant?.id || null,
             };
             this.annotationsByPage[this.currentPage].push(underline);
             // Sync to session if connected
@@ -3946,6 +3989,7 @@ cancelPenSelection() {
             points: [...this.measurePoints],
             angle: this.calculatedAngle,
             label: this.activeAngleLabel || "Unlabeled",
+            createdBy: this.localParticipant?.id || null,
           };
           this.annotationsByPage[this.currentPage].push(measure);
           // Sync to session if connected
@@ -4103,6 +4147,7 @@ cancelPenSelection() {
           penWidth: this.currentStroke.penWidth,
           penHeight: this.currentStroke.penHeight,
           nibAngle: this.currentStroke.nibAngle,
+          createdBy: this.localParticipant?.id || null,
         };
         this.annotationsByPage[this.currentPage].push(trace);
         
