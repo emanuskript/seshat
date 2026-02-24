@@ -80,6 +80,7 @@ ensure_dirs() {
 clone_or_update_repo() {
   log "Clone or update repo"
   mkdir -p "${APP_ROOT}"
+
   # Make git treat this path as safe even when running under sudo/root
   git config --global --add safe.directory "${APP_ROOT}/app" || true
 
@@ -106,29 +107,26 @@ ensure_postgres() {
   systemctl is-active --quiet postgresql || systemctl start postgresql
 
   log "PostgreSQL: ensure role + database (idempotent)"
-  # Role exists?
   if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='quillapp'" | grep -q 1; then
     sudo -u postgres psql -c "CREATE ROLE quillapp LOGIN PASSWORD 'quillapp';"
   else
-    # Keep password in sync (fixes Prisma P1000 if password drifted)
     sudo -u postgres psql -c "ALTER ROLE quillapp WITH PASSWORD 'quillapp';"
   fi
 
-  # Database exists?
   if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='quillapp'" | grep -q 1; then
     sudo -u postgres createdb -O quillapp quillapp
   fi
 
+  # Prisma wants schema=public, but psql/libpq does NOT understand ?schema=
   export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
-  log "DATABASE_URL set: ${DATABASE_URL}"
+  export DATABASE_URL_PSQL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?options=-csearch_path%3Dpublic"
+  log "DATABASE_URL set"
 }
 
 build_frontend() {
   log "Frontend: configure + build"
   cd "${APP_ROOT}/app"
 
-  # Frontend should talk to the same host.
-  # Nginx proxies /api and /ml.
   local BASE_URL="http://${APP_HOST}"
   cat > .env.production.local <<EOF
 VUE_APP_API_URL=${BASE_URL}/api
@@ -160,7 +158,6 @@ setup_node_backend() {
   local NODE_DIR="${APP_ROOT}/app/server"
   cd "${NODE_DIR}" || { echo "ERROR: expected Node backend at ${NODE_DIR}"; exit 3; }
 
-  # Environment file used by systemd service
   mkdir -p "${APP_ROOT}/env"
   cat > "${APP_ROOT}/env/node.env" <<EOF
 NODE_ENV=production
@@ -173,9 +170,9 @@ EOF
   npm ci
 
   log "Node backend: DB auth precheck (before Prisma)"
-  psql "${DATABASE_URL}" -c "select 1" >/dev/null
+  # use libpq-compatible URL (no schema=)
+  psql "${DATABASE_URL_PSQL}" -c "select 1" >/dev/null
 
-  # Prisma migrations (only if present)
   if [[ -d prisma/migrations ]] && ls -1 prisma/migrations/*/migration.sql >/dev/null 2>&1; then
     npx prisma migrate deploy
   fi
@@ -249,15 +246,23 @@ server {
     try_files \$uri \$uri/ /index.html;
   }
 
+  # IMPORTANT: trailing slash strips /api/ prefix so Node sees /health not /api/health
   location /api/ {
-    proxy_pass http://127.0.0.1:${NODE_PORT};
+    proxy_pass http://127.0.0.1:${NODE_PORT}/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
   }
 
+  # convenience: direct health
   location = /health {
+    proxy_pass http://127.0.0.1:${NODE_PORT}/health;
+    proxy_set_header Host \$host;
+  }
+
+  # and also /api/health explicitly
+  location = /api/health {
     proxy_pass http://127.0.0.1:${NODE_PORT}/health;
     proxy_set_header Host \$host;
   }
@@ -290,13 +295,9 @@ EOF
 print_done() {
   log "DONE"
   echo "Frontend:   http://${APP_HOST}/"
-  echo "Node API:   http://${APP_HOST}/health  (or http://${APP_HOST}/api/health if implemented)"
+  echo "Node API:   http://${APP_HOST}/health  (also http://${APP_HOST}/api/health)"
   echo "WebSocket:  ws://${APP_HOST}/ws"
   echo "Python API: http://${APP_HOST}/ml/  (proxied to localhost:${PY_PORT})"
-  echo
-  echo "Service status:"
-  systemctl --no-pager --full status "${APP_NAME}-node.service" || true
-  systemctl --no-pager --full status "${APP_NAME}-ml.service" || true
   echo
   echo "If something fails, logs:"
   echo "  journalctl -u ${APP_NAME}-node.service -n 200 --no-pager"
