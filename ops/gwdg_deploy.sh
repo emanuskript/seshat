@@ -4,9 +4,9 @@ set -euo pipefail
 # QuillApp one-shot deploy for Ubuntu 22.04+
 # Serves: Frontend on :80
 # Proxies:
-#   /api/*  -> Node backend (localhost:3001)
+#   /api/*  -> Node backend (localhost:3001)  [STRIPS /api prefix]
 #   /ws     -> Node websocket
-#   /ml/*   -> Python backend (localhost:5001)
+#   /ml/*   -> Python backend (localhost:5001) [allows large payloads]
 #
 # Run:
 #   APP_HOST=v021067.vm.gwdguser.de sudo bash ops/gwdg_deploy.sh
@@ -31,8 +31,10 @@ WEB_ROOT="${WEB_ROOT:-/var/www/${APP_NAME}}"
 NODE_PORT="${NODE_PORT:-3001}"
 PY_PORT="${PY_PORT:-5001}"
 
-export DEBIAN_FRONTEND=noninteractive
+# nginx upload limit (fixes 413 on /ml/analyze)
+NGINX_MAX_BODY="${NGINX_MAX_BODY:-50m}"
 
+export DEBIAN_FRONTEND=noninteractive
 log() { echo -e "\n==> $*"; }
 
 need_root() {
@@ -93,8 +95,7 @@ clone_or_update_repo() {
     git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_ROOT}/app"
   fi
 
-  # Repo can contain huge committed artifacts under python-backend/static.
-  # Safe to delete: backend recreates needed folders at runtime.
+  # prune huge committed artifacts if present
   if [[ -d "${APP_ROOT}/app/python-backend/static" ]]; then
     log "Prune python-backend/static (large committed artifacts)"
     rm -rf "${APP_ROOT}/app/python-backend/static"
@@ -117,7 +118,7 @@ ensure_postgres() {
     sudo -u postgres createdb -O quillapp quillapp
   fi
 
-  export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp?schema=public"
+  export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp"
   log "DATABASE_URL set: ${DATABASE_URL}"
 }
 
@@ -125,30 +126,15 @@ build_frontend() {
   log "Frontend: configure + build"
   cd "${APP_ROOT}/app"
 
-  # IMPORTANT:
-  # - Frontend code already calls endpoints like /api/sessions (see src/services/api.js),
-  #   so VUE_APP_API_URL must be the host root, NOT ".../api".
+  # Frontend talks to nginx, nginx proxies /api and /ml.
   local BASE_URL="http://${APP_HOST}"
   cat > .env.production.local <<EOF
-VUE_APP_API_URL=${BASE_URL}
+VUE_APP_API_URL=${BASE_URL}/api
 VUE_APP_WS_URL=ws://${APP_HOST}/ws
+VUE_APP_ML_URL=${BASE_URL}/ml
 EOF
 
-  # Replace the hardcoded HF Space backend URL with our local /ml proxy.
-  if [[ -f "src/main.js" ]]; then
-    sed -i "s|https://basuony-pharosight.hf.space|${BASE_URL}/ml|g" src/main.js || true
-  fi
-
-  # Patch any hardcoded localhost WS URLs if they exist.
-  if command -v grep >/dev/null 2>&1; then
-    while IFS= read -r -d '' f; do
-      sed -i "s|ws://localhost:3001/ws|ws://${APP_HOST}/ws|g" "$f" || true
-    done < <(grep -RIlZ "ws://localhost:3001/ws" src 2>/dev/null || true)
-  fi
-
   npm ci
-  # Helps on smaller VMs if build ever OOMs
-  export NODE_OPTIONS="${NODE_OPTIONS:---max_old_space_size=2048}"
   npm run build
 
   rm -rf "${WEB_ROOT:?}/"* || true
@@ -167,16 +153,12 @@ NODE_ENV=production
 PORT=${NODE_PORT}
 DATABASE_URL=${DATABASE_URL}
 CORS_ORIGIN=http://${APP_HOST}
+CORS_ORIGINS=http://${APP_HOST}
 EOF
 
   npm ci
 
-  # Prisma uses ?schema=public, but psql rejects unknown URL query params like "schema".
-  # So strip query params for this auth check:
-  local PSQL_URL="${DATABASE_URL%%\?*}"
-  log "Node backend: DB auth precheck (before Prisma)"
-  psql "${PSQL_URL}" -c "select 1" >/dev/null
-
+  # Prisma migrations (only if present)
   if [[ -d prisma/migrations ]] && ls -1 prisma/migrations/*/migration.sql >/dev/null 2>&1; then
     npx prisma migrate deploy
   fi
@@ -235,7 +217,7 @@ EOF
 }
 
 setup_nginx() {
-  log "Nginx: serve frontend + proxy /api /ws /ml"
+  log "Nginx: serve frontend + proxy /api /ws /ml (fix 413 + /api rewrite)"
   rm -f /etc/nginx/sites-enabled/default || true
 
   cat > "/etc/nginx/sites-available/${APP_NAME}" <<EOF
@@ -243,8 +225,8 @@ server {
   listen 80;
   server_name ${APP_HOST} _;
 
-  # FIX for 413 (Pharosight uploads / image blobs)
-  client_max_body_size 100m;
+  # FIX 413 for /ml/analyze (your image blobs are ~8MB+)
+  client_max_body_size ${NGINX_MAX_BODY};
 
   root ${WEB_ROOT};
   index index.html;
@@ -253,15 +235,14 @@ server {
     try_files \$uri \$uri/ /index.html;
   }
 
-  # Node API (keeps /api prefix because backend serves /api/* routes)
+  # FIX: strip /api prefix so /api/health -> backend /health
   location /api/ {
+    rewrite ^/api/?(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:${NODE_PORT};
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
   }
 
   location = /health {
@@ -276,25 +257,17 @@ server {
     proxy_set_header Connection "upgrade";
     proxy_set_header Host \$host;
     proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
   }
 
-  # Python ML (strip /ml prefix due to trailing slash in proxy_pass)
   location /ml/ {
+    # Helps with large JSON/body uploads too
+    proxy_request_buffering off;
+
     proxy_pass http://127.0.0.1:${PY_PORT}/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
-
-    # Large requests + long processing
-    proxy_read_timeout 600s;
-    proxy_send_timeout 600s;
-
-    # Prevent buffering big uploads in nginx temp files
-    proxy_request_buffering off;
-    proxy_buffering off;
   }
 }
 EOF
@@ -307,15 +280,11 @@ EOF
 
 print_done() {
   log "DONE"
-  echo "Frontend:   http://${APP_HOST}/"
-  echo "Node API:   http://${APP_HOST}/health"
-  echo "WebSocket:  ws://${APP_HOST}/ws"
-  echo "Python API: http://${APP_HOST}/ml/  (proxied to localhost:${PY_PORT})"
-  echo
-  echo "If something fails, logs:"
-  echo "  journalctl -u ${APP_NAME}-node.service -n 200 --no-pager"
-  echo "  journalctl -u ${APP_NAME}-ml.service -n 200 --no-pager"
-  echo "  tail -n 200 /var/log/nginx/error.log"
+  echo "Frontend:    http://${APP_HOST}/"
+  echo "Node health: http://${APP_HOST}/health"
+  echo "Node via api: http://${APP_HOST}/api/health   (rewritten to /health)"
+  echo "WebSocket:   ws://${APP_HOST}/ws"
+  echo "Python base: http://${APP_HOST}/ml/   (POST /ml/analyze allowed up to ${NGINX_MAX_BODY})"
 }
 
 main() {

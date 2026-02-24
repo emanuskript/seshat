@@ -977,6 +977,27 @@ import {
   Hand,
 } from "lucide-vue-next";
 
+function safeUUID() {
+  // modern browsers
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  // fallback: RFC4122 v4 using crypto.getRandomValues (supported basically everywhere)
+  const rnd = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(rnd);
+  } else {
+    for (let i = 0; i < 16; i++) rnd[i] = Math.floor(Math.random() * 256);
+  }
+
+  rnd[6] = (rnd[6] & 0x0f) | 0x40; // version 4
+  rnd[8] = (rnd[8] & 0x3f) | 0x80; // variant 10
+
+  const hex = [...rnd].map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
 export default {
   name: "IIIFViewer",
   components: {
@@ -3067,7 +3088,7 @@ cancelPenSelection() {
       if (!this.comments[this.currentPage]) this.comments[this.currentPage] = [];
 
       const comment = {
-        id: crypto.randomUUID(),
+        id: safeUUID(),
         pageIndex: this.currentPage,
         x: this._composerImageCoords.x,
         y: this._composerImageCoords.y,
@@ -3876,7 +3897,7 @@ cancelPenSelection() {
           const band = {
             ...this.currentSquare,
             type: "length",
-            id: crypto.randomUUID(),
+            id: safeUUID(),
             pageIndex: this.currentPage,
             label,
             createdBy: this.localParticipant?.id || null,
@@ -3918,7 +3939,7 @@ cancelPenSelection() {
           }
           if (this.highlightModeActive && this.currentSquare) {
             const highlight = {
-              id: crypto.randomUUID(),
+              id: safeUUID(),
               type: "highlight",
               pageIndex: this.currentPage,
               ...this.currentSquare,
@@ -3932,7 +3953,7 @@ cancelPenSelection() {
             this.currentSquare = null;
           } else if (this.underlineModeActive && this.currentUnderline) {
             const underline = {
-              id: crypto.randomUUID(),
+              id: safeUUID(),
               type: "underline",
               pageIndex: this.currentPage,
               ...this.currentUnderline,
@@ -3983,7 +4004,7 @@ cancelPenSelection() {
             this.annotationsByPage[this.currentPage] = [];
           }
           const measure = {
-            id: crypto.randomUUID(),
+            id: safeUUID(),
             type: "measure",
             pageIndex: this.currentPage,
             points: [...this.measurePoints],
@@ -4140,7 +4161,7 @@ cancelPenSelection() {
         }
         const trace = {
           type: "trace",
-          id: crypto.randomUUID(),
+          id: safeUUID(),
           pageIndex: this.currentPage,
           points: this.currentStroke.points,
           color: this.currentStroke.color,
