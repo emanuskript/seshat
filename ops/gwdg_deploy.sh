@@ -1,179 +1,68 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# QuillApp one-shot deploy for Ubuntu 22.04+
-# Serves: Frontend on :80
-# Proxies:
-#   /api/*  -> Node backend (localhost:3001)  [STRIPS /api prefix]
-#   /ws     -> Node websocket
-#   /ml/*   -> Python backend (localhost:5001) [allows large payloads]
-#
-# Run:
-#   APP_HOST=v021067.vm.gwdguser.de sudo bash ops/gwdg_deploy.sh
-
 APP_NAME="${APP_NAME:-quillapp}"
-REPO_URL="${REPO_URL:-https://github.com/emanuskript/QuillApp.git}"
-REPO_BRANCH="${REPO_BRANCH:-main}"
-
-APP_HOST="${APP_HOST:-}"
-if [[ -z "$APP_HOST" ]]; then
-  APP_HOST="$(hostname -f 2>/dev/null || true)"
-fi
-if [[ -z "$APP_HOST" || "$APP_HOST" != *.* ]]; then
-  echo "ERROR: APP_HOST is not set (or not a FQDN)."
-  echo "Run like: APP_HOST=v021067.vm.gwdguser.de sudo bash $0"
-  exit 2
-fi
-
 APP_ROOT="${APP_ROOT:-/opt/${APP_NAME}}"
-WEB_ROOT="${WEB_ROOT:-/var/www/${APP_NAME}}"
+REPO_URL="${REPO_URL:-https://github.com/emanuskript/QuillApp.git}"
+BRANCH="${BRANCH:-main}"
+
+# IMPORTANT: set this when you run the script:
+# APP_HOST=v021067.vm.gwdguser.de
+APP_HOST="${APP_HOST:-}"
+if [[ -z "${APP_HOST}" ]]; then
+  echo "ERROR: APP_HOST is required (e.g. APP_HOST=v021067.vm.gwdguser.de)"
+  exit 1
+fi
 
 NODE_PORT="${NODE_PORT:-3001}"
 PY_PORT="${PY_PORT:-5001}"
 
-# nginx upload limit (fixes 413 on /ml/analyze)
-NGINX_MAX_BODY="${NGINX_MAX_BODY:-50m}"
+REPO_DIR="${APP_ROOT}/app"
+FRONTEND_DIR="${REPO_DIR}"
+NODE_DIR="${REPO_DIR}/server"
+PY_DIR="${REPO_DIR}/python-backend"
 
-export DEBIAN_FRONTEND=noninteractive
-log() { echo -e "\n==> $*"; }
+echo "==> Installing OS deps"
+sudo apt-get update -y
+sudo apt-get install -y git nginx python3-venv python3-pip nodejs npm
 
-need_root() {
-  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    echo "ERROR: run as root (use sudo)."
-    exit 1
-  fi
-}
+echo "==> Clone/update repo"
+sudo mkdir -p "${APP_ROOT}"
+if [[ ! -d "${REPO_DIR}/.git" ]]; then
+  sudo rm -rf "${REPO_DIR}"
+  sudo git clone --branch "${BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+else
+  sudo git -C "${REPO_DIR}" fetch --prune origin
+  sudo git -C "${REPO_DIR}" reset --hard "origin/${BRANCH}"
+fi
+sudo git -C "${REPO_DIR}" submodule update --init --recursive || true
 
-install_apt() {
-  log "APT: install base packages"
-  apt-get update -y
-  apt-get install -y --no-install-recommends \
-    ca-certificates curl git gnupg lsb-release \
-    nginx \
-    python3 python3-venv python3-pip \
-    build-essential \
-    libgl1 libglib2.0-0 \
-    postgresql postgresql-contrib \
-    jq
-}
-
-install_node() {
-  if command -v node >/dev/null 2>&1; then
-    local major
-    major="$(node -v | sed 's/^v//' | cut -d. -f1 || true)"
-    if [[ "${major:-0}" -ge 18 ]]; then
-      log "Node.js already present: $(node -v)"
-      return 0
-    fi
-  fi
-
-  log "Install Node.js 20.x (NodeSource)"
-  curl -fsSL -o /tmp/nodesource_setup.sh https://deb.nodesource.com/setup_20.x
-  bash /tmp/nodesource_setup.sh
-  apt-get install -y nodejs
-  log "Node.js installed: $(node -v), npm $(npm -v)"
-}
-
-ensure_dirs() {
-  log "Create directories"
-  mkdir -p "${APP_ROOT}" "${WEB_ROOT}"
-}
-
-clone_or_update_repo() {
-  log "Clone or update repo"
-  mkdir -p "${APP_ROOT}"
-
-  # Make git treat this path as safe even when running under sudo/root
-  git config --global --add safe.directory "${APP_ROOT}/app" || true
-
-  if [[ -d "${APP_ROOT}/app/.git" ]]; then
-    git -C "${APP_ROOT}/app" fetch --prune origin
-    git -C "${APP_ROOT}/app" checkout "${REPO_BRANCH}"
-    git -C "${APP_ROOT}/app" reset --hard "origin/${REPO_BRANCH}"
-  else
-    rm -rf "${APP_ROOT}/app"
-    git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${APP_ROOT}/app"
-  fi
-
-  # prune huge committed artifacts if present
-  if [[ -d "${APP_ROOT}/app/python-backend/static" ]]; then
-    log "Prune python-backend/static (large committed artifacts)"
-    rm -rf "${APP_ROOT}/app/python-backend/static"
-  fi
-  mkdir -p "${APP_ROOT}/app/python-backend/static" "${APP_ROOT}/app/python-backend/uploads"
-}
-
-ensure_postgres() {
-  log "PostgreSQL: ensure service running"
-  systemctl is-active --quiet postgresql || systemctl start postgresql
-
-  log "PostgreSQL: ensure role + database (idempotent)"
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='quillapp'" | grep -q 1; then
-    sudo -u postgres psql -c "CREATE ROLE quillapp LOGIN PASSWORD 'quillapp';"
-  else
-    sudo -u postgres psql -c "ALTER ROLE quillapp WITH PASSWORD 'quillapp';"
-  fi
-
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='quillapp'" | grep -q 1; then
-    sudo -u postgres createdb -O quillapp quillapp
-  fi
-
-  export DATABASE_URL="postgresql://quillapp:quillapp@127.0.0.1:5432/quillapp"
-  log "DATABASE_URL set: ${DATABASE_URL}"
-}
-
-build_frontend() {
-  log "Frontend: configure + build"
-  cd "${APP_ROOT}/app"
-
-  # Frontend talks to nginx, nginx proxies /api and /ml.
-  local BASE_URL="http://${APP_HOST}"
-  cat > .env.production.local <<EOF
-VUE_APP_API_URL=${BASE_URL}/api
-VUE_APP_WS_URL=ws://${APP_HOST}/ws
-VUE_APP_ML_URL=${BASE_URL}/ml
+echo "==> Frontend build env"
+sudo tee "${FRONTEND_DIR}/.env.production.local" >/dev/null <<EOF
+VUE_APP_API_URL=http://${APP_HOST}
+VUE_APP_WS_URL=ws://${APP_HOST}
+VUE_APP_ML_URL=http://${APP_HOST}/ml
 EOF
 
-  npm ci
-  npm run build
+echo "==> Build frontend"
+cd "${FRONTEND_DIR}"
+sudo npm ci
+sudo npm run build
 
-  rm -rf "${WEB_ROOT:?}/"* || true
-  mkdir -p "${WEB_ROOT}"
-  cp -a dist/. "${WEB_ROOT}/"
-}
+echo "==> Setup Node backend (systemd)"
+cd "${NODE_DIR}"
+sudo npm ci
 
-setup_node_backend() {
-  log "Node backend: install deps + migrate + systemd"
-  local NODE_DIR="${APP_ROOT}/app/server"
-  cd "${NODE_DIR}" || { echo "ERROR: expected Node backend at ${NODE_DIR}"; exit 3; }
-
-  mkdir -p "${APP_ROOT}/env"
-  cat > "${APP_ROOT}/env/node.env" <<EOF
-NODE_ENV=production
-PORT=${NODE_PORT}
-DATABASE_URL=${DATABASE_URL}
-CORS_ORIGIN=http://${APP_HOST}
-CORS_ORIGINS=http://${APP_HOST}
-EOF
-
-  npm ci
-
-  # Prisma migrations (only if present)
-  if [[ -d prisma/migrations ]] && ls -1 prisma/migrations/*/migration.sql >/dev/null 2>&1; then
-    npx prisma migrate deploy
-  fi
-  npx prisma generate || true
-
-  cat > "/etc/systemd/system/${APP_NAME}-node.service" <<EOF
+sudo tee "/etc/systemd/system/${APP_NAME}-node.service" >/dev/null <<EOF
 [Unit]
-Description=QuillApp Node collaboration backend
-After=network.target postgresql.service
-Wants=postgresql.service
+Description=${APP_NAME} Node API
+After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${APP_ROOT}/app/server
-EnvironmentFile=${APP_ROOT}/env/node.env
+WorkingDirectory=${NODE_DIR}
+Environment=PORT=${NODE_PORT}
+Environment=CORS_ORIGIN=http://${APP_HOST}
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=2
@@ -182,29 +71,23 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload
-  systemctl enable --now "${APP_NAME}-node.service"
-}
+echo "==> Setup Python backend (systemd)"
+sudo python3 -m venv "${APP_ROOT}/venv"
+sudo "${APP_ROOT}/venv/bin/pip" install --upgrade pip
 
-setup_python_backend() {
-  log "Python backend: venv + deps + systemd"
-  local py_dir="${APP_ROOT}/app/python-backend"
-  cd "${py_dir}" || { echo "ERROR: expected Python backend at ${py_dir}"; exit 4; }
+cd "${PY_DIR}"
+sudo "${APP_ROOT}/venv/bin/pip" install -r requirements.txt
 
-  python3 -m venv "${APP_ROOT}/venv"
-  "${APP_ROOT}/venv/bin/pip" install -U pip wheel
-  "${APP_ROOT}/venv/bin/pip" install -r requirements.txt
-
-  cat > "/etc/systemd/system/${APP_NAME}-ml.service" <<EOF
+sudo tee "/etc/systemd/system/${APP_NAME}-ml.service" >/dev/null <<EOF
 [Unit]
-Description=QuillApp Python (scribe/ML) backend
+Description=${APP_NAME} Python ML (Flask)
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${py_dir}
-Environment=PYTHONUNBUFFERED=1
-ExecStart=${APP_ROOT}/venv/bin/gunicorn --workers 2 --threads 2 --timeout 300 --bind 127.0.0.1:${PY_PORT} app:app
+WorkingDirectory=${PY_DIR}
+Environment=PORT=${PY_PORT}
+ExecStart=${APP_ROOT}/venv/bin/python app.py
 Restart=always
 RestartSec=2
 
@@ -212,93 +95,98 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-  systemctl daemon-reload
-  systemctl enable --now "${APP_NAME}-ml.service"
-}
+echo "==> Nginx: serve frontend + proxy /api /ws /ml"
+sudo rm -f /etc/nginx/sites-enabled/default
 
-setup_nginx() {
-  log "Nginx: serve frontend + proxy /api /ws /ml (fix 413 + /api rewrite)"
-  rm -f /etc/nginx/sites-enabled/default || true
-
-  cat > "/etc/nginx/sites-available/${APP_NAME}" <<EOF
+sudo tee "/etc/nginx/sites-available/${APP_NAME}.conf" >/dev/null <<'NGINXEOF'
 server {
   listen 80;
-  server_name ${APP_HOST} _;
+  server_name %%APP_HOST%% _;
 
-  # FIX 413 for /ml/analyze (your image blobs are ~8MB+)
-  client_max_body_size ${NGINX_MAX_BODY};
+  # Fix 413 for /ml uploads (Flask allows 60MB; nginx must allow >= that)
+  client_max_body_size 80m;
 
-  root ${WEB_ROOT};
+  root %%FRONTEND_DIR%%/dist;
   index index.html;
 
+  # Avoid stale frontend JS after redeploy
+  location = /index.html {
+    add_header Cache-Control "no-store";
+    try_files $uri =404;
+  }
+
   location / {
-    try_files \$uri \$uri/ /index.html;
+    try_files $uri $uri/ /index.html;
   }
 
-  # FIX: strip /api prefix so /api/health -> backend /health
-  location /api/ {
-    rewrite ^/api/?(.*)\$ /\$1 break;
-    proxy_pass http://127.0.0.1:${NODE_PORT};
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-  }
-
+  # Node health (native)
   location = /health {
-    proxy_pass http://127.0.0.1:${NODE_PORT}/health;
-    proxy_set_header Host \$host;
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%/health;
   }
 
+  # Optional convenience: /api/health -> /health
+  location = /api/health {
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%/health;
+  }
+
+  # Node REST API (keeps /api prefix; your server mounts routes under /api)
+  location /api/ {
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  # WebSocket (Node ws server listens on /ws)
   location /ws {
-    proxy_pass http://127.0.0.1:${NODE_PORT};
+    proxy_pass http://127.0.0.1:%%NODE_PORT%%;
     proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
-    proxy_set_header Host \$host;
-    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
   }
 
+  # Python ML backend at /ml/*
   location /ml/ {
-    # Helps with large JSON/body uploads too
-    proxy_request_buffering off;
+    proxy_pass http://127.0.0.1:%%PY_PORT%%/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 
-    proxy_pass http://127.0.0.1:${PY_PORT}/;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 600;
+    proxy_send_timeout 600;
+
+    # safer for big uploads
+    proxy_request_buffering off;
+    proxy_buffering off;
   }
 }
-EOF
+NGINXEOF
 
-  ln -sf "/etc/nginx/sites-available/${APP_NAME}" "/etc/nginx/sites-enabled/${APP_NAME}"
-  nginx -t
-  systemctl enable --now nginx
-  systemctl reload nginx
-}
+# Replace placeholders with actual values
+sudo sed -i "s|%%APP_HOST%%|${APP_HOST}|g"         "/etc/nginx/sites-available/${APP_NAME}.conf"
+sudo sed -i "s|%%FRONTEND_DIR%%|${FRONTEND_DIR}|g" "/etc/nginx/sites-available/${APP_NAME}.conf"
+sudo sed -i "s|%%NODE_PORT%%|${NODE_PORT}|g"       "/etc/nginx/sites-available/${APP_NAME}.conf"
+sudo sed -i "s|%%PY_PORT%%|${PY_PORT}|g"           "/etc/nginx/sites-available/${APP_NAME}.conf"
 
-print_done() {
-  log "DONE"
-  echo "Frontend:    http://${APP_HOST}/"
-  echo "Node health: http://${APP_HOST}/health"
-  echo "Node via api: http://${APP_HOST}/api/health   (rewritten to /health)"
-  echo "WebSocket:   ws://${APP_HOST}/ws"
-  echo "Python base: http://${APP_HOST}/ml/   (POST /ml/analyze allowed up to ${NGINX_MAX_BODY})"
-}
+sudo ln -sf "/etc/nginx/sites-available/${APP_NAME}.conf" "/etc/nginx/sites-enabled/${APP_NAME}.conf"
 
-main() {
-  need_root
-  install_apt
-  install_node
-  ensure_dirs
-  clone_or_update_repo
-  ensure_postgres
-  build_frontend
-  setup_node_backend
-  setup_python_backend
-  setup_nginx
-  print_done
-}
+sudo nginx -t
+sudo systemctl daemon-reload
 
-main "$@"
+sudo systemctl enable "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx
+sudo systemctl restart "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx
+
+echo
+echo "==> DONE"
+echo "Frontend:   http://${APP_HOST}/"
+echo "Node API:   http://${APP_HOST}/health"
+echo "Node WS:    ws://${APP_HOST}/ws"
+echo "Python ML:  http://${APP_HOST}/ml/analyze"
+echo
+echo "Logs:"
+echo "  journalctl -u ${APP_NAME}-node.service -n 200 --no-pager"
+echo "  journalctl -u ${APP_NAME}-ml.service   -n 200 --no-pager"
+echo "  tail -n 200 /var/log/nginx/error.log"
