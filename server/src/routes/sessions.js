@@ -50,6 +50,28 @@ router.get('/:id', sessionJoinLimiter, async (req, res, next) => {
 })
 
 /**
+ * POST /api/sessions/:id/join
+ * Join an existing session (returns session data, records participant)
+ */
+router.post('/:id/join', sessionJoinLimiter, sanitizeBody, async (req, res, next) => {
+  try {
+    validateUUID(req.params.id, 'sessionId')
+    const session = await sessionService.getById(req.params.id)
+
+    res.json({
+      id: session.id,
+      iiifManifest: session.iiifManifest,
+      documentName: session.documentName,
+      annotations: session.annotations,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
  * PUT /api/sessions/:id/annotations
  * Update session annotations
  */

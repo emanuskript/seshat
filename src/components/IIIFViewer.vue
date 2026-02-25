@@ -3430,7 +3430,7 @@ cancelPenSelection() {
         const { sessionsApi } = await import('@/services/api');
 
         // Fetch session data
-        const session = await sessionsApi.get(sessionId);
+        const session = await sessionsApi.getSession(sessionId);
 
         // Store session info
         this.sessionActive = true;
