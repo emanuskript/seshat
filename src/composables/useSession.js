@@ -1,35 +1,39 @@
 // src/composables/useSession.js
+// HTTP API + singleton WebSocket integration for collaboration sessions.
 import { ref, computed } from 'vue'
 import { sessionsApi } from '../services/api'
+import { useWebSocket } from './useWebSocket'
 
+// ---------- UUID helper ------------------------------------------------------
 function uuidv4() {
   const cryptoApi = typeof window !== 'undefined' ? window.crypto : null
-
   const bytes = new Uint8Array(16)
   if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
     cryptoApi.getRandomValues(bytes)
   } else {
-    // Very old/locked-down environments fallback (still produces correct UUID shape)
     for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
   }
-
-  // RFC 4122 v4 + variant
   bytes[6] = (bytes[6] & 0x0f) | 0x40
   bytes[8] = (bytes[8] & 0x3f) | 0x80
-
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-export function useSession() {
-  const sessionId = ref(null)
-  const sessionData = ref(null)
-  const isLoading = ref(false)
-  const error = ref(null)
+// ---------- singleton state --------------------------------------------------
+const sessionId        = ref(null)
+const sessionData      = ref(null)
+const isLoading        = ref(false)
+const error            = ref(null)
+const localParticipant = ref(null)
+const annotations      = ref({})
 
+// ---------- composable -------------------------------------------------------
+export function useSession() {
+  const ws = useWebSocket()
+
+  // ---- computed ---------------------------------------------------------
   const isInSession = computed(() => !!sessionId.value)
 
-  // Build a shareable URL from the current session id
   const shareUrl = computed(() => {
     if (!sessionId.value) return ''
     const origin =
@@ -39,48 +43,64 @@ export function useSession() {
     return `${origin}/session/${sessionId.value}`
   })
 
+  // ---- device / participant ids -----------------------------------------
   const getDeviceId = () => {
     const key = 'quillapp_device_id'
-    let deviceId = localStorage.getItem(key)
-    if (!deviceId) {
-      deviceId = uuidv4()
-      localStorage.setItem(key, deviceId)
-    }
-    return deviceId
+    let id = localStorage.getItem(key)
+    if (!id) { id = uuidv4(); localStorage.setItem(key, id) }
+    return id
   }
 
   const getParticipantId = () => {
     const key = 'quillapp_participant_id'
-    let participantId = localStorage.getItem(key)
-    if (!participantId) {
-      participantId = uuidv4()
-      localStorage.setItem(key, participantId)
-    }
-    return participantId
+    let id = localStorage.getItem(key)
+    if (!id) { id = uuidv4(); localStorage.setItem(key, id) }
+    return id
   }
 
-  const createSession = async (iiifManifest, documentName, annotations) => {
+  // ---- WebSocket connect + join message ---------------------------------
+  const connectWebSocket = async (sid, displayName) => {
+    try {
+      await ws.connect(sid)
+
+      // Listen for the server's "joined" confirmation (sets localParticipant)
+      ws.on('joined', (payload) => {
+        localParticipant.value = {
+          id: payload.participantId,
+          displayName: payload.displayName,
+          color: payload.color
+        }
+      })
+
+      // Send the join message the server expects
+      ws.send('join', {
+        sessionId: sid,
+        displayName: displayName || 'Anonymous',
+        participantId: getParticipantId()
+      })
+    } catch (err) {
+      console.warn('[useSession] WebSocket connection failed (non-fatal):', err)
+    }
+  }
+
+  // ---- HTTP: create session ---------------------------------------------
+  const createSession = async (iiifManifest, documentName, ann) => {
     try {
       isLoading.value = true
       error.value = null
 
-      const deviceId = getDeviceId()
-      const participantId = getParticipantId()
-
       const response = await sessionsApi.createSession({
         iiifManifest,
         documentName,
-        annotations: annotations || {},
-        deviceId,
-        participantId,
-        metadata: {
-          createdAt: new Date().toISOString(),
-          userAgent: navigator.userAgent
-        }
+        annotations: ann || {},
+        deviceId: getDeviceId(),
+        participantId: getParticipantId(),
+        metadata: { createdAt: new Date().toISOString(), userAgent: navigator.userAgent }
       })
 
-      sessionId.value = response.id
-      sessionData.value = response
+      sessionId.value   = response.id
+      sessionData.value  = response
+      annotations.value  = ann || {}
 
       return response
     } catch (err) {
@@ -91,26 +111,36 @@ export function useSession() {
     }
   }
 
+  // ---- HTTP + WS: join session ------------------------------------------
   const joinSession = async (id, displayName) => {
     try {
       isLoading.value = true
       error.value = null
 
-      const deviceId = getDeviceId()
-      const participantId = getParticipantId()
+      // HTTP join (hits /api/sessions/:id/join — server returns session data)
+      let response
+      try {
+        response = await sessionsApi.joinSession(id, {
+          deviceId: getDeviceId(),
+          participantId: getParticipantId(),
+          displayName: displayName || undefined,
+          metadata: { joinedAt: new Date().toISOString(), userAgent: navigator.userAgent }
+        })
+      } catch (_) {
+        // Fall back to GET if /join route missing
+        response = await sessionsApi.getSession(id)
+      }
 
-      const response = await sessionsApi.joinSession(id, {
-        deviceId,
-        participantId,
-        displayName: displayName || undefined,
-        metadata: {
-          joinedAt: new Date().toISOString(),
-          userAgent: navigator.userAgent
-        }
-      })
-
-      sessionId.value = id
+      sessionId.value  = id
       sessionData.value = response
+
+      // Load annotations from server response
+      if (response.annotations) {
+        annotations.value = response.annotations
+      }
+
+      // Open WebSocket and send join
+      await connectWebSocket(id, displayName)
 
       return response
     } catch (err) {
@@ -121,20 +151,23 @@ export function useSession() {
     }
   }
 
+  // ---- leave ------------------------------------------------------------
   const leaveSession = async () => {
-    sessionId.value = null
-    sessionData.value = null
-    error.value = null
+    ws.disconnect()
+    sessionId.value        = null
+    sessionData.value      = null
+    localParticipant.value = null
+    annotations.value      = {}
+    error.value            = null
   }
 
-  const updateAnnotations = async (annotations) => {
+  // ---- HTTP: bulk annotation save (for version snapshots etc.) ----------
+  const updateAnnotations = async (ann) => {
     if (!sessionId.value) throw new Error('Not in a session')
-
     try {
-      const deviceId = getDeviceId()
       await sessionsApi.updateAnnotations(sessionId.value, {
-        deviceId,
-        annotations
+        deviceId: getDeviceId(),
+        annotations: ann
       })
     } catch (err) {
       error.value = err
@@ -142,11 +175,11 @@ export function useSession() {
     }
   }
 
+  // ---- HTTP: fetch session data -----------------------------------------
   const fetchSession = async (id) => {
     try {
       isLoading.value = true
-      error.value = null
-
+      error.value     = null
       const response = await sessionsApi.getSession(id)
       sessionData.value = response
       return response
@@ -158,17 +191,46 @@ export function useSession() {
     }
   }
 
+  // ---- WS: annotation operations (real-time sync) -----------------------
+  const addAnnotation = (annotationType, annotation) => {
+    ws.send('annotation:add', { annotationType, annotation })
+  }
+
+  const updateAnnotation = (annotationType, annotationId, updates) => {
+    ws.send('annotation:update', { annotationType, annotationId, updates })
+  }
+
+  const deleteAnnotation = (annotationType, annotationId) => {
+    ws.send('annotation:delete', { annotationType, annotationId })
+  }
+
+  // ---- WS: generic message subscription ---------------------------------
+  const onMessage = (type, callback) => ws.on(type, callback)
+
+  // ---- public API -------------------------------------------------------
   return {
+    // state
     sessionId,
     sessionData,
     isLoading,
     error,
     isInSession,
+    isConnected: ws.isConnected,
     shareUrl,
+    localParticipant,
+    annotations,
+    // HTTP
     createSession,
     joinSession,
     leaveSession,
     updateAnnotations,
-    fetchSession
+    fetchSession,
+    // WS real-time
+    addAnnotation,
+    updateAnnotation,
+    deleteAnnotation,
+    onMessage,
+    send: ws.send,
+    on: ws.on
   }
 }
