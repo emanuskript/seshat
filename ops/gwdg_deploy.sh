@@ -368,7 +368,35 @@ NGINXEOF
 }
 
 # ############################################################################
-# 10. Start everything
+# 10. Firewall – open HTTP (port 80)
+# ############################################################################
+open_firewall() {
+  log "Opening firewall for HTTP traffic"
+
+  # ufw (Ubuntu's default firewall)
+  if command -v ufw &>/dev/null; then
+    ufw allow 80/tcp   2>/dev/null || true
+    ufw allow 443/tcp  2>/dev/null || true
+    ufw allow 'Nginx Full' 2>/dev/null || true
+    # Make sure ufw doesn't block us even if it's inactive
+    if ufw status | grep -q "inactive"; then
+      log "  ufw is inactive – no firewall blocking"
+    else
+      log "  ufw rules updated"
+      ufw reload 2>/dev/null || true
+    fi
+  fi
+
+  # iptables fallback (in case ufw isn't managing it)
+  if command -v iptables &>/dev/null; then
+    # Only add rules if they don't already exist
+    iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || \
+      iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+  fi
+}
+
+# ############################################################################
+# 11. Start everything
 # ############################################################################
 start_services() {
   log "Starting services"
@@ -425,6 +453,19 @@ verify_deploy() {
     ok=false
   fi
 
+  # Check external access via APP_HOST
+  if curl -sf --max-time 5 "http://${APP_HOST}/" 2>/dev/null | grep -q '<div id="app"'; then
+    log "  ✓ External access works (http://${APP_HOST}/)"
+  else
+    warn "  ✗ Cannot reach http://${APP_HOST}/ from this machine"
+    warn "    Possible causes:"
+    warn "    1. Firewall: run 'ufw status' and 'iptables -L -n | grep 80'"
+    warn "    2. DNS: verify '${APP_HOST}' resolves correctly"
+    warn "    3. Cloud/GWDG security group: port 80 may need to be opened in the web console"
+    warn "    4. Browser cache: try Ctrl+Shift+R or incognito window"
+    ok=false
+  fi
+
   if [[ "${ok}" == "true" ]]; then
     log "All checks passed!"
   else
@@ -444,6 +485,7 @@ build_frontend
 setup_node_backend
 setup_python_backend
 setup_nginx
+open_firewall
 start_services
 verify_deploy
 
