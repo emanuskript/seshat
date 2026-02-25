@@ -978,12 +978,7 @@ import {
 } from "lucide-vue-next";
 
 function safeUUID() {
-  // modern browsers
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  // fallback: RFC4122 v4 using crypto.getRandomValues (supported basically everywhere)
+  // RFC4122 v4 using crypto.getRandomValues when available
   const rnd = new Uint8Array(16);
   if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
     crypto.getRandomValues(rnd);

@@ -104,7 +104,7 @@ server {
   server_name %%APP_HOST%% _;
 
   # Fix 413 for /ml uploads (Flask allows 60MB; nginx must allow >= that)
-  client_max_body_size 80m;
+  client_max_body_size 75m;
 
   root %%FRONTEND_DIR%%/dist;
   index index.html;
@@ -150,6 +150,7 @@ server {
 
   # Python ML backend at /ml/*
   location /ml/ {
+    client_max_body_size 75m;
     proxy_pass http://127.0.0.1:%%PY_PORT%%/;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

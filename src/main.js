@@ -4,9 +4,11 @@ import router from "./router";
 
 // ---- crypto.randomUUID polyfill (HTTP on VM often lacks randomUUID) ----
 function uuidv4Fallback() {
+  const cryptoApi = typeof window !== "undefined" ? window.crypto : null;
+
   // Prefer cryptographically-strong randomness when available
-  if (typeof globalThis !== "undefined" && globalThis.crypto?.getRandomValues) {
-    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
+    const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0"));
@@ -24,9 +26,9 @@ function uuidv4Fallback() {
 }
 
 try {
-  if (typeof globalThis !== "undefined" && globalThis.crypto) {
-    if (typeof globalThis.crypto.randomUUID !== "function") {
-      globalThis.crypto.randomUUID = uuidv4Fallback;
+  if (typeof window !== "undefined" && window.crypto) {
+    if (typeof window.crypto.randomUUID !== "function") {
+      window.crypto.randomUUID = uuidv4Fallback;
     }
   }
 } catch (_) {

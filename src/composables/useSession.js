@@ -3,12 +3,11 @@ import { ref, computed } from 'vue'
 import { sessionsApi } from '../services/api'
 
 function uuidv4() {
-  // Works on HTTP too (randomUUID often requires secure context).
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  const cryptoApi = typeof window !== 'undefined' ? window.crypto : null
 
   const bytes = new Uint8Array(16)
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes)
+  if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
+    cryptoApi.getRandomValues(bytes)
   } else {
     // Very old/locked-down environments fallback (still produces correct UUID shape)
     for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
