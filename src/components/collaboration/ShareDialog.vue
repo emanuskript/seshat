@@ -56,8 +56,12 @@ async function handleCreateSession() {
       props.currentAnnotations
     )
 
-    // Join the session for real-time sync
-    await joinSession(session.id, name)
+    // Try to join the session for real-time sync (non-blocking)
+    try {
+      await joinSession(session.id, name)
+    } catch (joinErr) {
+      console.warn('WebSocket join skipped (non-fatal):', joinErr)
+    }
 
     emit('session-created', session)
   } catch (err) {
@@ -69,7 +73,19 @@ async function copyToClipboard() {
   if (!shareUrl.value) return
 
   try {
-    await navigator.clipboard.writeText(shareUrl.value)
+    // navigator.clipboard requires HTTPS; fall back to execCommand on HTTP
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(shareUrl.value)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = shareUrl.value
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
     copied.value = true
     setTimeout(() => {
       copied.value = false

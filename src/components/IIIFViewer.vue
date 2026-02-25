@@ -3470,27 +3470,36 @@ cancelPenSelection() {
       if (!this.pendingSessionId) return;
 
       try {
-        // Join session for real-time sync
-        await this.joinSession(this.pendingSessionId, displayName);
+        // Join session via HTTP API (non-blocking if it fails — the
+        // session data was already loaded by loadFromSession)
+        try {
+          await this.joinSession(this.pendingSessionId, displayName);
+        } catch (joinErr) {
+          console.warn('HTTP join request failed (non-fatal):', joinErr);
+        }
 
         // Initialize presence tracking for cursors
-        this.initPresence();
+        try { this.initPresence(); } catch (_) { /* WS not ready */ }
 
         // Initialize follow mode
-        this.initFollow();
-        this.setupFollowSyncHandlers();
+        try {
+          this.initFollow();
+          this.setupFollowSyncHandlers();
+        } catch (_) { /* WS not ready */ }
 
         // Subscribe to remote annotation changes
-        this.annotationSyncUnsubscribe = this.onSessionMessage('annotation:sync', (payload) => {
-          this.handleRemoteAnnotationSync(payload);
-        });
+        if (typeof this.onSessionMessage === 'function') {
+          this.annotationSyncUnsubscribe = this.onSessionMessage('annotation:sync', (payload) => {
+            this.handleRemoteAnnotationSync(payload);
+          });
 
-        // Subscribe to version restored events (from other participants)
-        this.versionRestoredUnsubscribe = this.onSessionMessage('version:restored', (payload) => {
-          if (payload.annotations) {
-            this.loadAnnotationsFromSession(payload.annotations);
-          }
-        });
+          // Subscribe to version restored events (from other participants)
+          this.versionRestoredUnsubscribe = this.onSessionMessage('version:restored', (payload) => {
+            if (payload.annotations) {
+              this.loadAnnotationsFromSession(payload.annotations);
+            }
+          });
+        }
 
         this.sessionActive = true;
         this.pendingSessionId = null;
