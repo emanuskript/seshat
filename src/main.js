@@ -2,6 +2,9 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router";
 
+// Global styles – Tailwind v4, CSS custom-properties, theme classes
+import "./assets/styles/globals.css";
+
 // ---- crypto.randomUUID polyfill (HTTP on VM often lacks randomUUID) ----
 function uuidv4Fallback() {
   const cryptoApi = typeof window !== "undefined" ? window.crypto : null;

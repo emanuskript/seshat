@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Load the legacy v3 config (content paths, plugins, keyframes, etc.) */
+@config "../../../tailwind.config.js";
+
 /* Tailwind v4 theme configuration */
 @theme {
   --color-border: hsl(var(--border));
