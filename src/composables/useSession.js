@@ -29,6 +29,16 @@ export function useSession() {
 
   const isInSession = computed(() => !!sessionId.value)
 
+  // Build a shareable URL from the current session id
+  const shareUrl = computed(() => {
+    if (!sessionId.value) return ''
+    const origin =
+      typeof window !== 'undefined' && window.location
+        ? window.location.origin
+        : ''
+    return `${origin}/session/${sessionId.value}`
+  })
+
   const getDeviceId = () => {
     const key = 'quillapp_device_id'
     let deviceId = localStorage.getItem(key)
@@ -49,7 +59,7 @@ export function useSession() {
     return participantId
   }
 
-  const createSession = async () => {
+  const createSession = async (iiifManifest, documentName, annotations) => {
     try {
       isLoading.value = true
       error.value = null
@@ -58,6 +68,9 @@ export function useSession() {
       const participantId = getParticipantId()
 
       const response = await sessionsApi.createSession({
+        iiifManifest,
+        documentName,
+        annotations: annotations || {},
         deviceId,
         participantId,
         metadata: {
@@ -66,7 +79,7 @@ export function useSession() {
         }
       })
 
-      sessionId.value = response.sessionId
+      sessionId.value = response.id
       sessionData.value = response
 
       return response
@@ -78,7 +91,7 @@ export function useSession() {
     }
   }
 
-  const joinSession = async (id) => {
+  const joinSession = async (id, displayName) => {
     try {
       isLoading.value = true
       error.value = null
@@ -89,6 +102,7 @@ export function useSession() {
       const response = await sessionsApi.joinSession(id, {
         deviceId,
         participantId,
+        displayName: displayName || undefined,
         metadata: {
           joinedAt: new Date().toISOString(),
           userAgent: navigator.userAgent
@@ -150,6 +164,7 @@ export function useSession() {
     isLoading,
     error,
     isInSession,
+    shareUrl,
     createSession,
     joinSession,
     leaveSession,
