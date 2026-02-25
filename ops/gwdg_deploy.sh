@@ -279,12 +279,24 @@ EOF
 # ############################################################################
 setup_nginx() {
   log "Configuring Nginx"
-  rm -f /etc/nginx/sites-enabled/default
+
+  # ── Remove ALL old configs to avoid "conflicting server name" warnings ──
+  # This ensures only our single config exists. Without this, old leftover
+  # configs (from previous runs or manual edits) cause duplicate server
+  # blocks → nginx picks the wrong one → white page.
+  rm -f /etc/nginx/sites-enabled/*
+  rm -f /etc/nginx/sites-available/${APP_NAME}* 2>/dev/null || true
+
+  # Verify dist directory exists before writing config
+  if [[ ! -f "${FRONTEND_DIR}/dist/index.html" ]]; then
+    echo "FATAL: ${FRONTEND_DIR}/dist/index.html not found – frontend build failed?" >&2
+    exit 1
+  fi
 
   tee "/etc/nginx/sites-available/${APP_NAME}.conf" >/dev/null <<'NGINXEOF'
 server {
-  listen 80;
-  server_name %%APP_HOST%% _;
+  listen 80 default_server;
+  server_name %%APP_HOST%%;
 
   client_max_body_size 75m;
 
@@ -363,6 +375,61 @@ start_services() {
   systemctl daemon-reload
   systemctl enable "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx postgresql
   systemctl restart "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx
+
+  # Give services a moment to come up
+  sleep 3
+}
+
+# ############################################################################
+# 11. Post-deploy verification
+# ############################################################################
+verify_deploy() {
+  log "Verifying deployment…"
+  local ok=true
+
+  # Check Node API health
+  if curl -sf http://127.0.0.1:${NODE_PORT}/health >/dev/null 2>&1; then
+    log "  ✓ Node API healthy (port ${NODE_PORT})"
+  else
+    warn "  ✗ Node API not responding on port ${NODE_PORT}"
+    warn "    → journalctl -u ${APP_NAME}-node.service -n 50 --no-pager"
+    ok=false
+  fi
+
+  # Check Python ML health
+  if curl -sf http://127.0.0.1:${PY_PORT}/health >/dev/null 2>&1; then
+    log "  ✓ Python ML healthy (port ${PY_PORT})"
+  else
+    warn "  ✗ Python ML not responding on port ${PY_PORT}"
+    warn "    → journalctl -u ${APP_NAME}-ml.service -n 50 --no-pager"
+    ok=false
+  fi
+
+  # Check Nginx serves the frontend (not a white/empty page)
+  local body
+  body="$(curl -sf http://127.0.0.1/ 2>/dev/null || true)"
+  if echo "${body}" | grep -q '<div id="app"'; then
+    log "  ✓ Nginx serves frontend HTML"
+  else
+    warn "  ✗ Nginx is NOT serving frontend HTML (white page?)"
+    warn "    → Check: ls -la ${FRONTEND_DIR}/dist/index.html"
+    warn "    → Check: cat /etc/nginx/sites-enabled/${APP_NAME}.conf | head -5"
+    ok=false
+  fi
+
+  # Check Nginx proxies /api → Node
+  if curl -sf http://127.0.0.1/health 2>/dev/null | grep -q '"ok"'; then
+    log "  ✓ Nginx → Node proxy works (/health)"
+  else
+    warn "  ✗ Nginx → Node proxy not working"
+    ok=false
+  fi
+
+  if [[ "${ok}" == "true" ]]; then
+    log "All checks passed!"
+  else
+    warn "Some checks failed – see warnings above"
+  fi
 }
 
 # ############################################################################
@@ -378,6 +445,7 @@ setup_node_backend
 setup_python_backend
 setup_nginx
 start_services
+verify_deploy
 
 echo
 log "DONE"
