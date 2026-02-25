@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+# ============================================================================
+# QuillApp – single-script deploy for Ubuntu 22.04
+#
+# Usage:
+#   sudo APP_HOST=your.host.example bash ops/gwdg_deploy.sh
+#
+# What it does (idempotent – safe to re-run):
+#   1. Fixes the nodejs-vs-npm APT conflict (NodeSource ships its own npm)
+#   2. Installs system packages (git, nginx, python3, tesseract, postgresql)
+#   3. Installs Node 20 via NodeSource (if not already present)
+#   4. Clones / updates the repo
+#   5. Builds the Vue frontend
+#   6. Sets up PostgreSQL DB + runs Prisma migrations
+#   7. Configures systemd units for Node API + Python ML backend
+#   8. Writes an Nginx site config (reverse-proxy + static frontend)
+# ============================================================================
 set -euo pipefail
 
 APP_NAME="${APP_NAME:-quillapp}"
@@ -6,8 +22,6 @@ APP_ROOT="${APP_ROOT:-/opt/${APP_NAME}}"
 REPO_URL="${REPO_URL:-https://github.com/emanuskript/QuillApp.git}"
 BRANCH="${BRANCH:-main}"
 
-# IMPORTANT: set this when you run the script:
-# APP_HOST=v021067.vm.gwdguser.de
 APP_HOST="${APP_HOST:-}"
 if [[ -z "${APP_HOST}" ]]; then
   echo "ERROR: APP_HOST is required (e.g. APP_HOST=v021067.vm.gwdguser.de)"
@@ -16,104 +30,195 @@ fi
 
 NODE_PORT="${NODE_PORT:-3001}"
 PY_PORT="${PY_PORT:-5001}"
+DB_NAME="${DB_NAME:-quillapp}"
+DB_USER="${DB_USER:-quillapp}"
+DB_PASS="${DB_PASS:-quillapp_$(head -c12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')}"
 
 REPO_DIR="${APP_ROOT}/app"
 FRONTEND_DIR="${REPO_DIR}"
 NODE_DIR="${REPO_DIR}/server"
 PY_DIR="${REPO_DIR}/python-backend"
 
-###############################################################################
-# install_apt – OS packages (never installs 'npm'; nodejs comes via NodeSource)
-###############################################################################
-install_apt() {
-  echo "==> Repairing APT (nodejs/npm conflict workaround, idempotent)"
-  sudo apt-mark unhold nodejs npm 2>/dev/null || true
-  sudo apt-get update -y
-  sudo apt-get -f install -y || true
-  sudo apt-get remove -y npm 2>/dev/null || true
-  sudo apt-get purge  -y npm 2>/dev/null || true
-  sudo apt-get autoremove -y --purge || true
-  sudo apt-get -f install -y || true
+# ---- helpers ---------------------------------------------------------------
+log()  { echo "==> $*"; }
+warn() { echo "WARN: $*" >&2; }
 
-  echo "==> Installing OS deps (no npm – it ships inside nodejs from NodeSource)"
-  sudo apt-get install -y git nginx python3-venv python3-pip curl ca-certificates gnupg
+# ############################################################################
+# 1. Fix APT – nuke the Ubuntu "npm" package that conflicts with NodeSource
+# ############################################################################
+fix_apt() {
+  log "Repairing APT (nodejs/npm conflict workaround)"
+
+  # Un-hold both packages so we can manipulate them
+  apt-mark unhold nodejs npm 2>/dev/null || true
+
+  # If dpkg itself is mid-configure, finish that first
+  dpkg --configure -a 2>/dev/null || true
+
+  # Force-remove the Ubuntu npm package at the dpkg level.
+  # This works even when apt-get refuses because of the conflict.
+  if dpkg -l npm 2>/dev/null | grep -qE '^(ii|iF|iU|rc)'; then
+    log "Removing Ubuntu npm package (conflicts with NodeSource nodejs)"
+    dpkg --remove --force-remove-reinstreq npm 2>/dev/null || true
+    dpkg --purge  npm 2>/dev/null || true
+  fi
+
+  # Also purge every leftover "node-*" Ubuntu package that npm pulled in,
+  # because they can shadow modules bundled inside NodeSource nodejs.
+  apt-get remove -y --purge 'node-*' 2>/dev/null || true
+
+  # Clean up
+  apt-get autoremove -y --purge 2>/dev/null || true
+  apt-get -f install -y || true
+  apt-get update -y
 }
 
-###############################################################################
-# install_node – NodeSource 20.x (idempotent; npm is bundled with nodejs)
-###############################################################################
+# ############################################################################
+# 2. Install system packages (never list "npm" here!)
+# ############################################################################
+install_apt() {
+  log "Installing OS deps"
+  apt-get install -y \
+    git curl ca-certificates gnupg lsb-release \
+    nginx \
+    python3-venv python3-pip \
+    tesseract-ocr \
+    postgresql postgresql-contrib
+}
+
+# ############################################################################
+# 3. Install Node 20 via NodeSource (idempotent)
+# ############################################################################
 install_node() {
   if command -v node &>/dev/null && node -v | grep -qE '^v(1[89]|2[0-9])\.'; then
-    echo "==> Node already installed: $(node -v)  npm $(npm -v)"
+    log "Node already present: $(node -v)  npm $(npm -v)"
   else
-    echo "==> Installing NodeSource Node.js 20.x"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    log "Installing NodeSource Node.js 20.x"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
   fi
 
-  # Verify npm is usable
+  # Final sanity check
   if ! command -v npm &>/dev/null; then
-    echo "ERROR: npm not found after nodejs install" >&2; exit 1
+    echo "FATAL: npm not found after nodejs install" >&2; exit 1
   fi
-  echo "==> node $(node -v)  npm $(npm -v)"
+  log "node $(node -v)  npm $(npm -v)"
 }
 
-install_apt
-install_node
+# ############################################################################
+# 4. PostgreSQL – create role + database (idempotent)
+# ############################################################################
+setup_postgres() {
+  log "Setting up PostgreSQL database '${DB_NAME}'"
+  systemctl start postgresql || true
+  systemctl enable postgresql || true
 
-echo "==> Clone/update repo"
-sudo mkdir -p "${APP_ROOT}"
-if [[ ! -d "${REPO_DIR}/.git" ]]; then
-  sudo rm -rf "${REPO_DIR}"
-  sudo git clone --branch "${BRANCH}" "${REPO_URL}" "${REPO_DIR}"
-else
-  sudo git -C "${REPO_DIR}" fetch --prune origin
-  sudo git -C "${REPO_DIR}" reset --hard "origin/${BRANCH}"
-fi
-sudo git -C "${REPO_DIR}" submodule update --init --recursive || true
+  # Create user if missing
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASS}';"
+  fi
 
-echo "==> Frontend build env"
-sudo tee "${FRONTEND_DIR}/.env.production.local" >/dev/null <<EOF
+  # Create database if missing
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
+  fi
+
+  # Grant
+  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" 2>/dev/null || true
+}
+
+# ############################################################################
+# 5. Clone / update repo
+# ############################################################################
+clone_or_update() {
+  log "Clone/update repo"
+  mkdir -p "${APP_ROOT}"
+  if [[ ! -d "${REPO_DIR}/.git" ]]; then
+    rm -rf "${REPO_DIR}"
+    git clone --branch "${BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+  else
+    git -C "${REPO_DIR}" fetch --prune origin
+    git -C "${REPO_DIR}" reset --hard "origin/${BRANCH}"
+  fi
+  git -C "${REPO_DIR}" submodule update --init --recursive || true
+}
+
+# ############################################################################
+# 6. Build frontend
+# ############################################################################
+build_frontend() {
+  log "Building frontend"
+
+  tee "${FRONTEND_DIR}/.env.production.local" >/dev/null <<EOF
 VUE_APP_API_URL=http://${APP_HOST}
 VUE_APP_WS_URL=ws://${APP_HOST}
 VUE_APP_ML_URL=http://${APP_HOST}/ml
+VUE_APP_PHAROSIGHT_API_BASE=http://${APP_HOST}/ml
 EOF
 
-echo "==> Build frontend"
-cd "${FRONTEND_DIR}"
-sudo npm ci
-sudo npm run build
+  cd "${FRONTEND_DIR}"
+  npm ci --unsafe-perm
+  npm run build
 
-echo "==> Setup Node backend (systemd)"
-cd "${NODE_DIR}"
-sudo npm ci
+  # Inject window.__PHAROSIGHT_API_BASE__ so the ML backend uses our local
+  # /ml proxy instead of the public HF Spaces endpoint.
+  local idx="${FRONTEND_DIR}/dist/index.html"
+  if [[ -f "${idx}" ]] && ! grep -q '__PHAROSIGHT_API_BASE__' "${idx}"; then
+    sed -i 's|</head>|<script>window.__PHAROSIGHT_API_BASE__="http://'"${APP_HOST}"'/ml";</script></head>|' "${idx}"
+  fi
+}
 
-sudo tee "/etc/systemd/system/${APP_NAME}-node.service" >/dev/null <<EOF
+# ############################################################################
+# 7. Setup Node backend
+# ############################################################################
+setup_node_backend() {
+  log "Setting up Node backend"
+  cd "${NODE_DIR}"
+  npm ci --unsafe-perm
+
+  # Write Node .env with DATABASE_URL
+  tee "${NODE_DIR}/.env" >/dev/null <<EOF
+PORT=${NODE_PORT}
+NODE_ENV=production
+CORS_ORIGIN=http://${APP_HOST}
+DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}?schema=public
+EOF
+
+  # Generate Prisma client + apply migrations
+  npx prisma generate
+  npx prisma migrate deploy || npx prisma db push --accept-data-loss
+
+  tee "/etc/systemd/system/${APP_NAME}-node.service" >/dev/null <<EOF
 [Unit]
 Description=${APP_NAME} Node API
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
 WorkingDirectory=${NODE_DIR}
-Environment=PORT=${NODE_PORT}
-Environment=CORS_ORIGIN=http://${APP_HOST}
-ExecStart=/usr/bin/npm start
+EnvironmentFile=${NODE_DIR}/.env
+ExecStart=/usr/bin/node src/index.js
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 EOF
+}
 
-echo "==> Setup Python backend (systemd)"
-sudo python3 -m venv "${APP_ROOT}/venv"
-sudo "${APP_ROOT}/venv/bin/pip" install --upgrade pip
+# ############################################################################
+# 8. Setup Python ML backend
+# ############################################################################
+setup_python_backend() {
+  log "Setting up Python ML backend"
 
-cd "${PY_DIR}"
-sudo "${APP_ROOT}/venv/bin/pip" install -r requirements.txt
+  python3 -m venv "${APP_ROOT}/venv"
+  "${APP_ROOT}/venv/bin/pip" install --upgrade pip
 
-sudo tee "/etc/systemd/system/${APP_NAME}-ml.service" >/dev/null <<EOF
+  cd "${PY_DIR}"
+  "${APP_ROOT}/venv/bin/pip" install -r requirements.txt
+
+  tee "/etc/systemd/system/${APP_NAME}-ml.service" >/dev/null <<EOF
 [Unit]
 Description=${APP_NAME} Python ML (Flask)
 After=network.target
@@ -122,6 +227,7 @@ After=network.target
 Type=simple
 WorkingDirectory=${PY_DIR}
 Environment=PORT=${PY_PORT}
+Environment=FLASK_DEBUG=0
 ExecStart=${APP_ROOT}/venv/bin/python app.py
 Restart=always
 RestartSec=2
@@ -129,16 +235,20 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 EOF
+}
 
-echo "==> Nginx: serve frontend + proxy /api /ws /ml"
-sudo rm -f /etc/nginx/sites-enabled/default
+# ############################################################################
+# 9. Nginx
+# ############################################################################
+setup_nginx() {
+  log "Configuring Nginx"
+  rm -f /etc/nginx/sites-enabled/default
 
-sudo tee "/etc/nginx/sites-available/${APP_NAME}.conf" >/dev/null <<'NGINXEOF'
+  tee "/etc/nginx/sites-available/${APP_NAME}.conf" >/dev/null <<'NGINXEOF'
 server {
   listen 80;
   server_name %%APP_HOST%% _;
 
-  # Fix 413 for /ml uploads (Flask allows 60MB; nginx must allow >= that)
   client_max_body_size 75m;
 
   root %%FRONTEND_DIR%%/dist;
@@ -154,73 +264,92 @@ server {
     try_files $uri $uri/ /index.html;
   }
 
-  # Node health (native)
+  # ---- Node API ----
   location = /health {
     proxy_pass http://127.0.0.1:%%NODE_PORT%%/health;
   }
 
-  # Optional convenience: /api/health -> /health
   location = /api/health {
     proxy_pass http://127.0.0.1:%%NODE_PORT%%/health;
   }
 
-  # Node REST API (keeps /api prefix; your server mounts routes under /api)
   location /api/ {
     proxy_pass http://127.0.0.1:%%NODE_PORT%%;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 
-  # WebSocket (Node ws server listens on /ws)
+  # ---- WebSocket ----
   location /ws {
     proxy_pass http://127.0.0.1:%%NODE_PORT%%;
     proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Upgrade    $http_upgrade;
     proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_read_timeout 3600;
-    proxy_send_timeout 3600;
+    proxy_set_header Host       $host;
+    proxy_read_timeout  3600;
+    proxy_send_timeout  3600;
   }
 
-  # Python ML backend at /ml/*
+  # ---- Python ML backend ----
   location /ml/ {
-    client_max_body_size 75m;
-    proxy_pass http://127.0.0.1:%%PY_PORT%%/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    client_max_body_size   75m;
+    proxy_pass             http://127.0.0.1:%%PY_PORT%%/;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
-    proxy_read_timeout 600;
-    proxy_send_timeout 600;
-
-    # safer for big uploads
+    proxy_read_timeout     600;
+    proxy_send_timeout     600;
     proxy_request_buffering off;
-    proxy_buffering off;
+    proxy_buffering         off;
   }
 }
 NGINXEOF
 
-# Replace placeholders with actual values
-sudo sed -i "s|%%APP_HOST%%|${APP_HOST}|g"         "/etc/nginx/sites-available/${APP_NAME}.conf"
-sudo sed -i "s|%%FRONTEND_DIR%%|${FRONTEND_DIR}|g" "/etc/nginx/sites-available/${APP_NAME}.conf"
-sudo sed -i "s|%%NODE_PORT%%|${NODE_PORT}|g"       "/etc/nginx/sites-available/${APP_NAME}.conf"
-sudo sed -i "s|%%PY_PORT%%|${PY_PORT}|g"           "/etc/nginx/sites-available/${APP_NAME}.conf"
+  sed -i "s|%%APP_HOST%%|${APP_HOST}|g"         "/etc/nginx/sites-available/${APP_NAME}.conf"
+  sed -i "s|%%FRONTEND_DIR%%|${FRONTEND_DIR}|g" "/etc/nginx/sites-available/${APP_NAME}.conf"
+  sed -i "s|%%NODE_PORT%%|${NODE_PORT}|g"       "/etc/nginx/sites-available/${APP_NAME}.conf"
+  sed -i "s|%%PY_PORT%%|${PY_PORT}|g"           "/etc/nginx/sites-available/${APP_NAME}.conf"
 
-sudo ln -sf "/etc/nginx/sites-available/${APP_NAME}.conf" "/etc/nginx/sites-enabled/${APP_NAME}.conf"
+  ln -sf "/etc/nginx/sites-available/${APP_NAME}.conf" "/etc/nginx/sites-enabled/${APP_NAME}.conf"
+  nginx -t
+}
 
-sudo nginx -t
-sudo systemctl daemon-reload
+# ############################################################################
+# 10. Start everything
+# ############################################################################
+start_services() {
+  log "Starting services"
+  systemctl daemon-reload
+  systemctl enable "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx postgresql
+  systemctl restart "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx
+}
 
-sudo systemctl enable "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx
-sudo systemctl restart "${APP_NAME}-node.service" "${APP_NAME}-ml.service" nginx
+# ############################################################################
+# Main
+# ############################################################################
+fix_apt
+install_apt
+install_node
+setup_postgres
+clone_or_update
+build_frontend
+setup_node_backend
+setup_python_backend
+setup_nginx
+start_services
 
 echo
-echo "==> DONE"
+log "DONE"
 echo "Frontend:   http://${APP_HOST}/"
-echo "Node API:   http://${APP_HOST}/health"
+echo "Node API:   http://${APP_HOST}/api/health"
 echo "Node WS:    ws://${APP_HOST}/ws"
-echo "Python ML:  http://${APP_HOST}/ml/analyze"
+echo "Python ML:  http://${APP_HOST}/ml/health"
+echo
+echo "Credentials saved in: ${NODE_DIR}/.env"
 echo
 echo "Logs:"
 echo "  journalctl -u ${APP_NAME}-node.service -n 200 --no-pager"
