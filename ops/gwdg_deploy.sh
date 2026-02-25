@@ -22,9 +22,44 @@ FRONTEND_DIR="${REPO_DIR}"
 NODE_DIR="${REPO_DIR}/server"
 PY_DIR="${REPO_DIR}/python-backend"
 
-echo "==> Installing OS deps"
-sudo apt-get update -y
-sudo apt-get install -y git nginx python3-venv python3-pip nodejs npm
+###############################################################################
+# install_apt – OS packages (never installs 'npm'; nodejs comes via NodeSource)
+###############################################################################
+install_apt() {
+  echo "==> Repairing APT (nodejs/npm conflict workaround, idempotent)"
+  sudo apt-mark unhold nodejs npm 2>/dev/null || true
+  sudo apt-get update -y
+  sudo apt-get -f install -y || true
+  sudo apt-get remove -y npm 2>/dev/null || true
+  sudo apt-get purge  -y npm 2>/dev/null || true
+  sudo apt-get autoremove -y --purge || true
+  sudo apt-get -f install -y || true
+
+  echo "==> Installing OS deps (no npm – it ships inside nodejs from NodeSource)"
+  sudo apt-get install -y git nginx python3-venv python3-pip curl ca-certificates gnupg
+}
+
+###############################################################################
+# install_node – NodeSource 20.x (idempotent; npm is bundled with nodejs)
+###############################################################################
+install_node() {
+  if command -v node &>/dev/null && node -v | grep -qE '^v(1[89]|2[0-9])\.'; then
+    echo "==> Node already installed: $(node -v)  npm $(npm -v)"
+  else
+    echo "==> Installing NodeSource Node.js 20.x"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+  fi
+
+  # Verify npm is usable
+  if ! command -v npm &>/dev/null; then
+    echo "ERROR: npm not found after nodejs install" >&2; exit 1
+  fi
+  echo "==> node $(node -v)  npm $(npm -v)"
+}
+
+install_apt
+install_node
 
 echo "==> Clone/update repo"
 sudo mkdir -p "${APP_ROOT}"
