@@ -32,7 +32,19 @@ NODE_PORT="${NODE_PORT:-3001}"
 PY_PORT="${PY_PORT:-5001}"
 DB_NAME="${DB_NAME:-quillapp}"
 DB_USER="${DB_USER:-quillapp}"
-DB_PASS="${DB_PASS:-quillapp_$(head -c12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')}"
+
+# Persist DB password so re-runs reuse the same credentials.
+DB_PASS_FILE="${APP_ROOT}/.db_pass"
+if [[ -z "${DB_PASS:-}" ]]; then
+  if [[ -f "${DB_PASS_FILE}" ]]; then
+    DB_PASS="$(cat "${DB_PASS_FILE}")"
+  else
+    DB_PASS="quillapp_$(head -c12 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
+    mkdir -p "${APP_ROOT}"
+    echo "${DB_PASS}" > "${DB_PASS_FILE}"
+    chmod 600 "${DB_PASS_FILE}"
+  fi
+fi
 
 REPO_DIR="${APP_ROOT}/app"
 FRONTEND_DIR="${REPO_DIR}"
@@ -118,6 +130,19 @@ setup_postgres() {
     sudo -u postgres psql -c "CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASS}';"
   fi
 
+  # Always sync the password (covers re-runs where DB_PASS was regenerated)
+  sudo -u postgres psql -c "ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASS}';" 2>/dev/null || true
+
+  # Ensure password auth is enabled for local connections (peer auth won't work for our app)
+  local pg_hba
+  pg_hba="$(sudo -u postgres psql -tAc "SHOW hba_file")"
+  if [[ -f "${pg_hba}" ]] && ! grep -q "${DB_USER}" "${pg_hba}"; then
+    # Insert a line BEFORE the first "local.*all.*all" rule
+    sed -i "/^local.*all.*all/i host    ${DB_NAME}    ${DB_USER}    127.0.0.1/32    md5" "${pg_hba}"
+    sed -i "/^local.*all.*all/i local   ${DB_NAME}    ${DB_USER}                    md5" "${pg_hba}"
+    systemctl reload postgresql
+  fi
+
   # Create database if missing
   if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
     sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
@@ -125,6 +150,18 @@ setup_postgres() {
 
   # Grant
   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" 2>/dev/null || true
+
+  # Save password file (in case it wasn't saved yet)
+  echo "${DB_PASS}" > "${DB_PASS_FILE}"
+  chmod 600 "${DB_PASS_FILE}"
+
+  # Verify the connection works before proceeding
+  if ! PGPASSWORD="${DB_PASS}" psql -h 127.0.0.1 -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT 1" &>/dev/null; then
+    echo "FATAL: Cannot connect to PostgreSQL as ${DB_USER}@localhost/${DB_NAME}" >&2
+    echo "  Check pg_hba.conf and password. Password is in: ${DB_PASS_FILE}" >&2
+    exit 1
+  fi
+  log "PostgreSQL connection verified OK"
 }
 
 # ############################################################################
