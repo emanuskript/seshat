@@ -217,6 +217,15 @@ export default {
   height: 280px;
   width: auto;
   filter: drop-shadow(0 8px 18px rgba(22, 45, 90, 0.2));
+  transition: filter 0.2s ease;
+}
+
+/* Ensure logo visibility on dark backgrounds */
+.dark .brand img {
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.5)) brightness(1.15);
+}
+.high-contrast .brand img {
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.4)) contrast(1.2);
 }
 
 /* --- Banner --- */

@@ -92,7 +92,7 @@ function handleThemeSelect(theme) {
         </Tooltip>
 
         <div class="flex items-center gap-2 cursor-pointer" @click="emit('go-home')">
-          <img src="@/assets/logo.png" alt="Logo" class="h-6 w-6" />
+          <img src="@/assets/logo.png" alt="Logo" class="topbar-logo h-6 w-6" />
           <span class="text-sm font-medium text-foreground truncate max-w-[200px]">
             {{ documentName }}
           </span>
@@ -263,3 +263,15 @@ function handleThemeSelect(theme) {
     </div>
   </TooltipProvider>
 </template>
+
+<style scoped>
+.topbar-logo {
+  transition: filter 0.2s ease;
+}
+.dark .topbar-logo {
+  filter: brightness(1.15);
+}
+.high-contrast .topbar-logo {
+  filter: contrast(1.2);
+}
+</style>
