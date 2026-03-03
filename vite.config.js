@@ -6,6 +6,12 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       proxy: {
+        '/ml': {
+          target,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/ml/, ''),
+        },
         '/static': {
           target,
           changeOrigin: true,

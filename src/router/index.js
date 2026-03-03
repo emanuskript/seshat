@@ -20,11 +20,15 @@ const routes = [
         component: IIIFViewer,
         props: true, // Session ID passed as prop
     },
+    {
+        path: "/:pathMatch(.*)*",
+        redirect: "/",
+    },
 ];
 
 
 const router = createRouter({
-    history: createWebHistory(),
+    history: createWebHistory(process.env.BASE_URL || "/"),
     routes,
 });
 

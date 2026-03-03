@@ -640,30 +640,19 @@ export default {
       )
     },
     backendBase() {
-      // FORCE localhost:5001 for development
-      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-      
-      if (isDev) {
-        console.log('🔗 Backend URL: http://localhost:5001 (DEVELOPMENT MODE)')
-        return 'http://localhost:5001'
-      }
-
       const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}
       const fromEnv = env?.VITE_PHAROSIGHT_API_BASE || env?.VUE_APP_PHAROSIGHT_API_BASE
       const fromWindow = (typeof window !== 'undefined' && window.__PHAROSIGHT_API_BASE__) ? window.__PHAROSIGHT_API_BASE__ : null
-      const prodDefault = 'https://basuony-pharosight.hf.space'
-      let base = fromEnv || fromWindow || prodDefault
-
-      // Guard against legacy endpoints that should no longer receive traffic.
-      if (typeof base === 'string' && /pharosight\.onrender\.com/i.test(base)) {
-        console.warn('Legacy backend URL detected; forcing Hugging Face endpoint instead.')
-        base = prodDefault
-      }
+      const base = fromEnv || fromWindow || '/ml'
 
       const normalized = String(base).replace(/\/+$/, '')
+      if (/^\//.test(normalized)) {
+        console.log('🔗 Backend URL:', normalized)
+        return normalized
+      }
       if (!/^https?:\/\//i.test(normalized)) {
-        console.warn('Unexpected backend base URL, defaulting to Hugging Face endpoint.', normalized)
-        return prodDefault
+        console.warn('Unexpected backend base URL, defaulting to /ml.', normalized)
+        return '/ml'
       }
       
       console.log('🔗 Backend URL:', normalized)

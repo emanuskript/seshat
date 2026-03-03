@@ -112,9 +112,9 @@ export default {
       return !!link && link.startsWith("http");
     },
     _getBackendBase() {
-      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      if (isDev) return 'http://localhost:5001';
-      return window.__PHAROSIGHT_API_BASE__ || 'https://basuony-pharosight.hf.space';
+      const fromWindow = typeof window !== 'undefined' ? window.__PHAROSIGHT_API_BASE__ : null;
+      if (fromWindow) return String(fromWindow).replace(/\/+$/, '');
+      return '/ml';
     },
     async startAnnotating() {
       if (!(this.iiifLink || this.uploadedFiles.length)) {
@@ -214,7 +214,7 @@ export default {
   z-index: 10;
 }
 .brand img {
-  height: 160px;
+  height: 280px;
   width: auto;
   filter: drop-shadow(0 8px 18px rgba(22, 45, 90, 0.2));
 }

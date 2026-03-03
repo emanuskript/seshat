@@ -2093,9 +2093,9 @@ export default {
       this.$refs.scribeDetectionPopup.openPopup();
     },
     _getBackendBase() {
-      const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      if (isDev) return 'http://localhost:5001';
-      return window.__PHAROSIGHT_API_BASE__ || 'https://basuony-pharosight.hf.space';
+      const fromWindow = typeof window !== 'undefined' ? window.__PHAROSIGHT_API_BASE__ : null;
+      if (fromWindow) return String(fromWindow).replace(/\/+$/, '');
+      return '/ml';
     },
     
     // Get creator display name for an annotation
