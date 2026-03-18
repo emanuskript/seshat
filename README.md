@@ -1,4 +1,4 @@
-# Seshat (QuillApp)
+# Seshat
 
 Seshat is a manuscript annotation and analysis platform. It combines:
 - a Vue frontend for image/PDF upload, IIIF viewing, annotation, export, and scribe-analysis workflows,
@@ -156,6 +156,14 @@ If you only want hosted ML inference while keeping your own frontend/server:
 - `server/README.md` and `server/SETUP.md` — collaboration server setup
 - `JSON_UPLOAD_FEATURE.md` — JSON upload flow details
 
-## License
+## License Recommendation
 
-No license file is currently included in this repository.
+For this type of platform (frontend + backend services + ML tooling), the most suitable default license is **Apache License 2.0**.
+
+Why this is a good fit:
+- permissive for research, academic, and commercial adoption,
+- includes an explicit patent grant,
+- allows private internal modifications without requiring source disclosure,
+- keeps attribution and notice requirements straightforward.
+
+If your goal is strong copyleft for hosted/network use (so modified hosted versions must also share source), consider **AGPLv3** instead.
