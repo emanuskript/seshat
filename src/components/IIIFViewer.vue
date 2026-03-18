@@ -2089,6 +2089,27 @@ export default {
   methods: {
     // Make calligraphic path generator available in template
     generateCalligraphicPath,
+    async _readResponsePayload(response) {
+      const text = await response.text();
+      if (!text) return {};
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { rawText: text };
+      }
+    },
+    _formatUploadError(payload, status) {
+      const proxyError = typeof payload?.rawText === 'string' && payload.rawText.startsWith('Proxy error');
+      if (proxyError) {
+        return 'Backend is unreachable via /ml proxy. Start the Python backend on port 5001 and retry.';
+      }
+      if (payload?.error) {
+        return typeof payload.error === 'string' ? payload.error : (payload.error.message || `Upload failed (${status})`);
+      }
+      if (payload?.message) return payload.message;
+      if (payload?.rawText) return payload.rawText;
+      return `Upload failed (${status})`;
+    },
     openScribeDetection() {
       this.$refs.scribeDetectionPopup.openPopup();
     },
@@ -2121,8 +2142,10 @@ export default {
       try {
         const base = this._getBackendBase();
         const res = await fetch(`${base}/prepare`, { method: "POST", body: fd });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Upload failed");
+        const data = await this._readResponsePayload(res);
+        if (!res.ok || !data.ok) {
+          throw new Error(this._formatUploadError(data, res.status));
+        }
         const newImages = data.pages.map(p => `${base}/static/${p.image}`);
         this.images.push(...newImages);
         for (let i = 0; i < newImages.length; i++) {
