@@ -66,7 +66,6 @@
         </button>
       </div>
 
-      <div class="base-accent" aria-hidden="true"></div>
     </section>
   </div>
 </template>
@@ -276,17 +275,6 @@ export default {
   padding: 10px 16px;
   letter-spacing: 0.2px;
   box-shadow: 0 6px 0 hsl(var(--primary) / 0.3) inset;
-}
-
-.base-accent {
-  position: absolute;
-  left: 26px;
-  right: 26px;
-  bottom: -10px;
-  height: 10px;
-  border-radius: 10px;
-  background: linear-gradient(90deg, hsl(45 90% 70%), hsl(45 80% 60%));
-  box-shadow: 0 6px 10px rgba(180, 140, 40, 0.25);
 }
 
 .form {
