@@ -305,6 +305,20 @@
                 <div v-else-if="!results.scribe_changes || results.scribe_changes.length === 0">
                   <p>No scribe changes detected. The entire selection appears to be written by a single hand.</p>
                 </div>
+
+                <div class="ai-disclaimer-box ai-disclaimer-box--inline">
+                  <div class="disclaimer-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="16" x2="12" y2="12"></line>
+                      <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                  </div>
+                  <div class="disclaimer-content">
+                    <strong>AI-Generated Analysis</strong>
+                    <p>These results were generated using artificial intelligence and may not be 100% accurate. Please verify important findings manually.</p>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -319,20 +333,6 @@
                 :feature-names="results.feature_names || []"
               />
               
-              <!-- AI Disclaimer -->
-              <div class="ai-disclaimer-box">
-                <div class="disclaimer-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                  </svg>
-                </div>
-                <div class="disclaimer-content">
-                  <strong>AI-Generated Analysis</strong>
-                  <p>These results were generated using artificial intelligence and may not be 100% accurate. Please verify important findings manually.</p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -633,11 +633,12 @@ export default {
       return cues.length ? cues.slice(0, 3).join(', ') + '.' : null
     },
     hasResults() {
-      return !!(
-        this.results &&
-        (this.results.primary_scribe ||
-         (Array.isArray(this.results.scribe_changes) && this.results.scribe_changes.length > 0))
-      )
+      if (!this.results) return false
+      if (this.results.primary_scribe) return true
+      if (Array.isArray(this.results.scribe_changes)) return true
+      if (this.results.statistics?.total_scribes != null) return true
+      if (this.results.total_scribes != null) return true
+      return false
     },
     backendBase() {
       const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}
@@ -718,6 +719,22 @@ export default {
       this.errorMessage = title
       this.errorDetail = message
       this.isAnalyzing = false
+    },
+    formatAnalysisError(error, fallback = 'Unknown error occurred') {
+      const raw = typeof error?.message === 'string' ? error.message.trim() : ''
+      if (!raw) return fallback
+
+      if (/failed to fetch page image/i.test(raw) || /no page image available/i.test(raw)) {
+        return 'Could not read the current manuscript image. The image source may block cross-origin access (CORS). Try uploading the image directly or use manual/json mode.'
+      }
+      if (/failed to fetch/i.test(raw) || /networkerror/i.test(raw)) {
+        return `Could not reach the PharoSight backend at ${this.backendBase}. Make sure the backend is running and accessible.`
+      }
+      if (/analysis failed:/i.test(raw)) {
+        return raw
+      }
+
+      return raw
     },
     goStep(stepNum) {
       this.step = stepNum
@@ -1063,9 +1080,10 @@ export default {
       this.segmentPreviews = Object.create(null)
 
       try {
+        let success = false
         if (this.mode === 'auto') {
           console.log('🚀 Starting AUTO mode analysis')
-          await this.analyzeScribes()
+          success = await this.analyzeScribes()
         } else if (this.mode === 'json') {
           console.log('🚀 Starting JSON mode analysis')
           // JSON mode: use regions from uploaded JSON file + uploaded image
@@ -1076,7 +1094,7 @@ export default {
             h: Math.round(r.h)
           }))
           this.lastPayloadRegions = payloadRegions
-          await this.analyzeScribesWithJsonImage(payloadRegions, this.jsonSourceWidth, this.jsonSourceHeight)
+          success = await this.analyzeScribesWithJsonImage(payloadRegions, this.jsonSourceWidth, this.jsonSourceHeight)
         } else {
           console.log('🚀 Starting MANUAL mode analysis')
           // Manual mode: use drawn regions
@@ -1089,14 +1107,28 @@ export default {
           const srcW = imgEl?.naturalWidth || this.drawImgNaturalW || 0
           const srcH = imgEl?.naturalHeight || this.drawImgNaturalH || 0
           console.log('📐 Manual mode image dimensions:', { srcW, srcH, regions: payloadRegions.length })
-          await this.analyzeScribesWithRegions(payloadRegions, srcW, srcH)
+          success = await this.analyzeScribesWithRegions(payloadRegions, srcW, srcH)
         }
+
+        if (!success) {
+          return
+        }
+
+        if (!this.results) {
+          this.showError(
+            'No Results Returned',
+            'PharoSight did not return analysis data. Please retry, and if this persists, check backend logs.'
+          )
+          return
+        }
+
         console.log('✅ Analysis completed successfully')
       } catch (err) {
         console.error('❌ Detection error:', err)
         this.isAnalyzing = false
         this.loadingMessage = 'Analysis Failed'
-        this.loadingDetail = err.message || 'An unexpected error occurred'
+        this.loadingDetail = this.formatAnalysisError(err, 'An unexpected error occurred')
+        this.showError('Analysis Failed', this.loadingDetail)
       }
     },
 
@@ -1104,7 +1136,7 @@ export default {
       console.log('📍 analyzeScribes() entered', { isAnalyzing: this.isAnalyzing })
       if (this.isAnalyzing) {
         console.log('⚠️ analyzeScribes() - already analyzing, returning early')
-        return
+        return false
       }
       this.isAnalyzing = true
       this.analysisCompleted = false
@@ -1155,17 +1187,20 @@ export default {
         }
         this.analysisCompleted = true
         this.$nextTick(() => this.drawPageOverlay())
+        return true
       } catch (err) {
         console.error('Auto analysis error:', err)
         this.loadingMessage = 'Analysis failed'
-        this.loadingDetail = err.message || 'Unknown error'
+        this.loadingDetail = this.formatAnalysisError(err, 'Unknown error')
+        this.showError('PharoSight Auto Failed', this.loadingDetail)
+        return false
       } finally {
         this.isAnalyzing = false
       }
     },
 
     async analyzeScribesWithJsonImage(regions, srcW, srcH) {
-      if (this.isAnalyzing) return
+      if (this.isAnalyzing) return false
       this.isAnalyzing = true
       this.analysisCompleted = false
       this.results = null
@@ -1218,10 +1253,13 @@ export default {
         }
         this.analysisCompleted = true
         this.$nextTick(() => this.drawPageOverlay())
+        return true
       } catch (err) {
         console.error('JSON analysis error:', err)
         this.loadingMessage = 'Analysis failed'
-        this.loadingDetail = err.message || 'Unknown error'
+        this.loadingDetail = this.formatAnalysisError(err, 'Unknown error')
+        this.showError('JSON Analysis Failed', this.loadingDetail)
+        return false
       } finally {
         this.isAnalyzing = false
       }
@@ -1229,7 +1267,7 @@ export default {
 
     async analyzeScribesWithRegions(regions, srcW = 0, srcH = 0) {
       console.log('=== MANUAL MODE ANALYSIS START ===', { regions, srcW, srcH, params: this.params })
-      if (this.isAnalyzing) return
+      if (this.isAnalyzing) return false
 
       this.isAnalyzing = true
       this.analysisCompleted = false
@@ -1299,11 +1337,13 @@ export default {
         this.loadingDetail  = `Detected ${data.statistics?.total_scribes || 'multiple'} scribes in selected regions`
 
         this.$nextTick(() => this.drawPageOverlay())
+        return true
       } catch (error) {
         console.error('Manual analysis error:', error)
         this.loadingMessage = 'Analysis failed'
-        this.loadingDetail  = error.message || 'Unknown error occurred'
-        throw error
+        this.loadingDetail  = this.formatAnalysisError(error, 'Unknown error occurred')
+        this.showError('Manual Analysis Failed', this.loadingDetail)
+        return false
       } finally {
         this.isAnalyzing = false
       }
@@ -2524,6 +2564,10 @@ export default {
   border: 1px solid hsl(var(--border));
   border-left: 3px solid hsl(var(--primary));
   border-radius: 8px;
+}
+
+.ai-disclaimer-box--inline {
+  margin-top: 14px;
 }
 
 .disclaimer-icon {

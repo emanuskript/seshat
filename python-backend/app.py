@@ -51,7 +51,7 @@ JOBS_DIR = STATIC_DIR / "jobs"
 
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".pdf"}
 MAX_CONTENT_LENGTH = 60 * 1024 * 1024  # 60MB
-MAX_IMAGE_DIM = int(os.getenv("QUILLAPP_MAX_IMAGE_DIM", "0"))  # 0 = disabled
+MAX_IMAGE_DIM = int(os.getenv("SESHAT_MAX_IMAGE_DIM", "0"))  # 0 = disabled
 
 # ------------------ Morphological Line Segmentation ------------------
 def _ink_mask(binary: np.ndarray) -> np.ndarray:
