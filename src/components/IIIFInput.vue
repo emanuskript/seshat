@@ -230,6 +230,9 @@ export default {
 }
 
 .hero-main {
+  --logo-height: clamp(180px, 26vw, 320px);
+  --logo-bottom-trim: calc(var(--logo-height) * 0.18);
+  --logo-contact-offset: clamp(8px, 1.1vw, 14px);
   position: absolute;
   top: 50%;
   left: 50%;
@@ -238,13 +241,12 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* Reserve space for the absolute-positioned logo so the form never slides underneath it. */
-  padding-top: clamp(110px, 16vh, 170px);
+  /* Keep the card top edge locked to the logo's visible bottom edge. */
+  padding-top: calc(var(--logo-height) - var(--logo-bottom-trim) - var(--logo-contact-offset));
 }
 
 /* --- Logo --- */
 .brand {
-  --logo-height: clamp(180px, 26vw, 320px);
   position: absolute;
   top: 0;
   left: 50%;
@@ -281,11 +283,11 @@ export default {
   border: 1px solid hsl(var(--border));
   border-radius: 18px;
   box-shadow: var(--shadow-lg, 0 14px 40px rgba(0, 0, 0, 0.12));
-  padding: clamp(96px, 12vw, 120px) 24px 24px;
+  padding: 24px;
 }
 
 .ribbon {
-  margin: 0 auto 18px;
+  margin: -18px auto 18px;
   width: min(70%, 520px);
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
@@ -395,15 +397,11 @@ export default {
 @media (max-width: 640px) {
   .hero-main {
     width: min(560px, 94vw);
-    padding-top: 96px;
-  }
-
-  .brand {
     --logo-height: clamp(140px, 42vw, 220px);
   }
 
   .banner-card {
-    padding: 72px 16px 16px;
+    padding: 16px;
   }
 
   .ribbon {
@@ -418,9 +416,9 @@ export default {
   }
 
   .hero-main {
+    --logo-height: clamp(140px, 30vh, 220px);
     top: 24px;
     transform: translateX(-50%);
-    padding-top: 96px;
     padding-bottom: 24px;
   }
 }
