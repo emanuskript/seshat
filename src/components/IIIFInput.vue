@@ -16,57 +16,59 @@
       </button>
     </div>
 
-    <!-- Centered Logo -->
-    <div class="brand">
-      <img src="@/assets/logo.png" alt="Seshat logo" />
-    </div>
-
-    <!-- Banner -->
-    <section class="banner-card" role="region" aria-label="Start panel">
-      <div class="ribbon">
-        <span>Provide a link or upload an image</span>
+    <div class="hero-main">
+      <!-- Centered Logo -->
+      <div class="brand">
+        <img src="@/assets/logo.png" alt="Seshat logo" />
       </div>
 
-      <div class="form">
-        <!-- IIIF Link Input -->
-        <label class="field">
-          <Link :size="18" aria-hidden="true" />
-          <input
-            type="text"
-            v-model="iiifLink"
-            :disabled="fileName !== ''"
-            placeholder="Enter IIIF Link"
-            aria-label="IIIF Link"
-          />
-        </label>
-
-        <!-- Upload -->
-        <div class="upload">
-          <label class="upload-btn" for="upload-file">
-            <Upload :size="18" aria-hidden="true" />
-            <span>Upload Images / PDF</span>
-          </label>
-          <input
-            id="upload-file"
-            class="file-input"
-            type="file"
-            accept="image/*,application/pdf"
-            multiple
-            @change="handleFileUpload"
-          />
-          <span class="file-name" :class="{ 'muted': !fileName }">
-            {{ fileName || 'Supports: JPG, PNG, PDF (multiple files allowed)' }}
-          </span>
+      <!-- Banner -->
+      <section class="banner-card" role="region" aria-label="Start panel">
+        <div class="ribbon">
+          <span>Provide a link or upload an image</span>
         </div>
 
-        <!-- Start -->
-        <button class="cta" :disabled="isUploading" @click="startAnnotating">
-          <span>{{ isUploading ? 'Uploading...' : 'Start Annotating' }}</span>
-          <ArrowRight :size="18" aria-hidden="true" />
-        </button>
-      </div>
+        <div class="form">
+          <!-- IIIF Link Input -->
+          <label class="field">
+            <Link :size="18" aria-hidden="true" />
+            <input
+              type="text"
+              v-model="iiifLink"
+              :disabled="fileName !== ''"
+              placeholder="Enter IIIF Link"
+              aria-label="IIIF Link"
+            />
+          </label>
 
-    </section>
+          <!-- Upload -->
+          <div class="upload">
+            <label class="upload-btn" for="upload-file">
+              <Upload :size="18" aria-hidden="true" />
+              <span>Upload Images / PDF</span>
+            </label>
+            <input
+              id="upload-file"
+              class="file-input"
+              type="file"
+              accept="image/*,application/pdf"
+              multiple
+              @change="handleFileUpload"
+            />
+            <span class="file-name" :class="{ 'muted': !fileName }">
+              {{ fileName || 'Supports: JPG, PNG, PDF (multiple files allowed)' }}
+            </span>
+          </div>
+
+          <!-- Start -->
+          <button class="cta" :disabled="isUploading" @click="startAnnotating">
+            <span>{{ isUploading ? 'Uploading...' : 'Start Annotating' }}</span>
+            <ArrowRight :size="18" aria-hidden="true" />
+          </button>
+        </div>
+
+      </section>
+    </div>
   </div>
 </template>
 
@@ -227,17 +229,38 @@ export default {
   }
 }
 
+.hero-main {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(780px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Reserve space for the absolute-positioned logo so the form never slides underneath it. */
+  padding-top: clamp(110px, 16vh, 170px);
+}
+
 /* --- Logo --- */
 .brand {
+  --logo-height: clamp(180px, 26vw, 320px);
   position: absolute;
-  top: 40px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
+  margin: 0;
+  padding: 0;
+  line-height: 0;
+  pointer-events: none;
 }
 .brand img {
-  height: 280px;
+  display: block;
+  height: var(--logo-height);
   width: auto;
+  margin: 0;
+  padding: 0;
   filter: drop-shadow(0 8px 18px rgba(22, 45, 90, 0.2));
   transition: filter 0.2s ease;
 }
@@ -252,21 +275,18 @@ export default {
 
 /* --- Banner --- */
 .banner-card {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(780px, 92vw);
+  position: relative;
+  width: 100%;
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: 18px;
   box-shadow: var(--shadow-lg, 0 14px 40px rgba(0, 0, 0, 0.12));
-  padding: 24px;
+  padding: clamp(96px, 12vw, 120px) 24px 24px;
 }
 
 .ribbon {
-  margin: -18px auto 18px;
-  width: 70%;
+  margin: 0 auto 18px;
+  width: min(70%, 520px);
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
   font-weight: 700;
@@ -370,5 +390,38 @@ export default {
 }
 .cta:active {
   transform: translateY(1px);
+}
+
+@media (max-width: 640px) {
+  .hero-main {
+    width: min(560px, 94vw);
+    padding-top: 96px;
+  }
+
+  .brand {
+    --logo-height: clamp(140px, 42vw, 220px);
+  }
+
+  .banner-card {
+    padding: 72px 16px 16px;
+  }
+
+  .ribbon {
+    width: 100%;
+    font-size: 14px;
+  }
+}
+
+@media (max-height: 760px) {
+  .seshat-hero {
+    overflow-y: auto;
+  }
+
+  .hero-main {
+    top: 24px;
+    transform: translateX(-50%);
+    padding-top: 96px;
+    padding-bottom: 24px;
+  }
 }
 </style>
