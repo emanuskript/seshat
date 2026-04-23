@@ -17,13 +17,12 @@
     </div>
 
     <div class="hero-main">
-      <!-- Centered Logo -->
-      <div class="brand">
-        <img src="@/assets/logo.png" alt="Seshat logo" />
-      </div>
-
       <!-- Banner -->
       <section class="banner-card" role="region" aria-label="Start panel">
+        <div class="brand">
+          <img src="@/assets/logo.png" alt="Seshat logo" />
+        </div>
+
         <div class="ribbon">
           <span>Provide a link or upload an image</span>
         </div>
@@ -230,25 +229,30 @@ export default {
 }
 
 .hero-main {
-  --logo-height: clamp(180px, 26vw, 320px);
-  --logo-bottom-trim: calc(var(--logo-height) * 0.18);
-  --logo-contact-offset: clamp(8px, 1.1vw, 14px);
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(780px, 92vw);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  /* Keep the card top edge locked to the logo's visible bottom edge. */
-  padding-top: calc(var(--logo-height) - var(--logo-bottom-trim) - var(--logo-contact-offset));
+}
+
+/* --- Banner --- */
+.banner-card {
+  --logo-height: clamp(180px, 26vw, 320px);
+  --logo-bottom-trim: calc(var(--logo-height) * 0.18);
+  position: relative;
+  width: 100%;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 18px;
+  box-shadow: var(--shadow-lg, 0 14px 40px rgba(0, 0, 0, 0.12));
+  padding: 24px;
 }
 
 /* --- Logo --- */
 .brand {
   position: absolute;
-  top: 0;
+  bottom: calc(100% - var(--logo-bottom-trim));
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;
@@ -273,17 +277,6 @@ export default {
 }
 .high-contrast .brand img {
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.4)) contrast(1.2);
-}
-
-/* --- Banner --- */
-.banner-card {
-  position: relative;
-  width: 100%;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 18px;
-  box-shadow: var(--shadow-lg, 0 14px 40px rgba(0, 0, 0, 0.12));
-  padding: 24px;
 }
 
 .ribbon {
@@ -397,10 +390,10 @@ export default {
 @media (max-width: 640px) {
   .hero-main {
     width: min(560px, 94vw);
-    --logo-height: clamp(140px, 42vw, 220px);
   }
 
   .banner-card {
+    --logo-height: clamp(140px, 42vw, 220px);
     padding: 16px;
   }
 
@@ -412,14 +405,11 @@ export default {
 
 @media (max-height: 760px) {
   .seshat-hero {
-    overflow-y: auto;
+    overflow: hidden;
   }
 
-  .hero-main {
+  .banner-card {
     --logo-height: clamp(140px, 30vh, 220px);
-    top: 24px;
-    transform: translateX(-50%);
-    padding-bottom: 24px;
   }
 }
 </style>
