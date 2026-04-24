@@ -1326,6 +1326,9 @@ export default {
       osdImageHeight: 0,     // Image natural height from OSD
       osdViewportBounds: null, // For triggering overlay updates
       _overlayUpdatePending: false, // RAF throttle flag for overlay updates
+      viewportStabilitySnapshot: null,
+      isApplyingViewportStabilitySnapshot: false,
+      _pendingViewportRestoreFrame: null,
       isOperationInProgress: false, // Lock to prevent tool switching during drawing
 
       // Legacy Zoom & Pan (kept for compatibility, synced from OSD)
@@ -2070,6 +2073,11 @@ export default {
       this.osdViewer = null;
     }
 
+    if (this._pendingViewportRestoreFrame) {
+      cancelAnimationFrame(this._pendingViewportRestoreFrame);
+      this._pendingViewportRestoreFrame = null;
+    }
+
     // Clean up global selection prevention
     if (this._preventSelection) {
       document.removeEventListener('selectstart', this._preventSelection, true);
@@ -2330,6 +2338,8 @@ export default {
         animationTime: 0,
         visibilityRatio: 0.8,
         constrainDuringPan: true,
+        autoResize: true,
+        preserveImageSizeOnResize: true,
         immediateRender: true,
         crossOriginPolicy: 'Anonymous',
         // Canvas drawer required for openseadragon-filtering plugin
@@ -2341,7 +2351,7 @@ export default {
       this.osdViewer.addHandler('open-failed', this.onOsdOpenFailed);
       this.osdViewer.addHandler('animation', this.updateOverlayPosition);
       this.osdViewer.addHandler('animation-finish', this.updateOverlayPosition);
-      this.osdViewer.addHandler('resize', this.updateOverlayPosition);
+      this.osdViewer.addHandler('resize', this.onOsdResize);
       this.osdViewer.addHandler('zoom', this.onOsdZoom);
       this.osdViewer.addHandler('pan', this.onOsdPan);
     },
@@ -2365,6 +2375,7 @@ export default {
 
       // Initial overlay position update
       this.$nextTick(() => {
+        this.captureViewportStabilitySnapshot();
         this.updateOverlayPosition();
       });
     },
@@ -2377,6 +2388,9 @@ export default {
     onOsdZoom(event) {
       // Sync legacy zoom level for UI display
       this.zoomLevel = event.zoom;
+      if (!this.isApplyingViewportStabilitySnapshot) {
+        this.captureViewportStabilitySnapshot();
+      }
       this.updateOverlayPosition();
 
       // Broadcast viewport for follow mode
@@ -2386,12 +2400,68 @@ export default {
     },
 
     onOsdPan() {
+      if (!this.isApplyingViewportStabilitySnapshot) {
+        this.captureViewportStabilitySnapshot();
+      }
       this.updateOverlayPosition();
 
       // Broadcast viewport for follow mode
       if (!this.isApplyingFollowSync) {
         this.broadcastCurrentViewport();
       }
+    },
+
+    onOsdResize() {
+      if (this._pendingViewportRestoreFrame) {
+        cancelAnimationFrame(this._pendingViewportRestoreFrame);
+      }
+
+      this._pendingViewportRestoreFrame = requestAnimationFrame(() => {
+        this._pendingViewportRestoreFrame = null;
+        this.restoreViewportStabilitySnapshot();
+        this.updateOverlayPosition();
+      });
+    },
+
+    captureViewportStabilitySnapshot() {
+      if (!this.osdViewer || !this.osdReady) return;
+      const viewport = this.osdViewer.viewport;
+      const center = viewport.getCenter(true);
+
+      this.viewportStabilitySnapshot = {
+        centerX: center.x,
+        centerY: center.y,
+        zoom: viewport.getZoom(true),
+      };
+    },
+
+    restoreViewportStabilitySnapshot() {
+      if (!this.viewportStabilitySnapshot || !this.osdViewer || !this.osdReady) return false;
+      if (this.isApplyingViewportStabilitySnapshot) return false;
+
+      const viewport = this.osdViewer.viewport;
+      const snapshot = this.viewportStabilitySnapshot;
+      const currentCenter = viewport.getCenter(true);
+      const currentZoom = viewport.getZoom(true);
+      const centerDelta = Math.hypot(
+        currentCenter.x - snapshot.centerX,
+        currentCenter.y - snapshot.centerY
+      );
+      const zoomDelta = Math.abs(currentZoom - snapshot.zoom);
+
+      if (centerDelta < 1e-8 && zoomDelta < 1e-8) return false;
+
+      this.isApplyingViewportStabilitySnapshot = true;
+      viewport.zoomTo(snapshot.zoom, null, true);
+      viewport.panTo(new OpenSeadragon.Point(snapshot.centerX, snapshot.centerY), true);
+      viewport.applyConstraints();
+
+      requestAnimationFrame(() => {
+        this.isApplyingViewportStabilitySnapshot = false;
+        this.captureViewportStabilitySnapshot();
+      });
+
+      return true;
     },
 
     updateOverlayPosition() {
