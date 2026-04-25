@@ -43,7 +43,7 @@
     </header>
 
     <!-- Left Toolbar -->
-    <aside v-show="!leftPanelCollapsed" style="grid-area: left;" data-tour="toolbar">
+    <aside v-show="!leftPanelCollapsed" style="grid-area: left;" class="min-h-0 overflow-hidden" data-tour="toolbar">
       <ViewerToolbar
         :active-tool="currentActiveTool"
         :has-active-filters="hasActiveFilters"
@@ -58,7 +58,7 @@
     </aside>
 
     <!-- Main Canvas Area -->
-    <main style="grid-area: canvas;" class="relative overflow-hidden bg-muted" data-tour="canvas">
+    <main style="grid-area: canvas;" class="relative min-h-0 overflow-hidden bg-muted" data-tour="canvas">
       <!-- Tool message -->
       <div
         v-if="toolMessage"
@@ -97,6 +97,10 @@
           @mousemove="trace($event)"
           @mouseup="endTrace($event)"
           @mouseleave="handleMouseLeave($event)"
+          @wheel="preventZoomWhileHighlighting($event)"
+          @gesturestart.prevent.stop="preventZoomWhileHighlighting($event)"
+          @gesturechange.prevent.stop="preventZoomWhileHighlighting($event)"
+          @gestureend.prevent.stop="preventZoomWhileHighlighting($event)"
           @touchstart.prevent="startTrace($event)"
           @touchmove.prevent="trace($event)"
           @touchend.prevent="endTrace($event)"
@@ -262,16 +266,17 @@
           />
         </svg>
 
-        <!-- Dynamic Crop / Highlight / Length rectangles - use percentage positioning -->
+        <!-- Dynamic Crop / Length rectangles - use percentage positioning -->
         <div
-          v-if="(isMeasuring && currentSquare) || (highlightModeActive && currentSquare) || (croppingStarted && currentSquare)"
+          v-if="(isMeasuring && currentSquare) || (croppingStarted && currentSquare)"
           class="length-measurement"
           :style="{
             left: `${(currentSquare.x / osdImageWidth) * 100}%`,
             top: `${(currentSquare.y / osdImageHeight) * 100}%`,
             width: `${(currentSquare.width / osdImageWidth) * 100}%`,
             height: `${(currentSquare.height / osdImageHeight) * 100}%`,
-            backgroundColor: currentSquare.color || 'rgba(0,0,0,0.1)',
+            backgroundColor: measurementColorFor(currentSquare),
+            border: `2px solid ${measurementBorderFor(currentSquare)}`,
             position: 'absolute',
           }"
         >
@@ -307,7 +312,8 @@
             top: `${(measurement.y / osdImageHeight) * 100}%`,
             width: `${(measurement.width / osdImageWidth) * 100}%`,
             height: `${(measurement.height / osdImageHeight) * 100}%`,
-            backgroundColor: measurement.color,
+            backgroundColor: measurementColorFor(measurement),
+            border: `2px solid ${measurementBorderFor(measurement)}`,
             position: 'absolute',
           }"
         >
@@ -363,20 +369,6 @@
           </div>
         </div>
 
-        <!-- Highlights - use percentage positioning relative to overlay -->
-        <div
-          v-for="(annotation, index) in currentPageHighlights"
-          :key="'highlight-' + index"
-          class="highlight-rectangle"
-          :style="{
-            left: `${(annotation.x / osdImageWidth) * 100}%`,
-            top: `${(annotation.y / osdImageHeight) * 100}%`,
-            width: `${(annotation.width / osdImageWidth) * 100}%`,
-            height: `${(annotation.height / osdImageHeight) * 100}%`,
-            position: 'absolute',
-          }"
-        ></div>
-
         <!-- Dynamic Underline - use percentage positioning -->
         <div
           v-if="underlineModeActive && currentUnderline"
@@ -420,6 +412,21 @@
         ></div>
         </div>
 
+        <!-- Dynamic highlight is rendered independently from the shared overlay box -->
+        <div
+          v-if="highlightModeActive && currentSquare"
+          class="highlight-rectangle"
+          :style="getViewerRectStyle(currentSquare)"
+        ></div>
+
+        <!-- Each highlight is mapped directly from image coordinates to screen pixels -->
+        <div
+          v-for="(annotation, index) in currentPageHighlights"
+          :key="'highlight-screen-' + (annotation.id || index)"
+          class="highlight-rectangle"
+          :style="getViewerRectStyle(annotation)"
+        ></div>
+
       </div>
 
       <!-- Floating Scribe Detection Button -->
@@ -437,7 +444,7 @@
     </main>
 
     <!-- Right Panel -->
-    <aside v-show="!rightPanelCollapsed" style="grid-area: right;" data-tour="right-panel">
+    <aside v-show="!rightPanelCollapsed" style="grid-area: right;" class="min-h-0 overflow-hidden" data-tour="right-panel">
       <ViewerRightPanel
         :annotations="currentPageAnnotationsList"
         :current-page="currentPage"
@@ -1256,6 +1263,8 @@ export default {
         intercolumnSpaces: "rgba(255, 0, 255, 0.5)",
         lineHeight: "rgba(100, 100, 255, 0.5)",
         minimumHeight: "rgba(255, 100, 100, 0.5)",
+        other_h: "rgba(150, 150, 150, 0.5)",
+        other_v: "rgba(200, 150, 100, 0.5)",
         externalMargin: "rgba(0, 128, 128, 0.5)",
       },
       lengthMeasurements: {
@@ -1268,6 +1277,8 @@ export default {
         intercolumnSpaces: {},
         lineHeight: {},
         minimumHeight: {},
+        other_h: {},
+        other_v: {},
         externalMargin: {},
       },
       labelPositions: {}, // for length labels drag
@@ -1326,10 +1337,10 @@ export default {
       osdImageHeight: 0,     // Image natural height from OSD
       osdViewportBounds: null, // For triggering overlay updates
       _overlayUpdatePending: false, // RAF throttle flag for overlay updates
-      viewportStabilitySnapshot: null,
-      isApplyingViewportStabilitySnapshot: false,
-      _pendingViewportRestoreFrame: null,
       isOperationInProgress: false, // Lock to prevent tool switching during drawing
+      highlightInteractionLocked: false,
+      highlightViewportSnapshot: null,
+      isApplyingHighlightViewportSnapshot: false,
 
       // Legacy Zoom & Pan (kept for compatibility, synced from OSD)
       zoomLevel: 1,
@@ -1411,7 +1422,7 @@ export default {
       if (this.measureModeActive) return 'measure';
       if (this.lengthMeasurementActive || this.isMeasuring) {
         const label = this.selectedMeasurement || '';
-        const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'].includes(label);
+        const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'upperMargin', 'lowerMargin', 'lineHeight', 'minimumHeight', 'other_h'].includes(label);
         return isHorizontal ? 'horizontal' : 'vertical';
       }
       if (this.croppingStarted) return 'crop';
@@ -1471,7 +1482,7 @@ export default {
       // Length measurements
       if (this.currentPageLengthMeasurements) {
         this.currentPageLengthMeasurements.forEach((m) => {
-          const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'].includes(m.label);
+          const isHorizontal = ['ascenders', 'descenders', 'interlinear', 'upperMargin', 'lowerMargin', 'lineHeight', 'minimumHeight', 'other_h'].includes(m.label);
           list.push({
             type: isHorizontal ? 'length-h' : 'length-v',
             label: m.label,
@@ -1511,10 +1522,12 @@ export default {
       const tiledImage = this.osdViewer.world.getItemAt(0);
       if (!tiledImage) return 1;
       const tl = this.osdViewer.viewport.pixelFromPoint(
-        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0)),
+        true
       );
       const tr = this.osdViewer.viewport.pixelFromPoint(
-        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, 0))
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, 0)),
+        true
       );
       const w = tr.x - tl.x;
       return w > 0 ? this.osdImageWidth / w : 1;
@@ -1538,10 +1551,12 @@ export default {
       // Convert image corners to window (pixel) coordinates
       // Use Point objects for proper API usage
       const topLeft = this.osdViewer.viewport.pixelFromPoint(
-        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0)),
+        true
       );
       const bottomRight = this.osdViewer.viewport.pixelFromPoint(
-        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight))
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight)),
+        true
       );
 
       const width = bottomRight.x - topLeft.x;
@@ -1571,10 +1586,12 @@ export default {
         if (tiledImage) {
           // Use Point objects for proper API usage
           const topLeft = this.osdViewer.viewport.pixelFromPoint(
-            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0))
+            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(0, 0)),
+            true
           );
           const bottomRight = this.osdViewer.viewport.pixelFromPoint(
-            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight))
+            tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(this.osdImageWidth, this.osdImageHeight)),
+            true
           );
           const left = topLeft.x;
           const top = topLeft.y;
@@ -1642,7 +1659,7 @@ export default {
       const strokes = (this.annotationsByPage[this.currentPage] || []).filter(a => a.type === "trace");
       
       // Apply movement delta if in move mode and annotations are selected
-      if (this.moveModeActive && this.currentMoveDelta.x !== 0 || this.currentMoveDelta.y !== 0) {
+      if (this.moveModeActive && (this.currentMoveDelta.x !== 0 || this.currentMoveDelta.y !== 0)) {
         return strokes.map((stroke, index) => {
           const key = `trace-${index}`;
           if (this.bankSelectedKeys.includes(key)) {
@@ -1941,6 +1958,9 @@ export default {
         }
       },
       deep: true
+    },
+    highlightModeActive(isActive) {
+      this.setHighlightInteractionLock(isActive);
     }
   },
   async created() {
@@ -1974,7 +1994,20 @@ export default {
       const data = JSON.parse(cached);
       this.jobId = data.job_id;
       const base = this._getBackendBase();
-      this.images = data.pages.map(p => `${base}/static/${p.image}`);
+      const pages = Array.isArray(data.pages) ? data.pages : [];
+      this.images = pages
+        .map((page) => {
+          const rawPath = typeof page === 'string' ? page : page?.image;
+          return this._resolveUploadedImageUrl(rawPath, base);
+        })
+        .filter(Boolean);
+
+      if (!this.images.length) {
+        alert("Upload data is invalid. Returning to input.");
+        this.$router.push({ name: "IIIFInput" });
+        return;
+      }
+
       // Store image list as JSON so session sharing can reconstruct pages
       this.iiifManifest = JSON.stringify(this.images);
       this.annotationsByPage = this.images.map(() => []);
@@ -1983,9 +2016,8 @@ export default {
     }
 
     this.iiifManifest = this.source; // Store for sharing
-    if (this.source.endsWith("manifest.json")) {
-      await this.fetchIIIFImages(this.source);
-    } else {
+    const loadedAsManifest = await this.fetchIIIFImages(this.source, { silent: true });
+    if (!loadedAsManifest) {
       this.images = [this.source];
       this.annotationsByPage = [ [] ];
       this.comments = [ [] ];
@@ -2073,11 +2105,6 @@ export default {
       this.osdViewer = null;
     }
 
-    if (this._pendingViewportRestoreFrame) {
-      cancelAnimationFrame(this._pendingViewportRestoreFrame);
-      this._pendingViewportRestoreFrame = null;
-    }
-
     // Clean up global selection prevention
     if (this._preventSelection) {
       document.removeEventListener('selectstart', this._preventSelection, true);
@@ -2126,6 +2153,26 @@ export default {
       if (fromWindow) return String(fromWindow).replace(/\/+$/, '');
       return '/ml';
     },
+    _isImageFile(file) {
+      return !!file && typeof file.type === 'string' && file.type.startsWith('image/');
+    },
+    _resolveUploadedImageUrl(rawPath, base) {
+      if (!rawPath) return null;
+      const value = String(rawPath).trim();
+      if (!value) return null;
+      if (/^(blob:|data:|https?:|file:|\/)/i.test(value)) {
+        return value;
+      }
+      return `${base}/static/${value.replace(/^\/+/, '')}`;
+    },
+    _appendImagesWithPageState(newImages) {
+      if (!Array.isArray(newImages) || !newImages.length) return;
+      this.images.push(...newImages);
+      for (let i = 0; i < newImages.length; i++) {
+        this.annotationsByPage.push([]);
+        this.comments.push([]);
+      }
+    },
     
     // Get creator display name for an annotation
     getCreatorName(createdBy) {
@@ -2154,15 +2201,26 @@ export default {
         if (!res.ok || !data.ok) {
           throw new Error(this._formatUploadError(data, res.status));
         }
-        const newImages = data.pages.map(p => `${base}/static/${p.image}`);
-        this.images.push(...newImages);
-        for (let i = 0; i < newImages.length; i++) {
-          this.annotationsByPage.push([]);
-          this.comments.push([]);
+        const pages = Array.isArray(data.pages) ? data.pages : [];
+        const newImages = pages
+          .map((page) => this._resolveUploadedImageUrl(page?.image, base))
+          .filter(Boolean);
+        if (!newImages.length) {
+          throw new Error('No pages returned from upload.');
         }
+
+        this._appendImagesWithPageState(newImages);
         this.showToolMessage(`Added ${newImages.length} page(s).`);
       } catch (err) {
-        alert("Failed to add pages: " + err.message);
+        const canUseLocalFallback = files.every((file) => this._isImageFile(file));
+        if (canUseLocalFallback) {
+          const localImages = files.map((file) => URL.createObjectURL(file));
+          this._appendImagesWithPageState(localImages);
+          this.showToolMessage(`Added ${localImages.length} page(s) locally.`);
+          return;
+        }
+
+        alert("Failed to add pages: " + err.message + " Local fallback supports image files only; PDF conversion requires the backend.");
       }
     },
     goHome() {
@@ -2194,20 +2252,24 @@ export default {
     },
 
     zoomIn() {
+      if (this.highlightModeActive) return;
       if (!this.osdViewer || !this.osdReady) return;
       this.osdViewer.viewport.zoomBy(1.2);
       this.osdViewer.viewport.applyConstraints();
     },
     zoomOut() {
+      if (this.highlightModeActive) return;
       if (!this.osdViewer || !this.osdReady) return;
       this.osdViewer.viewport.zoomBy(0.83);
       this.osdViewer.viewport.applyConstraints();
     },
     resetZoom() {
+      if (this.highlightModeActive) return;
       if (!this.osdViewer || !this.osdReady) return;
       this.osdViewer.viewport.goHome();
     },
     zoomTo(level) {
+      if (this.highlightModeActive) return;
       if (!this.osdViewer || !this.osdReady) return;
       this.osdViewer.viewport.zoomTo(level);
     },
@@ -2370,12 +2432,16 @@ export default {
       }
       this.imageLoaded = true;
 
+      // Re-apply strict interaction lock if highlight mode stayed active across reloads.
+      if (this.highlightModeActive) {
+        this.setHighlightInteractionLock(true);
+      }
+
       // Apply current filters
       this.applyFiltersToOsd();
 
       // Initial overlay position update
       this.$nextTick(() => {
-        this.captureViewportStabilitySnapshot();
         this.updateOverlayPosition();
       });
     },
@@ -2386,11 +2452,12 @@ export default {
     },
 
     onOsdZoom(event) {
+      if (this.highlightInteractionLocked && this.enforceHighlightViewportSnapshot()) {
+        return;
+      }
+
       // Sync legacy zoom level for UI display
       this.zoomLevel = event.zoom;
-      if (!this.isApplyingViewportStabilitySnapshot) {
-        this.captureViewportStabilitySnapshot();
-      }
       this.updateOverlayPosition();
 
       // Broadcast viewport for follow mode
@@ -2400,9 +2467,10 @@ export default {
     },
 
     onOsdPan() {
-      if (!this.isApplyingViewportStabilitySnapshot) {
-        this.captureViewportStabilitySnapshot();
+      if (this.highlightInteractionLocked && this.enforceHighlightViewportSnapshot()) {
+        return;
       }
+
       this.updateOverlayPosition();
 
       // Broadcast viewport for follow mode
@@ -2412,56 +2480,15 @@ export default {
     },
 
     onOsdResize() {
-      if (this._pendingViewportRestoreFrame) {
-        cancelAnimationFrame(this._pendingViewportRestoreFrame);
+      if (this.highlightInteractionLocked) {
+        requestAnimationFrame(() => {
+          this.enforceHighlightViewportSnapshot();
+          this.updateOverlayPosition();
+        });
+        return;
       }
 
-      this._pendingViewportRestoreFrame = requestAnimationFrame(() => {
-        this._pendingViewportRestoreFrame = null;
-        this.restoreViewportStabilitySnapshot();
-        this.updateOverlayPosition();
-      });
-    },
-
-    captureViewportStabilitySnapshot() {
-      if (!this.osdViewer || !this.osdReady) return;
-      const viewport = this.osdViewer.viewport;
-      const center = viewport.getCenter(true);
-
-      this.viewportStabilitySnapshot = {
-        centerX: center.x,
-        centerY: center.y,
-        zoom: viewport.getZoom(true),
-      };
-    },
-
-    restoreViewportStabilitySnapshot() {
-      if (!this.viewportStabilitySnapshot || !this.osdViewer || !this.osdReady) return false;
-      if (this.isApplyingViewportStabilitySnapshot) return false;
-
-      const viewport = this.osdViewer.viewport;
-      const snapshot = this.viewportStabilitySnapshot;
-      const currentCenter = viewport.getCenter(true);
-      const currentZoom = viewport.getZoom(true);
-      const centerDelta = Math.hypot(
-        currentCenter.x - snapshot.centerX,
-        currentCenter.y - snapshot.centerY
-      );
-      const zoomDelta = Math.abs(currentZoom - snapshot.zoom);
-
-      if (centerDelta < 1e-8 && zoomDelta < 1e-8) return false;
-
-      this.isApplyingViewportStabilitySnapshot = true;
-      viewport.zoomTo(snapshot.zoom, null, true);
-      viewport.panTo(new OpenSeadragon.Point(snapshot.centerX, snapshot.centerY), true);
-      viewport.applyConstraints();
-
-      requestAnimationFrame(() => {
-        this.isApplyingViewportStabilitySnapshot = false;
-        this.captureViewportStabilitySnapshot();
-      });
-
-      return true;
+      this.updateOverlayPosition();
     },
 
     updateOverlayPosition() {
@@ -2557,32 +2584,200 @@ export default {
     },
 
     setOsdMouseNavEnabled(enabled) {
-      if (this.osdViewer) {
-        this.osdViewer.setMouseNavEnabled(enabled);
+      if (!this.osdViewer) return;
+      this.osdViewer.setMouseNavEnabled(enabled && !this.highlightInteractionLocked);
+    },
+
+    setHighlightInteractionLock(enabled) {
+      this.highlightInteractionLocked = !!enabled;
+
+      if (!enabled) {
+        this.highlightViewportSnapshot = null;
+        this.isApplyingHighlightViewportSnapshot = false;
+      }
+
+      if (!this.osdViewer) return;
+
+      if (enabled) {
+        this.captureHighlightViewportSnapshot();
+
+        if (!this._osdGestureBackup) {
+          this._osdGestureBackup = {
+            mouse: { ...(this.osdViewer.gestureSettingsMouse || {}) },
+            touch: { ...(this.osdViewer.gestureSettingsTouch || {}) },
+          };
+        }
+
+        this.osdViewer.gestureSettingsMouse = {
+          ...(this.osdViewer.gestureSettingsMouse || {}),
+          clickToZoom: false,
+          dblClickToZoom: false,
+          scrollToZoom: false,
+          dragToPan: false,
+          flickEnabled: false,
+        };
+        this.osdViewer.gestureSettingsTouch = {
+          ...(this.osdViewer.gestureSettingsTouch || {}),
+          pinchToZoom: false,
+          dragToPan: false,
+          flickEnabled: false,
+        };
+        this.osdViewer.setMouseNavEnabled(false);
+        return;
+      }
+
+      if (this._osdGestureBackup) {
+        this.osdViewer.gestureSettingsMouse = { ...this._osdGestureBackup.mouse };
+        this.osdViewer.gestureSettingsTouch = { ...this._osdGestureBackup.touch };
+        this._osdGestureBackup = null;
+      }
+
+      if (!this.isAnyToolActive || this.commentModeActive) {
+        this.osdViewer.setMouseNavEnabled(true);
+      }
+    },
+
+    captureHighlightViewportSnapshot() {
+      if (!this.osdViewer || !this.osdReady) return;
+      const viewport = this.osdViewer.viewport;
+      const center = viewport.getCenter(true);
+      const zoom = viewport.getZoom(true);
+
+      this.highlightViewportSnapshot = {
+        centerX: center.x,
+        centerY: center.y,
+        zoom,
+      };
+    },
+
+    enforceHighlightViewportSnapshot() {
+      if (!this.highlightInteractionLocked || !this.highlightViewportSnapshot) return false;
+      if (!this.osdViewer || this.isApplyingHighlightViewportSnapshot) return false;
+
+      const viewport = this.osdViewer.viewport;
+      const snapshot = this.highlightViewportSnapshot;
+      const currentCenter = viewport.getCenter(true);
+      const currentZoom = viewport.getZoom(true);
+      const centerDelta = Math.hypot(
+        currentCenter.x - snapshot.centerX,
+        currentCenter.y - snapshot.centerY
+      );
+      const zoomDelta = Math.abs(currentZoom - snapshot.zoom);
+
+      if (centerDelta < 1e-8 && zoomDelta < 1e-8) return false;
+
+      this.isApplyingHighlightViewportSnapshot = true;
+      viewport.zoomTo(snapshot.zoom, null, true);
+      viewport.panTo(new OpenSeadragon.Point(snapshot.centerX, snapshot.centerY), true);
+      viewport.applyConstraints();
+      this.updateOverlayPosition();
+
+      requestAnimationFrame(() => {
+        this.isApplyingHighlightViewportSnapshot = false;
+      });
+
+      return true;
+    },
+
+    preventZoomWhileHighlighting(event) {
+      if (this.highlightInteractionLocked) {
+        event.preventDefault();
+        event.stopPropagation();
       }
     },
     /* ---------- End OpenSeadragon Methods ---------- */
 
-    async fetchIIIFImages(manifestUrl) {
-      try {
-        const response = await fetch(manifestUrl);
-        if (!response.ok) throw new Error("Failed to fetch IIIF manifest.");
-        const manifest = await response.json();
+    _normalizeIiifServiceUrl(serviceId) {
+      if (!serviceId) return null;
+      const normalized = String(serviceId).trim().replace(/\/+$/, '');
+      if (!normalized) return null;
+      return `${normalized}/full/max/0/default.jpg`;
+    },
 
-        const canvases = manifest.sequences?.[0]?.canvases || [];
-        this.images = canvases
-          .map((canvas) => canvas.images?.[0]?.resource?.service?.["@id"])
-          .filter(Boolean)
-          .map((id) => `${id}/full/full/0/default.jpg`);
+    _extractIIIFImageUrls(manifest) {
+      if (!manifest) return [];
 
-        if (this.images.length === 0) {
-          alert("No images found in IIIF manifest.");
+      if (Array.isArray(manifest)) {
+        return manifest
+          .filter((item) => typeof item === 'string' && item.trim().length > 0)
+          .map((item) => item.trim());
+      }
+
+      const images = [];
+      const pushUrl = (url) => {
+        if (typeof url === 'string' && url.trim()) {
+          images.push(url.trim());
+        }
+      };
+
+      const pushFromBody = (node) => {
+        if (!node || typeof node !== 'object') return;
+
+        const services = Array.isArray(node.service) ? node.service : (node.service ? [node.service] : []);
+        const firstService = services.find((service) => service && (service.id || service['@id']));
+        const serviceId = firstService?.id || firstService?.['@id'];
+        const serviceUrl = this._normalizeIiifServiceUrl(serviceId);
+        if (serviceUrl) {
+          pushUrl(serviceUrl);
           return;
         }
-        this.annotationsByPage = new Array(this.images.length).fill().map(() => []);
-        this.comments = new Array(this.images.length).fill().map(() => []);
+
+        pushUrl(node.id || node['@id']);
+      };
+
+      // IIIF Presentation API v2
+      const v2Canvases = manifest.sequences?.[0]?.canvases;
+      if (Array.isArray(v2Canvases)) {
+        v2Canvases.forEach((canvas) => {
+          const annotation = canvas?.images?.[0];
+          pushFromBody(annotation?.resource || annotation?.body);
+        });
+      }
+
+      // IIIF Presentation API v3
+      const v3Canvases = manifest.items;
+      if (Array.isArray(v3Canvases)) {
+        v3Canvases.forEach((canvas) => {
+          const annotationPages = canvas?.items;
+          if (!Array.isArray(annotationPages)) return;
+          annotationPages.forEach((annotationPage) => {
+            const annotations = annotationPage?.items;
+            if (!Array.isArray(annotations)) return;
+            annotations.forEach((annotation) => {
+              const body = annotation?.body;
+              if (Array.isArray(body)) {
+                body.forEach((entry) => pushFromBody(entry));
+              } else {
+                pushFromBody(body);
+              }
+            });
+          });
+        });
+      }
+
+      return [...new Set(images)];
+    },
+
+    async fetchIIIFImages(manifestUrl, { silent = false } = {}) {
+      try {
+        const response = await fetch(manifestUrl);
+        if (!response.ok) throw new Error(`Failed to fetch IIIF manifest (${response.status}).`);
+        const manifest = await response.json();
+
+        const extractedImages = this._extractIIIFImageUrls(manifest);
+        if (extractedImages.length === 0) {
+          throw new Error("No images found in IIIF manifest.");
+        }
+
+        this.images = extractedImages;
+        this.annotationsByPage = new Array(this.images.length).fill(null).map(() => []);
+        this.comments = new Array(this.images.length).fill(null).map(() => []);
+        return true;
       } catch (e) {
-        alert("Error fetching IIIF manifest: " + e.message);
+        if (!silent) {
+          alert("Error fetching IIIF manifest: " + e.message);
+        }
+        return false;
       }
     },
 
@@ -2620,7 +2815,7 @@ export default {
           );
 
           // Convert from window to viewport coordinates
-          const viewportPoint = this.osdViewer.viewport.pointFromPixel(containerPoint);
+          const viewportPoint = this.osdViewer.viewport.pointFromPixel(containerPoint, true);
 
           // Convert from viewport to image coordinates
           const imagePoint = tiledImage.viewportToImageCoordinates(viewportPoint);
@@ -2655,6 +2850,44 @@ export default {
       const y = dyLocal + (this.baseFitHeight / 2);
 
       return { x, y };
+    },
+
+    getViewerRectStyle(rect) {
+      // Keep this reactive to viewport changes.
+      // eslint-disable-next-line no-unused-vars
+      const _trigger = this.osdViewportBounds;
+
+      if (!rect || !this.osdViewer || !this.osdReady) {
+        return { display: 'none' };
+      }
+
+      const tiledImage = this.osdViewer.world.getItemAt(0);
+      if (!tiledImage) {
+        return { display: 'none' };
+      }
+
+      const topLeft = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(rect.x, rect.y)),
+        true
+      );
+      const bottomRight = this.osdViewer.viewport.pixelFromPoint(
+        tiledImage.imageToViewportCoordinates(new OpenSeadragon.Point(rect.x + rect.width, rect.y + rect.height)),
+        true
+      );
+
+      const left = Math.min(topLeft.x, bottomRight.x);
+      const top = Math.min(topLeft.y, bottomRight.y);
+      const width = Math.abs(bottomRight.x - topLeft.x);
+      const height = Math.abs(bottomRight.y - topLeft.y);
+
+      return {
+        position: 'absolute',
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+        pointerEvents: 'none',
+      };
     },
 
     // Convert percentage coordinates to screen coordinates for remote cursor display
@@ -2763,7 +2996,45 @@ export default {
       return { x, y };
     },
     isHorizontalLabel(label) {
-      return ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"].includes(label);
+      return ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight","other_h"].includes(label);
+    },
+    measurementColorFor(measurementOrLabel) {
+      const fallback = "rgba(110, 168, 254, 0.35)";
+      if (!measurementOrLabel) return fallback;
+
+      if (typeof measurementOrLabel === "string") {
+        return this.measurementColors[measurementOrLabel] || fallback;
+      }
+
+      return (
+        measurementOrLabel.color ||
+        this.measurementColors[measurementOrLabel.label] ||
+        fallback
+      );
+    },
+    measurementBorderFor(measurementOrLabel) {
+      const color = this.measurementColorFor(measurementOrLabel);
+      return color || "rgba(110, 168, 254, 0.9)";
+    },
+    normalizeBandAnnotation(band, fallbackLabel = null, fallbackPageIndex = 0) {
+      if (!band || typeof band !== "object") return null;
+
+      const label = band.label || fallbackLabel;
+      if (!label) return null;
+
+      const parsedPageIndex = Number.parseInt(
+        band.pageIndex !== undefined ? band.pageIndex : fallbackPageIndex,
+        10
+      );
+      const pageIndex = Number.isFinite(parsedPageIndex) ? parsedPageIndex : 0;
+
+      return {
+        ...band,
+        label,
+        pageIndex,
+        type: band.type || "length",
+        color: band.color || this.measurementColorFor(label),
+      };
     },
     generateRandomColor() {
       const palette = ["#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7"];
@@ -2791,7 +3062,7 @@ export default {
     camelToTitle(key) {
       if (!key) return "";
       // Special case for minimumHeight
-      if (key === "minimumHeight") return "Minim Height";
+      if (key === "minimumHeight") return "Minim height";
       return key
         .replace(/([a-z])([A-Z])/g, "$1 $2")
         .replace(/^./, (s) => s.toUpperCase());
@@ -2846,6 +3117,9 @@ export default {
         this.underlineModeActive = false;
         this.commentModeActive = false;
         this.lengthMeasurementActive = false;
+        this.moveModeActive = false;
+        this.moveStartPos = null;
+        this.currentMoveDelta = { x: 0, y: 0 };
         this.isMeasuring = false;
         this.croppingStarted = false;
         this.cropButtonClicked = false;
@@ -2890,13 +3164,17 @@ export default {
         // toggle
         if (this.highlightModeActive) {
           this.highlightModeActive = false;
+          this.setHighlightInteractionLock(false);
           this.startPoint = null;
           this.currentSquare = null;
+          this.setOsdMouseNavEnabled(true);
           this.showToolMessage("Highlight mode deactivated.");
           return;
         }
         resetAll();
         this.highlightModeActive = true;
+        this.setHighlightInteractionLock(true);
+        this.setOsdMouseNavEnabled(false);
         this.showToolMessage("Highlight mode ACTIVE. Click and drag to add highlights. Click Highlight again to exit.");
         return;
       }
@@ -3311,14 +3589,14 @@ cancelPenSelection() {
       this.showClearDropdown = false;
     },
     clearHorizontalLengths() {
-      ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"].forEach((t)=>{
+      ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight","other_h"].forEach((t)=>{
         if (this.lengthMeasurements[t]) delete this.lengthMeasurements[t][this.currentPage];
       });
       this.showToolMessage("Horizontal lengths cleared.");
       this.showClearDropdown = false;
     },
     clearVerticalLengths() {
-      ["internalMargin","intercolumnSpaces","externalMargin"].forEach((t)=>{
+      ["internalMargin","intercolumnSpaces","externalMargin","other_v"].forEach((t)=>{
         if (this.lengthMeasurements[t]) delete this.lengthMeasurements[t][this.currentPage];
       });
       this.showToolMessage("Vertical lengths cleared.");
@@ -3346,7 +3624,7 @@ cancelPenSelection() {
     confirmClearAll() {
       this.annotationsByPage[this.currentPage] = [];
       this.comments[this.currentPage] = [];
-      const all = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","internalMargin","intercolumnSpaces","externalMargin","lineHeight","minimumHeight"];
+      const all = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","internalMargin","intercolumnSpaces","externalMargin","lineHeight","minimumHeight","other_h","other_v"];
       all.forEach(t => { if (this.lengthMeasurements[t]) delete this.lengthMeasurements[t][this.currentPage]; });
       this.strokes = [];
       this.measurePoints = [];
@@ -3367,8 +3645,8 @@ cancelPenSelection() {
       const strokes = this.strokes || [];
 
       // Collect bands from lengthMeasurements
-      const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'];
-      const verticalLabels = ['upperMargin', 'lowerMargin', 'internalMargin', 'intercolumnSpaces', 'externalMargin'];
+      const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'upperMargin', 'lowerMargin', 'lineHeight', 'minimumHeight', 'other_h'];
+      const verticalLabels = ['internalMargin', 'intercolumnSpaces', 'externalMargin', 'other_v'];
 
       const horizontalBands = [];
       const verticalBands = [];
@@ -3377,7 +3655,8 @@ cancelPenSelection() {
         const measurements = this.lengthMeasurements[label] || {};
         Object.entries(measurements).forEach(([pageIndex, bands]) => {
           (bands || []).forEach(b => {
-            horizontalBands.push({ ...b, pageIndex: parseInt(pageIndex), label });
+            const normalizedBand = this.normalizeBandAnnotation(b, label, pageIndex);
+            if (normalizedBand) horizontalBands.push(normalizedBand);
           });
         });
       });
@@ -3386,7 +3665,8 @@ cancelPenSelection() {
         const measurements = this.lengthMeasurements[label] || {};
         Object.entries(measurements).forEach(([pageIndex, bands]) => {
           (bands || []).forEach(b => {
-            verticalBands.push({ ...b, pageIndex: parseInt(pageIndex), label });
+            const normalizedBand = this.normalizeBandAnnotation(b, label, pageIndex);
+            if (normalizedBand) verticalBands.push(normalizedBand);
           });
         });
       });
@@ -3401,8 +3681,8 @@ cancelPenSelection() {
         comments: comments.flatMap((pageComments, pageIndex) =>
           (pageComments || []).map(c => ({ ...c, pageIndex }))
         ),
-        traces: strokes.flatMap((pageStrokes, pageIndex) =>
-          (pageStrokes || []).map(s => ({ ...s, pageIndex }))
+        traces: annotationsByPage.flatMap((page, pageIndex) =>
+          (page || []).filter(a => a.type === 'trace').map(a => ({ ...a, pageIndex }))
         ),
         angles: annotationsByPage.flatMap((page, pageIndex) =>
           (page || []).filter(a => a.type === 'measure').map(a => ({ ...a, pageIndex }))
@@ -3536,12 +3816,13 @@ cancelPenSelection() {
           this.images = JSON.parse(session.iiifManifest);
           this.annotationsByPage = this.images.map(() => []);
           this.comments = this.images.map(() => []);
-        } else if (session.iiifManifest.endsWith("manifest.json")) {
-          await this.fetchIIIFImages(session.iiifManifest);
         } else {
-          this.images = [session.iiifManifest];
-          this.annotationsByPage = [ [] ];
-          this.comments = [ [] ];
+          const loadedAsManifest = await this.fetchIIIFImages(session.iiifManifest, { silent: true });
+          if (!loadedAsManifest) {
+            this.images = [session.iiifManifest];
+            this.annotationsByPage = [ [] ];
+            this.comments = [ [] ];
+          }
         }
 
         // Load annotations from session
@@ -3621,11 +3902,12 @@ cancelPenSelection() {
 
       // Helper for band operations
       const handleBand = (band) => {
-        const label = band.label;
+        const normalizedBand = this.normalizeBandAnnotation(band, band?.label, pageIndex);
+        const label = normalizedBand?.label;
         if (!label) return;
         if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
         if (!this.lengthMeasurements[label][pageIndex]) this.lengthMeasurements[label][pageIndex] = [];
-        return this.lengthMeasurements[label][pageIndex];
+        return { arr: this.lengthMeasurements[label][pageIndex], normalizedBand };
       };
 
       switch (action) {
@@ -3638,8 +3920,10 @@ cancelPenSelection() {
           } else if (annotationType === 'comments') {
             this.comments[pageIndex].push(annotationWithCreator);
           } else if (annotationType === 'horizontalBands' || annotationType === 'verticalBands') {
-            const arr = handleBand(annotationWithCreator);
-            if (arr) arr.push(annotationWithCreator);
+            const handledBand = handleBand(annotationWithCreator);
+            if (handledBand?.arr && handledBand.normalizedBand) {
+              handledBand.arr.push(handledBand.normalizedBand);
+            }
           }
           break;
 
@@ -3831,8 +4115,8 @@ cancelPenSelection() {
       if (annotations.traces) {
         annotations.traces.forEach(t => {
           const pageIndex = t.pageIndex || 0;
-          if (!this.strokes[pageIndex]) this.strokes[pageIndex] = [];
-          this.strokes[pageIndex].push(t);
+          if (!this.annotationsByPage[pageIndex]) this.annotationsByPage[pageIndex] = [];
+          this.annotationsByPage[pageIndex].push({ ...t, type: 'trace' });
         });
       }
 
@@ -3840,8 +4124,8 @@ cancelPenSelection() {
       if (annotations.angles) {
         annotations.angles.forEach(a => {
           const pageIndex = a.pageIndex || 0;
-          if (!this.annotations[pageIndex]) this.annotations[pageIndex] = [];
-          this.annotations[pageIndex].push(a);
+          if (!this.annotationsByPage[pageIndex]) this.annotationsByPage[pageIndex] = [];
+          this.annotationsByPage[pageIndex].push({ ...a, type: 'measure' });
         });
       }
 
@@ -3849,16 +4133,34 @@ cancelPenSelection() {
       const loadBands = (bands) => {
         if (!bands) return;
         bands.forEach(b => {
-          const pageIndex = b.pageIndex || 0;
-          const label = b.label;
+          const normalizedBand = this.normalizeBandAnnotation(b, b?.label, b?.pageIndex || 0);
+          const pageIndex = normalizedBand?.pageIndex || 0;
+          const label = normalizedBand?.label;
           if (!label) return;
           if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
           if (!this.lengthMeasurements[label][pageIndex]) this.lengthMeasurements[label][pageIndex] = [];
-          this.lengthMeasurements[label][pageIndex].push(b);
+          this.lengthMeasurements[label][pageIndex].push(normalizedBand);
         });
       };
       loadBands(annotations.horizontalBands);
       loadBands(annotations.verticalBands);
+
+      // Legacy import support: older files may store bands under lengthMeasurements
+      const hasBandArrays =
+        (Array.isArray(annotations.horizontalBands) && annotations.horizontalBands.length > 0) ||
+        (Array.isArray(annotations.verticalBands) && annotations.verticalBands.length > 0);
+
+      if (!hasBandArrays && annotations.lengthMeasurements && typeof annotations.lengthMeasurements === 'object') {
+        const legacyBands = [];
+        Object.entries(annotations.lengthMeasurements).forEach(([label, pages]) => {
+          Object.entries(pages || {}).forEach(([pageIndex, bands]) => {
+            (bands || []).forEach((band) => {
+              legacyBands.push({ ...band, label, pageIndex: Number.parseInt(pageIndex, 10) });
+            });
+          });
+        });
+        loadBands(legacyBands);
+      }
     },
 
     /* ---------- Label drag for length badges ---------- */
@@ -3954,6 +4256,10 @@ cancelPenSelection() {
         return;
       }
 
+      if (this.highlightInteractionLocked) {
+        this.enforceHighlightViewportSnapshot();
+      }
+
       // Mark operation as in progress to prevent tool switching
       this.isOperationInProgress = true;
 
@@ -3977,9 +4283,11 @@ cancelPenSelection() {
         const { x, y } = this.getMousePosition(event);
         if (!this.startPoint) {
           this.startPoint = { x, y };
+          this.initialScreenX = event.clientX;
+          this.initialScreenY = event.clientY;
           this.currentSquare = {
             x, y, width: 0, height: 0,
-            color: this.measurementColors[this.selectedMeasurement],
+            color: this.measurementColorFor(this.selectedMeasurement),
             label: this.selectedMeasurement,
           };
           return;
@@ -3988,7 +4296,7 @@ cancelPenSelection() {
           if (!this.lengthMeasurements[label]) this.lengthMeasurements[label] = {};
           if (!this.lengthMeasurements[label][this.currentPage]) this.lengthMeasurements[label][this.currentPage] = [];
 
-          const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'lineHeight', 'minimumHeight'];
+          const horizontalLabels = ['ascenders', 'descenders', 'interlinear', 'upperMargin', 'lowerMargin', 'lineHeight', 'minimumHeight', 'other_h'];
           const isHorizontal = horizontalLabels.includes(label);
 
           const band = {
@@ -4000,11 +4308,14 @@ cancelPenSelection() {
             createdBy: this.localParticipant?.id || null,
           };
 
-          this.lengthMeasurements[label][this.currentPage].push(band);
+          const normalizedBand = this.normalizeBandAnnotation(band, label, this.currentPage);
+          if (!normalizedBand) return;
+
+          this.lengthMeasurements[label][this.currentPage].push(normalizedBand);
 
           // Sync to session if connected
           if (this.sessionConnected) {
-            this.syncAddAnnotation(isHorizontal ? 'horizontalBands' : 'verticalBands', band);
+            this.syncAddAnnotation(isHorizontal ? 'horizontalBands' : 'verticalBands', normalizedBand);
           }
 
           this.startPoint = null;
@@ -4023,49 +4334,16 @@ cancelPenSelection() {
 
       // HIGHLIGHT / UNDERLINE
       if (this.highlightModeActive || this.underlineModeActive) {
-        if (!this.startPoint) {
-          const { x, y } = this.getMousePosition(event);
-          this.startPoint = { x, y };
-          if (this.highlightModeActive) this.currentSquare = { x, y, width: 0, height: 0 };
-          else this.currentUnderline = { x, y, width: 0, height: 2 };
-          return;
+        const { x, y } = this.getMousePosition(event);
+        this.startPoint = { x, y };
+        if (this.highlightModeActive) {
+          this.currentSquare = { x, y, width: 0, height: 0 };
+          this.currentUnderline = null;
         } else {
-          // Ensure array exists for current page
-          if (!this.annotationsByPage[this.currentPage]) {
-            this.annotationsByPage[this.currentPage] = [];
-          }
-          if (this.highlightModeActive && this.currentSquare) {
-            const highlight = {
-              id: safeUUID(),
-              type: "highlight",
-              pageIndex: this.currentPage,
-              ...this.currentSquare,
-              createdBy: this.localParticipant?.id || null,
-            };
-            this.annotationsByPage[this.currentPage].push(highlight);
-            // Sync to session if connected
-            if (this.sessionConnected) {
-              this.syncAddAnnotation('highlights', highlight);
-            }
-            this.currentSquare = null;
-          } else if (this.underlineModeActive && this.currentUnderline) {
-            const underline = {
-              id: safeUUID(),
-              type: "underline",
-              pageIndex: this.currentPage,
-              ...this.currentUnderline,
-              createdBy: this.localParticipant?.id || null,
-            };
-            this.annotationsByPage[this.currentPage].push(underline);
-            // Sync to session if connected
-            if (this.sessionConnected) {
-              this.syncAddAnnotation('underlines', underline);
-            }
-            this.currentUnderline = null;
-          }
-          this.startPoint = null;
-          return;
+          this.currentUnderline = { x, y, width: 0, height: 2 };
+          this.currentSquare = null;
         }
+        return;
       }
 
       // TRACE
@@ -4139,6 +4417,10 @@ cancelPenSelection() {
     },
 
     trace(event) {
+      if (this.highlightInteractionLocked) {
+        this.enforceHighlightViewportSnapshot();
+      }
+
       // MOVE MODE: show live movement preview
       if (this.moveModeActive && this.bankSelectedKeys.length > 0 && this.moveStartPos) {
         const currentPos = this.getMousePosition(event);
@@ -4190,9 +4472,43 @@ cancelPenSelection() {
           y: Math.min(y, this.startPoint.y),
           width: Math.abs(x - this.startPoint.x),
           height: Math.abs(y - this.startPoint.y),
-          color: this.measurementColors[this.selectedMeasurement],
+          color: this.measurementColorFor(this.selectedMeasurement),
           label: this.selectedMeasurement,
         };
+        
+        // Autoscroll/Edge panning for bands
+        if (this.osdViewer) {
+          const containerRect = this.$refs.osdContainer.getBoundingClientRect();
+          const margin = 40; // 40 pixels from edge to trigger scroll
+          const panSpeed = 0.05; // Speed of panning (viewport coordinates)
+          
+          let panDx = 0;
+          let panDy = 0;
+          
+          if (event.clientX < containerRect.left + margin) {
+            panDx = -panSpeed;
+          } else if (event.clientX > containerRect.right - margin) {
+            panDx = panSpeed;
+          }
+          
+          if (event.clientY < containerRect.top + margin) {
+            panDy = -panSpeed;
+          } else if (event.clientY > containerRect.bottom - margin) {
+            panDy = panSpeed;
+          }
+          
+          if (panDx !== 0 || panDy !== 0) {
+            const currentCenter = this.osdViewer.viewport.getCenter();
+            // Don't use enforceHighlightViewportSnapshot logic while we are intentionally panning bands
+            this.osdViewer.viewport.panTo(
+              new OpenSeadragon.Point(currentCenter.x + panDx, currentCenter.y + panDy), 
+              true // immediate
+            );
+            // After intentional pan, re-sync the startPoint so the box geometry doesn't detach visually from the mouse
+            const updatedStartPos = this.osdViewer.viewport.pixelFromPoint(this.osdViewer.viewport.viewerElementToViewportCoordinates(new OpenSeadragon.Point(this.initialScreenX, this.initialScreenY)), true);
+            this.startPoint = { x: updatedStartPos.x, y: updatedStartPos.y };
+          }
+        }
       }
 
       // TRACE dynamic
@@ -4290,6 +4606,43 @@ cancelPenSelection() {
         this.croppingStarted = false;
         this.cropButtonClicked = false;
         this.currentSquare = null;
+        this.startPoint = null;
+      }
+
+      // HIGHLIGHT / UNDERLINE finalize on mouseup to avoid drift between clicks
+      if ((this.highlightModeActive || this.underlineModeActive) && this.startPoint) {
+        if (!this.annotationsByPage[this.currentPage]) {
+          this.annotationsByPage[this.currentPage] = [];
+        }
+
+        if (this.highlightModeActive && this.currentSquare) {
+          const highlight = {
+            id: safeUUID(),
+            type: "highlight",
+            pageIndex: this.currentPage,
+            ...this.currentSquare,
+            createdBy: this.localParticipant?.id || null,
+          };
+          this.annotationsByPage[this.currentPage].push(highlight);
+          if (this.sessionConnected) {
+            this.syncAddAnnotation('highlights', highlight);
+          }
+          this.currentSquare = null;
+        } else if (this.underlineModeActive && this.currentUnderline) {
+          const underline = {
+            id: safeUUID(),
+            type: "underline",
+            pageIndex: this.currentPage,
+            ...this.currentUnderline,
+            createdBy: this.localParticipant?.id || null,
+          };
+          this.annotationsByPage[this.currentPage].push(underline);
+          if (this.sessionConnected) {
+            this.syncAddAnnotation('underlines', underline);
+          }
+          this.currentUnderline = null;
+        }
+
         this.startPoint = null;
       }
     },
@@ -5332,8 +5685,8 @@ cancelPenSelection() {
       };
     },
     buildLengthStatisticsForPages(pages = []) {
-      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"];
-      const vertical = ["internalMargin","intercolumnSpaces","externalMargin"];
+      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight","other_h"];
+      const vertical = ["internalMargin","intercolumnSpaces","externalMargin","other_v"];
       const stats = {};
       const allTypes = [...horizontal, ...vertical];
 
@@ -5362,8 +5715,8 @@ cancelPenSelection() {
     showStatisticsPopup(statistics) {
       this.horizontalStatistics = {};
       this.verticalStatistics = {};
-      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight"];
-      const vertical = ["internalMargin","intercolumnSpaces","externalMargin"];
+      const horizontal = ["ascenders","descenders","interlinear","upperMargin","lowerMargin","lineHeight","minimumHeight","other_h"];
+      const vertical = ["internalMargin","intercolumnSpaces","externalMargin","other_v"];
       for (const [type, stats] of Object.entries(statistics)) {
         if (horizontal.includes(type)) {
           this.horizontalStatistics[type] = stats;
@@ -5682,7 +6035,11 @@ cancelPenSelection() {
 
 .underline-line { position: absolute; background-color: blue; height: 2px; pointer-events: none; z-index: 1100; }
 
-.length-measurement { position: absolute; border: none; pointer-events: none; }
+.length-measurement {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+}
 .length-label {
   position: absolute; left: 15px; top: 15px; transform: translateY(0);
   color: hsl(var(--foreground)); font-size: 12px; background-color: hsl(var(--card)); padding: 2px 5px; border-radius: 3px;
