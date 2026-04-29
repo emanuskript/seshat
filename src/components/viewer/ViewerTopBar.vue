@@ -1,5 +1,6 @@
 <script setup>
 import { ref, inject } from 'vue'
+import seshatLogo from '@/assets/logo.png'
 import { Button } from '@/components/ui/button'
 import Icon from '@/components/ui/icon/Icon.vue'
 import {
@@ -92,7 +93,7 @@ function handleThemeSelect(theme) {
         </Tooltip>
 
         <div class="flex items-center gap-2 cursor-pointer" @click="emit('go-home')">
-          <img src="@/assets/logo.png" alt="Logo" class="topbar-logo h-6 w-6" />
+          <img :src="seshatLogo" alt="Seshat logo" class="topbar-logo h-6 w-6" />
           <span class="text-sm font-medium text-foreground truncate max-w-[200px]">
             {{ documentName }}
           </span>
